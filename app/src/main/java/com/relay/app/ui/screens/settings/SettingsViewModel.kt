@@ -1,0 +1,118 @@
+package com.relay.app.ui.screens.settings
+
+import android.app.Application
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.lifecycle.AndroidViewModel
+import com.relay.app.util.RelayPreferences
+
+class SettingsViewModel(app: Application) : AndroidViewModel(app) {
+
+    private val prefs = RelayPreferences(app)
+
+    var autoApproveLocationRequests by mutableStateOf(prefs.autoApproveLocationRequests)
+        private set
+
+    var notifyOnAutoShare by mutableStateOf(prefs.notifyOnAutoShare)
+        private set
+
+    var locationRequestFrom by mutableStateOf(prefs.locationRequestFrom)
+        private set
+
+    var theme by mutableStateOf(prefs.theme)
+        private set
+
+    var appLock by mutableStateOf(prefs.appLock)
+        private set
+
+    var incomingPinNotification by mutableStateOf(prefs.incomingPinNotification)
+        private set
+
+    var incomingMessageNotification by mutableStateOf(prefs.incomingMessageNotification)
+        private set
+
+    var defaultMapZoom by mutableFloatStateOf(prefs.defaultMapZoom)
+        private set
+
+    var keepScreenOnMap by mutableStateOf(prefs.keepScreenOnMap)
+        private set
+
+    var defaultPinExpiry by mutableStateOf(prefs.defaultPinExpiry)
+        private set
+
+    var dndEnabled by mutableStateOf(prefs.dndEnabled)
+        private set
+
+    var dndStartHour by mutableStateOf(prefs.dndStartHour)
+        private set
+
+    var dndEndHour by mutableStateOf(prefs.dndEndHour)
+        private set
+
+    fun updateAutoApproveLocationRequests(v: Boolean) {
+        prefs.autoApproveLocationRequests = v
+        autoApproveLocationRequests = v
+    }
+
+    fun updateNotifyOnAutoShare(v: Boolean) {
+        prefs.notifyOnAutoShare = v
+        notifyOnAutoShare = v
+    }
+
+    fun updateLocationRequestFrom(v: String) {
+        prefs.locationRequestFrom = v
+        locationRequestFrom = v
+    }
+
+    fun updateTheme(v: String) {
+        prefs.theme = v
+        theme = v
+    }
+
+    fun updateAppLock(v: Boolean) {
+        prefs.appLock = v
+        appLock = v
+    }
+
+    fun updateIncomingPinNotification(v: Boolean) {
+        prefs.incomingPinNotification = v
+        incomingPinNotification = v
+    }
+
+    fun updateIncomingMessageNotification(v: Boolean) {
+        prefs.incomingMessageNotification = v
+        incomingMessageNotification = v
+    }
+
+    fun updateDefaultMapZoom(v: Float) {
+        prefs.defaultMapZoom = v
+        defaultMapZoom = v
+    }
+
+    fun updateKeepScreenOnMap(v: Boolean) {
+        prefs.keepScreenOnMap = v
+        keepScreenOnMap = v
+    }
+
+    fun updateDefaultPinExpiry(v: String) {
+        prefs.defaultPinExpiry = v
+        defaultPinExpiry = v
+    }
+
+    fun updateDndEnabled(v: Boolean) {
+        prefs.dndEnabled = v
+        dndEnabled = v
+    }
+
+    fun updateDndStartHour(v: Int) {
+        prefs.dndStartHour = v
+        dndStartHour = v
+    }
+
+    fun updateDndEndHour(v: Int) {
+        prefs.dndEndHour = v
+        dndEndHour = v
+    }
+}

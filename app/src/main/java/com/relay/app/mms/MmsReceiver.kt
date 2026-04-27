@@ -1,0 +1,127 @@
+package com.relay.app.mms
+
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import com.relay.app.data.db.RelayDbHelper
+import com.relay.app.data.model.Message
+import com.relay.app.data.model.MessageType
+import com.relay.app.data.repository.ContactRepository
+import com.relay.app.data.repository.MessageRepository
+import java.io.File
+import java.io.FileOutputStream
+
+class MmsReceiver : BroadcastReceiver() {
+
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != "android.provider.Telephony.WAP_PUSH_RECEIVED") return
+        val mime = intent.type ?: return
+        if (!mime.equals("application/vnd.wap.mms-message", ignoreCase = true)) return
+
+        // Allow system to store the MMS before we read it
+        Handler(Looper.getMainLooper()).postDelayed({
+            readNewInboxMms(context)
+        }, 3_000L)
+    }
+
+    companion object {
+
+        fun readNewInboxMms(context: Context) {
+            try {
+                val db = RelayDbHelper(context)
+                val contactRepo = ContactRepository(db)
+                val messageRepo = MessageRepository(db)
+
+                val cursor = context.contentResolver.query(
+                    Uri.parse("content://mms/inbox"),
+                    arrayOf("_id", "date"),
+                    null, null,
+                    "date DESC LIMIT 10",
+                ) ?: return
+
+                cursor.use {
+                    while (it.moveToNext()) {
+                        val mmsId = it.getLong(it.getColumnIndexOrThrow("_id"))
+                        val phone = getAddressForMms(context, mmsId) ?: continue
+                        val contact = contactRepo.findByPhoneSync(phone) ?: continue
+
+                        val (partUri, mimeType) = getMediaPart(context, mmsId) ?: continue
+
+                        // Copy to cache so we own the file
+                        val cachedPath = copyPartToCache(context, partUri, mimeType) ?: continue
+
+                        // Skip if already stored
+                        if (messageRepo.hasMediaUri(cachedPath)) continue
+
+                        val type = if (mimeType.startsWith("video")) MessageType.VIDEO else MessageType.IMAGE
+                        val msg = Message(
+                            contactId = contact.id,
+                            body = "",
+                            type = type,
+                            isSent = false,
+                            mediaUri = cachedPath,
+                        )
+                        messageRepo.insertMessageSync(msg)
+
+                        context.sendBroadcast(
+                            Intent("com.relay.app.NEW_MESSAGE").apply {
+                                putExtra("contact_id", contact.id)
+                                setPackage(context.packageName)
+                            }
+                        )
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("MmsReceiver", "Error reading MMS inbox", e)
+            }
+        }
+
+        private fun getAddressForMms(context: Context, mmsId: Long): String? {
+            val uri = Uri.parse("content://mms/$mmsId/addr")
+            return context.contentResolver.query(
+                uri, arrayOf("address"), "type=137", null, null
+            )?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+        }
+
+        private fun getMediaPart(context: Context, mmsId: Long): Pair<String, String>? {
+            return context.contentResolver.query(
+                Uri.parse("content://mms/part"),
+                arrayOf("_id", "ct"),
+                "mid=?", arrayOf(mmsId.toString()),
+                null,
+            )?.use { c ->
+                while (c.moveToNext()) {
+                    val partId = c.getLong(c.getColumnIndexOrThrow("_id"))
+                    val ct = c.getString(c.getColumnIndexOrThrow("ct")) ?: continue
+                    if (ct.startsWith("image/") || ct.startsWith("video/")) {
+                        return@use Pair("content://mms/part/$partId", ct)
+                    }
+                }
+                null
+            }
+        }
+
+        private fun copyPartToCache(context: Context, partUri: String, mimeType: String): String? = try {
+            val ext = when {
+                mimeType.contains("jpeg") || mimeType.contains("jpg") -> "jpg"
+                mimeType.contains("png")  -> "png"
+                mimeType.contains("gif")  -> "gif"
+                mimeType.contains("video") -> "mp4"
+                else -> "bin"
+            }
+            val file = File(context.cacheDir, "mms/recv_${System.currentTimeMillis()}.$ext")
+                .also { it.parentFile?.mkdirs() }
+            context.contentResolver.openInputStream(Uri.parse(partUri))?.use { input ->
+                FileOutputStream(file).use { input.copyTo(it) }
+            }
+            file.absolutePath
+        } catch (e: Exception) {
+            Log.e("MmsReceiver", "Failed to copy MMS part $partUri", e)
+            null
+        }
+    }
+}

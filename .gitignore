@@ -1,0 +1,51 @@
+.gradle/
+build/
+**/build/
+
+# Android/Gradle local config
+local.properties
+.kotlin/
+captures/
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# APK/AAB and mapping outputs
+*.apk
+*.aab
+*.ap_
+*.dex
+outputs/
+mapping/
+
+# Native/build intermediates
+.externalNativeBuild/
+.cxx/
+
+# Signing and secrets
+*.jks
+*.keystore
+*.pem
+*.key
+*.p12
+keystore.properties
+google-services.json
+secrets.properties
+.env
+.env.*
+
+# Temporary/editor swap files
+*.swp
+*.swo
+*~
+CLAUDE.md

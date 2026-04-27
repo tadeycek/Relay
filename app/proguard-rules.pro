@@ -1,0 +1,4 @@
+-keep class org.osmdroid.** { *; }
+-keepnames class kotlinx.coroutines.internal.MainDispatcherFactory {}
+-keepnames class kotlinx.coroutines.CoroutineExceptionHandler {}
+-keep class com.relay.app.sms.** { *; }

@@ -1,0 +1,96 @@
+package com.relay.app.util
+
+import android.content.Context
+
+class RelayPreferences(context: Context) {
+
+    private val prefs = context.applicationContext
+        .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    var autoApproveLocationRequests: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_APPROVE, false)
+        set(v) { prefs.edit().putBoolean(KEY_AUTO_APPROVE, v).apply() }
+
+    var notifyOnAutoShare: Boolean
+        get() = prefs.getBoolean(KEY_NOTIFY_AUTO_SHARE, true)
+        set(v) { prefs.edit().putBoolean(KEY_NOTIFY_AUTO_SHARE, v).apply() }
+
+    var locationRequestFrom: String
+        get() = prefs.getString(KEY_LOCATION_FROM, FROM_ALL) ?: FROM_ALL
+        set(v) { prefs.edit().putString(KEY_LOCATION_FROM, v).apply() }
+
+    var theme: String
+        get() = prefs.getString(KEY_THEME, THEME_SYSTEM) ?: THEME_SYSTEM
+        set(v) { prefs.edit().putString(KEY_THEME, v).apply() }
+
+    var appLock: Boolean
+        get() = prefs.getBoolean(KEY_APP_LOCK, false)
+        set(v) { prefs.edit().putBoolean(KEY_APP_LOCK, v).apply() }
+
+    var incomingPinNotification: Boolean
+        get() = prefs.getBoolean(KEY_PIN_NOTIF, true)
+        set(v) { prefs.edit().putBoolean(KEY_PIN_NOTIF, v).apply() }
+
+    var incomingMessageNotification: Boolean
+        get() = prefs.getBoolean(KEY_MSG_NOTIF, true)
+        set(v) { prefs.edit().putBoolean(KEY_MSG_NOTIF, v).apply() }
+
+    var defaultMapZoom: Float
+        get() = prefs.getFloat(KEY_MAP_ZOOM, 14f)
+        set(v) { prefs.edit().putFloat(KEY_MAP_ZOOM, v).apply() }
+
+    var keepScreenOnMap: Boolean
+        get() = prefs.getBoolean(KEY_KEEP_SCREEN, false)
+        set(v) { prefs.edit().putBoolean(KEY_KEEP_SCREEN, v).apply() }
+
+    var defaultPinExpiry: String
+        get() = prefs.getString(KEY_DEFAULT_PIN_EXPIRY, "never") ?: "never"
+        set(v) { prefs.edit().putString(KEY_DEFAULT_PIN_EXPIRY, v).apply() }
+
+    var mapStyle: String
+        get() = prefs.getString(KEY_MAP_STYLE, "standard") ?: "standard"
+        set(v) { prefs.edit().putString(KEY_MAP_STYLE, v).apply() }
+
+    var readReceipts: Boolean
+        get() = prefs.getBoolean(KEY_READ_RECEIPTS, true)
+        set(v) { prefs.edit().putBoolean(KEY_READ_RECEIPTS, v).apply() }
+
+    var dndEnabled: Boolean
+        get() = prefs.getBoolean(KEY_DND_ENABLED, false)
+        set(v) { prefs.edit().putBoolean(KEY_DND_ENABLED, v).apply() }
+
+    var dndStartHour: Int
+        get() = prefs.getInt(KEY_DND_START_HOUR, 22)
+        set(v) { prefs.edit().putInt(KEY_DND_START_HOUR, v.coerceIn(0, 23)).apply() }
+
+    var dndEndHour: Int
+        get() = prefs.getInt(KEY_DND_END_HOUR, 7)
+        set(v) { prefs.edit().putInt(KEY_DND_END_HOUR, v.coerceIn(0, 23)).apply() }
+
+    companion object {
+        private const val PREFS_NAME = "relay_settings"
+        private const val KEY_AUTO_APPROVE = "auto_approve_location"
+        private const val KEY_NOTIFY_AUTO_SHARE = "notify_auto_share"
+        private const val KEY_LOCATION_FROM = "location_request_from"
+        private const val KEY_THEME = "theme"
+        private const val KEY_APP_LOCK = "app_lock"
+        private const val KEY_PIN_NOTIF = "incoming_pin_notif"
+        private const val KEY_MSG_NOTIF = "incoming_msg_notif"
+        private const val KEY_MAP_ZOOM = "default_map_zoom"
+        private const val KEY_KEEP_SCREEN = "keep_screen_on_map"
+        private const val KEY_DEFAULT_PIN_EXPIRY = "default_pin_expiry"
+        private const val KEY_MAP_STYLE = "map_style"
+        private const val KEY_READ_RECEIPTS = "read_receipts"
+        private const val KEY_DND_ENABLED = "dnd_enabled"
+        private const val KEY_DND_START_HOUR = "dnd_start_hour"
+        private const val KEY_DND_END_HOUR = "dnd_end_hour"
+
+        const val FROM_ALL = "all"
+        const val FROM_NOBODY = "nobody"
+        const val THEME_DARK = "dark"
+        const val THEME_LIGHT = "light"
+        const val THEME_SYSTEM = "system"
+
+        const val LOCATION_REQUEST_CHANNEL = "relay_location_requests"
+    }
+}
