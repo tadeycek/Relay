@@ -11,19 +11,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.ChatBubble
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
@@ -51,6 +55,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
@@ -67,6 +72,7 @@ import com.relay.app.ui.theme.Background
 import com.relay.app.ui.theme.Border
 import com.relay.app.ui.theme.IbmPlexMono
 import com.relay.app.ui.theme.IbmPlexSans
+import com.relay.app.ui.theme.OnAccent
 import com.relay.app.ui.theme.Surface1
 import com.relay.app.ui.theme.Surface2
 import com.relay.app.ui.theme.Surface3
@@ -81,6 +87,8 @@ fun ContactsScreen(navController: NavController) {
     val groups by vm.groups.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showNewGroupDialog by remember { mutableStateOf(false) }
+    var manageGroupId by remember { mutableStateOf<Long?>(null) }
+    var keyChangeContactId by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
         topBar = {
@@ -102,8 +110,8 @@ fun ContactsScreen(navController: NavController) {
             FloatingActionButton(
                 onClick = { showAddDialog = true },
                 containerColor = Accent,
-                contentColor = Color.White,
-                shape = RoundedCornerShape(14.dp),
+                contentColor = OnAccent,
+                shape = RectangleShape,
             ) {
                 Icon(Icons.Outlined.Add, contentDescription = "Add contact")
             }
@@ -147,6 +155,7 @@ fun ContactsScreen(navController: NavController) {
                             group = group,
                             onChatClick = { navController.navigate(Screen.GroupChat.routeFor(group.id)) },
                             onDeleteClick = { vm.deleteGroup(group.id) },
+                            onManageClick = { manageGroupId = group.id },
                         )
                     }
                     item { Spacer(Modifier.height(8.dp)) }
@@ -176,6 +185,7 @@ fun ContactsScreen(navController: NavController) {
                                 }
                                 vm.updateTrustLevel(contact.id, next)
                             },
+                            onKeyChangeClick = { keyChangeContactId = contact.id },
                         )
                     }
                 }
@@ -203,6 +213,78 @@ fun ContactsScreen(navController: NavController) {
             onDismiss = { showNewGroupDialog = false },
         )
     }
+
+    val manageGroup = manageGroupId?.let { id -> groups.find { it.id == id } }
+    if (manageGroup != null) {
+        ManageGroupMembersDialog(
+            group = manageGroup,
+            allContacts = contacts,
+            onRemoveMember = { contactId -> vm.removeMemberFromGroup(manageGroup.id, contactId) },
+            onAddMember = { contactId -> vm.addMemberToGroup(manageGroup.id, contactId) },
+            onDismiss = { manageGroupId = null },
+        )
+    }
+
+    val keyChangeContact = keyChangeContactId?.let { id -> contacts.find { it.id == id } }
+    if (keyChangeContact != null && keyChangeContact.pendingPublicKey != null) {
+        KeyChangeDialog(
+            contact = keyChangeContact,
+            onAccept = { vm.acceptKeyChange(keyChangeContact.id); keyChangeContactId = null },
+            onReject = { vm.rejectKeyChange(keyChangeContact.id); keyChangeContactId = null },
+            onDismiss = { keyChangeContactId = null },
+        )
+    }
+}
+
+/** Short, eyeballable digest of a base64 key — not a substitute for real out-of-band verification
+ *  (SMS has no side channel to do that), but lets a user notice an obviously-wrong change. */
+private fun keyFingerprint(base64Key: String): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256").digest(base64Key.toByteArray())
+    return digest.take(8).joinToString(" ") { "%02X".format(it) }
+}
+
+@Composable
+private fun KeyChangeDialog(
+    contact: Contact,
+    onAccept: () -> Unit,
+    onReject: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val pending = contact.pendingPublicKey ?: return
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Surface1,
+        titleContentColor = TextPrimary,
+        textContentColor = TextSecondary,
+        title = { Text("${contact.name}'s key changed", fontFamily = IbmPlexSans, fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "A different encryption key arrived for this contact. This can happen if they " +
+                        "reinstalled Relay or got a new phone — or it can mean someone is spoofing " +
+                        "messages from their number. Only accept if you've confirmed this with them.",
+                    color = TextSecondary,
+                    fontFamily = IbmPlexSans,
+                    fontSize = 13.sp,
+                )
+                Text("CURRENT KEY", color = TextSecondary, fontFamily = IbmPlexMono, fontSize = 10.sp)
+                Text(
+                    contact.publicKey?.let { keyFingerprint(it) } ?: "(none yet)",
+                    color = TextPrimary,
+                    fontFamily = IbmPlexMono,
+                    fontSize = 12.sp,
+                )
+                Text("NEW KEY", color = TextSecondary, fontFamily = IbmPlexMono, fontSize = 10.sp)
+                Text(keyFingerprint(pending), color = TextPrimary, fontFamily = IbmPlexMono, fontSize = 12.sp)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onAccept) { Text("Accept", color = Color(0xFFFF6E5D), fontFamily = IbmPlexSans) }
+        },
+        dismissButton = {
+            TextButton(onClick = onReject) { Text("Reject", color = Accent, fontFamily = IbmPlexSans) }
+        },
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -211,6 +293,7 @@ private fun SwipeableGroupRow(
     group: Group,
     onChatClick: () -> Unit,
     onDeleteClick: () -> Unit,
+    onManageClick: () -> Unit,
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -223,7 +306,7 @@ private fun SwipeableGroupRow(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RectangleShape)
                     .background(Color(0xFFCC2200)),
                 contentAlignment = Alignment.CenterEnd,
             ) {
@@ -232,16 +315,16 @@ private fun SwipeableGroupRow(
         },
         enableDismissFromStartToEnd = false,
     ) {
-        GroupRow(group = group, onChatClick = onChatClick)
+        GroupRow(group = group, onChatClick = onChatClick, onManageClick = onManageClick)
     }
 }
 
 @Composable
-private fun GroupRow(group: Group, onChatClick: () -> Unit) {
+private fun GroupRow(group: Group, onChatClick: () -> Unit, onManageClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RectangleShape)
             .background(Surface1)
             .clickable(onClick = onChatClick)
             .padding(12.dp),
@@ -251,7 +334,7 @@ private fun GroupRow(group: Group, onChatClick: () -> Unit) {
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(44.dp)
-                .clip(CircleShape)
+                .clip(RectangleShape)
                 .background(Surface3),
         ) {
             Icon(
@@ -277,6 +360,14 @@ private fun GroupRow(group: Group, onChatClick: () -> Unit) {
                 fontSize = 12.sp,
             )
         }
+        IconButton(onClick = onManageClick) {
+            Icon(
+                imageVector = Icons.Outlined.Edit,
+                contentDescription = "Manage members",
+                tint = TextSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
         IconButton(onClick = onChatClick) {
             Icon(
                 imageVector = Icons.Outlined.ChatBubble,
@@ -288,6 +379,86 @@ private fun GroupRow(group: Group, onChatClick: () -> Unit) {
     }
 }
 
+@Composable
+private fun ManageGroupMembersDialog(
+    group: Group,
+    allContacts: List<Contact>,
+    onRemoveMember: (Long) -> Unit,
+    onAddMember: (Long) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val memberIds = group.members.map { it.id }.toSet()
+    val nonMembers = allContacts.filter { it.id !in memberIds }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Surface1,
+        titleContentColor = TextPrimary,
+        textContentColor = TextSecondary,
+        title = {
+            Text(text = "Manage \"${group.name}\"", fontFamily = IbmPlexSans, fontWeight = FontWeight.SemiBold)
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Text("MEMBERS", color = TextSecondary, fontFamily = IbmPlexMono, fontSize = 11.sp)
+                if (group.members.isEmpty()) {
+                    Text("No members", color = TextSecondary, fontFamily = IbmPlexSans, fontSize = 13.sp)
+                }
+                group.members.forEach { member ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(member.name, color = TextPrimary, fontFamily = IbmPlexSans, fontSize = 14.sp)
+                        IconButton(onClick = { onRemoveMember(member.id) }) {
+                            Icon(
+                                Icons.Outlined.Close,
+                                contentDescription = "Remove ${member.name}",
+                                tint = Color(0xFFFF6E5D),
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+
+                if (nonMembers.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("ADD MEMBER", color = TextSecondary, fontFamily = IbmPlexMono, fontSize = 11.sp)
+                    nonMembers.forEach { contact ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onAddMember(contact.id) }
+                                .padding(vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(contact.name, color = TextPrimary, fontFamily = IbmPlexSans, fontSize = 14.sp)
+                            Icon(
+                                Icons.Outlined.Add,
+                                contentDescription = "Add ${contact.name}",
+                                tint = Accent,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Done", color = Accent, fontFamily = IbmPlexSans)
+            }
+        },
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SwipeableContactRow(
@@ -295,6 +466,7 @@ private fun SwipeableContactRow(
     onChatClick: () -> Unit,
     onDeleteClick: () -> Unit,
     onTrustLevelClick: () -> Unit,
+    onKeyChangeClick: () -> Unit,
 ) {
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -311,7 +483,7 @@ private fun SwipeableContactRow(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RectangleShape)
                     .background(Color(0xFFCC2200)),
                 contentAlignment = Alignment.CenterEnd,
             ) {
@@ -325,16 +497,26 @@ private fun SwipeableContactRow(
         },
         enableDismissFromStartToEnd = false,
     ) {
-        ContactRow(contact = contact, onChatClick = onChatClick, onTrustLevelClick = onTrustLevelClick)
+        ContactRow(
+            contact = contact,
+            onChatClick = onChatClick,
+            onTrustLevelClick = onTrustLevelClick,
+            onKeyChangeClick = onKeyChangeClick,
+        )
     }
 }
 
 @Composable
-private fun ContactRow(contact: Contact, onChatClick: () -> Unit, onTrustLevelClick: () -> Unit) {
+private fun ContactRow(
+    contact: Contact,
+    onChatClick: () -> Unit,
+    onTrustLevelClick: () -> Unit,
+    onKeyChangeClick: () -> Unit,
+) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RectangleShape)
             .background(Surface1)
             .clickable(onClick = onChatClick)
             .padding(12.dp),
@@ -344,7 +526,7 @@ private fun ContactRow(contact: Contact, onChatClick: () -> Unit, onTrustLevelCl
             contentAlignment = Alignment.Center,
             modifier = Modifier
                 .size(44.dp)
-                .clip(CircleShape)
+                .clip(RectangleShape)
                 .background(Surface3),
         ) {
             Text(
@@ -369,7 +551,7 @@ private fun ContactRow(contact: Contact, onChatClick: () -> Unit, onTrustLevelCl
                     Box(
                         modifier = Modifier
                             .size(8.dp)
-                            .clip(CircleShape)
+                            .clip(RectangleShape)
                             .background(Accent),
                     )
                 }
@@ -383,7 +565,7 @@ private fun ContactRow(contact: Contact, onChatClick: () -> Unit, onTrustLevelCl
             Box(
                 modifier = Modifier
                     .padding(top = 6.dp)
-                    .clip(RoundedCornerShape(999.dp))
+                    .clip(RectangleShape)
                     .background(Surface2)
                     .clickable(onClick = onTrustLevelClick)
                     .padding(horizontal = 8.dp, vertical = 3.dp),
@@ -404,6 +586,16 @@ private fun ContactRow(contact: Contact, onChatClick: () -> Unit, onTrustLevelCl
                     fontFamily = IbmPlexMono,
                     fontSize = 10.sp,
                     letterSpacing = 0.8.sp,
+                )
+            }
+        }
+        if (contact.pendingPublicKey != null) {
+            IconButton(onClick = onKeyChangeClick) {
+                Icon(
+                    imageVector = Icons.Outlined.Warning,
+                    contentDescription = "Encryption key changed — review",
+                    tint = Color(0xFFFF6E5D),
+                    modifier = Modifier.size(20.dp),
                 )
             }
         }

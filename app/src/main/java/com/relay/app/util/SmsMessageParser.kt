@@ -11,6 +11,8 @@ object SmsMessageParser {
     private val EXPIRY_REGEX = Regex("""EXPIRY:(\w+)""", RegexOption.IGNORE_CASE)
     private val LABEL_REGEX = Regex("""LABEL:([^|]{1,30})""", RegexOption.IGNORE_CASE)
     private val READ_RECEIPT_REGEX = Regex("""TYPE:READ_RECEIPT\|MSG_ID:(\d+)""", RegexOption.IGNORE_CASE)
+    private val PUBKEY_REGEX = Regex("""TYPE:PUBKEY\|KEY:([A-Za-z0-9+/=]+)""", RegexOption.IGNORE_CASE)
+    private val ENC_REGEX = Regex("""TYPE:ENC\|CT:([A-Za-z0-9+/=]+)""", RegexOption.IGNORE_CASE)
 
     const val LOCATION_REQUEST_MSG = "TYPE:LOCATION_REQUEST"
     const val LOCATION_DECLINED_MSG = "TYPE:LOCATION_DECLINED"
@@ -57,4 +59,16 @@ object SmsMessageParser {
         READ_RECEIPT_REGEX.find(body)?.groupValues?.get(1)?.toLongOrNull()
 
     fun formatReadReceipt(timestamp: Long): String = "TYPE:READ_RECEIPT|MSG_ID:$timestamp"
+
+    fun isPublicKeyMessage(body: String): Boolean = PUBKEY_REGEX.containsMatchIn(body)
+
+    fun parsePublicKey(body: String): String? = PUBKEY_REGEX.find(body)?.groupValues?.get(1)
+
+    fun formatPublicKey(base64Key: String): String = "TYPE:PUBKEY|KEY:$base64Key"
+
+    fun isEncryptedMessage(body: String): Boolean = ENC_REGEX.find(body.trim()) != null
+
+    fun parseEncryptedPayload(body: String): String? = ENC_REGEX.find(body.trim())?.groupValues?.get(1)
+
+    fun formatEncrypted(base64Ciphertext: String): String = "TYPE:ENC|CT:$base64Ciphertext"
 }

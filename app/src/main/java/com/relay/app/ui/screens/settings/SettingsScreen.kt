@@ -40,6 +40,7 @@ import com.relay.app.ui.theme.Background
 import com.relay.app.ui.theme.Border
 import com.relay.app.ui.theme.IbmPlexMono
 import com.relay.app.ui.theme.IbmPlexSans
+import com.relay.app.ui.theme.OnAccent
 import com.relay.app.ui.theme.Surface1
 import com.relay.app.ui.theme.Surface2
 import com.relay.app.ui.theme.TextPrimary
@@ -204,7 +205,7 @@ private fun ToggleRow(
             onCheckedChange = onCheckedChange,
             enabled = enabled,
             colors = SwitchDefaults.colors(
-                checkedThumbColor = TextPrimary,
+                checkedThumbColor = OnAccent,
                 checkedTrackColor = Accent,
                 uncheckedThumbColor = TextSecondary,
                 uncheckedTrackColor = Surface2,

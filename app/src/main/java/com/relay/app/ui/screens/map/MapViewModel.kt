@@ -15,7 +15,7 @@ import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.GroupMessageRepository
 import com.relay.app.data.repository.GroupRepository
 import com.relay.app.data.repository.MessageRepository
-import com.relay.app.sms.SmsSender
+import com.relay.app.sms.RelaySecureSend
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -126,7 +126,7 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
                 expiry = pinExpiry,
                 label = pinLabel.ifBlank { null },
             )
-            val sent = SmsSender.sendSms(context, contact.phone, body)
+            val sent = RelaySecureSend.send(context, contactRepo, contact, body)
             if (sent) {
                 val expiryAt = pinExpiry.durationMs?.let { System.currentTimeMillis() + it }
                 messageRepo.insertMessage(Message(
@@ -167,7 +167,7 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
             val ts = System.currentTimeMillis()
 
             for (member in group.members) {
-                SmsSender.sendSms(context, member.phone, body)
+                RelaySecureSend.send(context, contactRepo, member, body)
             }
             groupMessageRepo.insertMessage(
                 com.relay.app.data.model.GroupMessage(

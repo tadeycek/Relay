@@ -22,8 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -54,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
@@ -70,6 +69,7 @@ import com.relay.app.ui.theme.Accent
 import com.relay.app.ui.theme.Background
 import com.relay.app.ui.theme.Border
 import com.relay.app.ui.theme.IbmPlexSans
+import com.relay.app.ui.theme.OnAccent
 import com.relay.app.ui.theme.Surface1
 import com.relay.app.ui.theme.Surface2
 import com.relay.app.ui.theme.TextPrimary
@@ -308,14 +308,14 @@ private fun MessageInputBar(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .size(72.dp)
-                        .clip(RoundedCornerShape(8.dp)),
+                        .clip(RectangleShape),
                 )
                 IconButton(
                     onClick = onClearMedia,
                     modifier = Modifier
                         .size(20.dp)
                         .align(Alignment.TopEnd)
-                        .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+                        .background(Color.Black.copy(alpha = 0.6f), RectangleShape),
                 ) {
                     Icon(
                         Icons.Outlined.Close,
@@ -348,7 +348,7 @@ private fun MessageInputBar(
                 placeholder = { Text("Message", color = TextSecondary, fontFamily = IbmPlexSans) },
                 singleLine = false,
                 maxLines = 4,
-                shape = RoundedCornerShape(12.dp),
+                shape = RectangleShape,
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                 keyboardActions = KeyboardActions(onSend = { onSend() }),
                 colors = OutlinedTextFieldDefaults.colors(
@@ -368,14 +368,14 @@ private fun MessageInputBar(
                     .size(44.dp)
                     .background(
                         color = if (canSend) Accent else Surface2,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RectangleShape,
                     ),
             ) {
                 IconButton(onClick = onSend, enabled = canSend) {
                     Icon(
                         imageVector = Icons.AutoMirrored.Outlined.Send,
                         contentDescription = "Send",
-                        tint = if (canSend) Color.White else TextSecondary,
+                        tint = if (canSend) OnAccent else TextSecondary,
                         modifier = Modifier.size(20.dp),
                     )
                 }

@@ -7,8 +7,10 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
+import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.relay.app.crypto.RelayCrypto
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
 import com.relay.app.data.model.ContactTrustLevel
@@ -41,9 +43,35 @@ class SmsReceiver : BroadcastReceiver() {
 
         for ((phone, parts) in grouped) {
             if (phone == null) continue
-            val body = parts.joinToString("") { it.messageBody }
+            val rawBody = parts.joinToString("") { it.messageBody }
 
-            val contact = contactRepo.findByPhoneSync(phone) ?: continue
+            // Unknown numbers still get a thread (matching how any default SMS app behaves)
+            // rather than having the message silently dropped.
+            val contact = contactRepo.findOrCreateByPhoneSync(phone)
+
+            if (SmsMessageParser.isPublicKeyMessage(rawBody)) {
+                handleIncomingPublicKey(context, contactRepo, contact, rawBody)
+                continue
+            }
+
+            var body = rawBody
+            if (SmsMessageParser.isEncryptedMessage(rawBody)) {
+                val decrypted = decryptIncoming(context, rawBody)
+                if (decrypted == null) {
+                    messageRepo.insertMessageSync(
+                        Message(
+                            contactId = contact.id,
+                            body = "[Unable to decrypt message]",
+                            type = MessageType.TEXT,
+                            isSent = false,
+                            timestamp = System.currentTimeMillis(),
+                        )
+                    )
+                    broadcastUpdate(context, contact.id)
+                    continue
+                }
+                body = decrypted
+            }
 
             if (SmsMessageParser.isLocationRequest(body)) {
                 contactRepo.markAsRelayUserSync(contact.id)
@@ -52,6 +80,7 @@ class SmsReceiver : BroadcastReceiver() {
             }
 
             if (SmsMessageParser.isReadReceipt(body)) {
+                if (!allowRateLimited(lastReadReceiptAt, contact.id)) continue
                 val ts = SmsMessageParser.parseReadReceipt(body) ?: continue
                 messageRepo.markReadUpToSync(contact.id, ts)
                 broadcastUpdate(context, contact.id)
@@ -71,7 +100,6 @@ class SmsReceiver : BroadcastReceiver() {
                 else -> MessageType.TEXT
             }
 
-            val prefs = RelayPreferences(context)
             val expiry: PinExpiry
             val pinLabel: String?
             val expiryAt: Long?
@@ -141,6 +169,84 @@ class SmsReceiver : BroadcastReceiver() {
         }
     }
 
+    /**
+     * Learn a contact's public key and, on the first exchange, reply with ours so both sides end
+     * up encrypted. Trust-on-first-use only: SMS sender addresses can be spoofed, so a key that
+     * *contradicts* one we already trust for this contact is held as a pending candidate for the
+     * user to explicitly accept/reject (see ContactsScreen) rather than silently swapped in —
+     * otherwise an attacker could spoof a PUBKEY message and silently redirect our encryption to a
+     * key they control.
+     */
+    private fun handleIncomingPublicKey(
+        context: Context,
+        contactRepo: ContactRepository,
+        contact: Contact,
+        body: String,
+    ) {
+        val key = SmsMessageParser.parsePublicKey(body) ?: return
+        val existing = contact.publicKey
+
+        if (existing != null && existing != key) {
+            contactRepo.setPendingPublicKeySync(contact.id, key)
+            showKeyChangeNotification(context, contact)
+            return
+        }
+        if (existing == null) {
+            contactRepo.setPublicKeySync(contact.id, key)
+        }
+        contactRepo.markAsRelayUserSync(contact.id)
+
+        if (!contactRepo.hasSentPubkeySync(contact.id)) {
+            val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return
+            SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey))
+            contactRepo.markSentPubkeySync(contact.id)
+        }
+    }
+
+    private fun showKeyChangeNotification(context: Context, contact: Contact) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (nm.getNotificationChannel(RelayPreferences.SECURITY_ALERT_CHANNEL) == null) {
+            val channel = NotificationChannel(
+                RelayPreferences.SECURITY_ALERT_CHANNEL,
+                "Security alerts",
+                NotificationManager.IMPORTANCE_HIGH,
+            ).apply { description = "Encryption key changes and other security-relevant events" }
+            nm.createNotificationChannel(channel)
+        }
+        val notification = NotificationCompat.Builder(context, RelayPreferences.SECURITY_ALERT_CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setContentTitle("${contact.name}'s encryption key changed")
+            .setContentText("Review and confirm in Contacts before trusting it")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(SECURITY_NOTIF_BASE + (contact.id % 1000).toInt(), notification)
+    }
+
+    private fun decryptIncoming(context: Context, body: String): String? {
+        val ct = SmsMessageParser.parseEncryptedPayload(body) ?: return null
+        val bytes = try {
+            Base64.decode(ct, Base64.NO_WRAP)
+        } catch (e: Exception) {
+            return null
+        }
+        val plain = RelayCrypto.decryptMine(context, bytes) ?: return null
+        return try {
+            String(plain, Charsets.UTF_8)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /** Simple per-contact cooldown so a malicious/misbehaving sender can't flood location requests or receipts. */
+    private fun allowRateLimited(lastAt: MutableMap<Long, Long>, contactId: Long): Boolean {
+        val now = System.currentTimeMillis()
+        val last = lastAt[contactId]
+        if (last != null && now - last < RATE_LIMIT_WINDOW_MS) return false
+        lastAt[contactId] = now
+        return true
+    }
+
     private fun broadcastUpdate(context: Context, contactId: Long) {
         val update = Intent("com.relay.app.NEW_MESSAGE").apply {
             putExtra("contact_id", contactId)
@@ -158,6 +264,8 @@ class SmsReceiver : BroadcastReceiver() {
     }
 
     private fun handleLocationRequest(context: Context, contact: Contact) {
+        if (!allowRateLimited(lastLocationRequestAt, contact.id)) return
+
         val prefs = RelayPreferences(context)
 
         if (prefs.locationRequestFrom == RelayPreferences.FROM_NOBODY) return
@@ -252,5 +360,9 @@ class SmsReceiver : BroadcastReceiver() {
 
     companion object {
         private const val REQUEST_NOTIF_BASE = 3000
+        private const val SECURITY_NOTIF_BASE = 4000
+        private const val RATE_LIMIT_WINDOW_MS = 30_000L
+        private val lastLocationRequestAt = mutableMapOf<Long, Long>()
+        private val lastReadReceiptAt = mutableMapOf<Long, Long>()
     }
 }

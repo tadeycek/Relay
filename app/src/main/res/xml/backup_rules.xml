@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <exclude domain="database" path="relay.db" />
+    <exclude domain="sharedpref" path="relay_db_secret.xml" />
+    <exclude domain="sharedpref" path="relay_identity_keyset_prefs.xml" />
+    <exclude domain="sharedpref" path="relay_media_keyset_prefs.xml" />
 </full-backup-content>

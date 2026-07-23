@@ -19,7 +19,7 @@ import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.mms.MediaCompressor
 import com.relay.app.mms.MmsSender
-import com.relay.app.sms.SmsSender
+import com.relay.app.sms.RelaySecureSend
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
 import kotlinx.coroutines.Dispatchers
@@ -84,10 +84,11 @@ class ChatViewModel(
     }
 
     fun sendText(body: String, context: Context) {
-        val phone = _contact.value?.phone ?: return
+        val contact = _contact.value ?: return
         viewModelScope.launch {
             val ts = System.currentTimeMillis()
-            SmsSender.sendSms(context, phone, body)
+            val sent = RelaySecureSend.send(context, contactRepo, contact, body)
+            if (!sent) _toastMessage.emit("Message failed to send")
             val msg = Message(
                 contactId = contactId,
                 body = body,
@@ -102,10 +103,11 @@ class ChatViewModel(
     }
 
     fun sendLocationRequest(context: Context) {
-        val phone = _contact.value?.phone ?: return
+        val contact = _contact.value ?: return
         viewModelScope.launch {
             val body = SmsMessageParser.LOCATION_REQUEST_MSG
-            SmsSender.sendSms(context, phone, body)
+            val sent = RelaySecureSend.send(context, contactRepo, contact, body)
+            if (!sent) _toastMessage.emit("Location request failed to send")
             val msg = Message(
                 contactId = contactId,
                 body = body,
@@ -118,16 +120,17 @@ class ChatViewModel(
     }
 
     fun sendReadReceipt(context: Context, lastReceivedTimestamp: Long) {
-        val phone = _contact.value?.phone ?: return
+        val contact = _contact.value ?: return
         if (!RelayPreferences(context).readReceipts) return
         viewModelScope.launch {
             val body = SmsMessageParser.formatReadReceipt(lastReceivedTimestamp)
-            SmsSender.sendSms(context, phone, body)
+            RelaySecureSend.send(context, contactRepo, contact, body)
         }
     }
 
     fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context) {
-        val phone = _contact.value?.phone ?: return
+        val contact = _contact.value ?: return
+        val phone = contact.phone
         viewModelScope.launch {
             if (!MmsSender.isNetworkAvailable(context)) {
                 _toastMessage.emit("Media requires a connection")
@@ -154,6 +157,7 @@ class ChatViewModel(
                         MmsSender.sendMms(
                             context, phone, result.file, result.mimeType,
                             textBody.ifBlank { null },
+                            contact.publicKey,
                         )
                     }
                     if (sent) {

@@ -63,6 +63,26 @@ class GroupRepository(private val dbHelper: RelayDbHelper) {
         }
     }
 
+    suspend fun addMember(groupId: Long, contactId: Long) = withContext(Dispatchers.IO) {
+        val db = dbHelper.writableDatabase
+        db.insertWithOnConflict(
+            GroupMembers.TABLE, null,
+            ContentValues().apply {
+                put(GroupMembers.COL_GROUP_ID, groupId)
+                put(GroupMembers.COL_CONTACT_ID, contactId)
+            },
+            android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE,
+        )
+    }
+
+    suspend fun removeMember(groupId: Long, contactId: Long) = withContext(Dispatchers.IO) {
+        dbHelper.writableDatabase.delete(
+            GroupMembers.TABLE,
+            "${GroupMembers.COL_GROUP_ID} = ? AND ${GroupMembers.COL_CONTACT_ID} = ?",
+            arrayOf(groupId.toString(), contactId.toString()),
+        )
+    }
+
     private fun getMembersSync(groupId: Long): List<Contact> {
         val db = dbHelper.readableDatabase
         val cursor = db.rawQuery(
@@ -72,11 +92,13 @@ class GroupRepository(private val dbHelper: RelayDbHelper) {
         return cursor.use { c ->
             val list = mutableListOf<Contact>()
             while (c.moveToNext()) {
+                val keyIdx = c.getColumnIndex(Contacts.COL_PUBLIC_KEY)
                 list.add(Contact(
                     id = c.getLong(c.getColumnIndexOrThrow(Contacts.COL_ID)),
                     name = c.getString(c.getColumnIndexOrThrow(Contacts.COL_NAME)),
                     phone = c.getString(c.getColumnIndexOrThrow(Contacts.COL_PHONE)),
                     hasRelay = c.getInt(c.getColumnIndexOrThrow(Contacts.COL_HAS_RELAY)) == 1,
+                    publicKey = if (keyIdx >= 0 && !c.isNull(keyIdx)) c.getString(keyIdx) else null,
                 ))
             }
             list

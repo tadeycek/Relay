@@ -92,5 +92,6 @@ class RelayPreferences(context: Context) {
         const val THEME_SYSTEM = "system"
 
         const val LOCATION_REQUEST_CHANNEL = "relay_location_requests"
+        const val SECURITY_ALERT_CHANNEL = "relay_security_alerts"
     }
 }
