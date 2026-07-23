@@ -1,13 +1,14 @@
 package com.relay.app.data.repository
 
 import android.content.ContentValues
-import android.database.Cursor
+import com.google.i18n.phonenumbers.PhoneNumberUtil
 import com.relay.app.data.db.DatabaseContract.Contacts
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
 import com.relay.app.data.model.ContactTrustLevel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import net.sqlcipher.Cursor
 
 class ContactRepository(private val dbHelper: RelayDbHelper) {
 
@@ -37,6 +38,18 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         findByPhoneSync(phone)
     }
 
+    /** Looks up a contact by phone, creating a minimal one (name = phone number) if none exists yet. */
+    fun findOrCreateByPhoneSync(phone: String): Contact {
+        findByPhoneSync(phone)?.let { return it }
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put(Contacts.COL_NAME, phone)
+            put(Contacts.COL_PHONE, phone)
+        }
+        db.insertWithOnConflict(Contacts.TABLE, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
+        return findByPhoneSync(phone) ?: Contact(name = phone, phone = phone)
+    }
+
     fun findByPhoneSync(phone: String): Contact? {
         val db = dbHelper.readableDatabase
         val cursor = db.query(
@@ -52,21 +65,88 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
     }
 
     suspend fun getById(id: Long): Contact? = withContext(Dispatchers.IO) {
+        getByIdSync(id)
+    }
+
+    fun getByIdSync(id: Long): Contact? {
         val db = dbHelper.readableDatabase
         val cursor = db.query(
             Contacts.TABLE, null,
             "${Contacts.COL_ID} = ?", arrayOf(id.toString()),
             null, null, null
         )
-        cursor.use { if (it.moveToFirst()) it.toContact() else null }
+        return cursor.use { if (it.moveToFirst()) it.toContact() else null }
     }
 
     private fun phoneMatches(stored: String, incoming: String): Boolean {
+        // libphonenumber understands country codes/formatting variants; fall back to a
+        // last-N-digit suffix comparison for numbers it can't parse (e.g. short local numbers).
+        val matchType = try {
+            PhoneNumberUtil.getInstance().isNumberMatch(stored, incoming)
+        } catch (e: Exception) {
+            null
+        }
+        when (matchType) {
+            PhoneNumberUtil.MatchType.EXACT_MATCH,
+            PhoneNumberUtil.MatchType.NSN_MATCH,
+            PhoneNumberUtil.MatchType.SHORT_NSN_MATCH -> return true
+            PhoneNumberUtil.MatchType.NO_MATCH -> return false
+            else -> Unit
+        }
+
         val s = stored.filter { it.isDigit() }
         val i = incoming.filter { it.isDigit() }
         val len = minOf(s.length, i.length, 9)
         if (len == 0) return false
         return s.takeLast(len) == i.takeLast(len)
+    }
+
+    fun setPublicKeySync(contactId: Long, publicKeyBase64: String) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Contacts.COL_PUBLIC_KEY, publicKeyBase64) }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
+    /** Holds an unverified candidate key without disturbing the currently-trusted one. */
+    fun setPendingPublicKeySync(contactId: Long, pendingKeyBase64: String) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Contacts.COL_PENDING_PUBLIC_KEY, pendingKeyBase64) }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
+    /** User reviewed a key-change prompt and confirmed it: promote the pending key to trusted. */
+    fun acceptPendingPublicKeySync(contactId: Long) {
+        val contact = getByIdSync(contactId) ?: return
+        val pending = contact.pendingPublicKey ?: return
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put(Contacts.COL_PUBLIC_KEY, pending)
+            putNull(Contacts.COL_PENDING_PUBLIC_KEY)
+        }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
+    /** User rejected the key-change prompt: discard the candidate, keep the previously-trusted key. */
+    fun rejectPendingPublicKeySync(contactId: Long) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { putNull(Contacts.COL_PENDING_PUBLIC_KEY) }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
+    fun hasSentPubkeySync(contactId: Long): Boolean {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            Contacts.TABLE, arrayOf(Contacts.COL_SENT_PUBKEY),
+            "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()),
+            null, null, null
+        )
+        return cursor.use { if (it.moveToFirst()) it.getInt(0) == 1 else false }
+    }
+
+    fun markSentPubkeySync(contactId: Long) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Contacts.COL_SENT_PUBKEY, 1) }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
     }
 
     private fun Cursor.toContactList(): List<Contact> {
@@ -97,5 +177,11 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
                 getString(getColumnIndexOrThrow(Contacts.COL_TRUST_LEVEL))
             } else null
         ),
+        publicKey = getColumnIndex(Contacts.COL_PUBLIC_KEY).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getString(idx) else null
+        },
+        pendingPublicKey = getColumnIndex(Contacts.COL_PENDING_PUBLIC_KEY).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getString(idx) else null
+        },
     )
 }

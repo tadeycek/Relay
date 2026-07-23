@@ -7,13 +7,14 @@ import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import com.relay.app.crypto.RelayCrypto
+import com.relay.app.crypto.RelayFileCrypto
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
 import java.io.File
-import java.io.FileOutputStream
 
 class MmsReceiver : BroadcastReceiver() {
 
@@ -113,15 +114,30 @@ class MmsReceiver : BroadcastReceiver() {
                 mimeType.contains("video") -> "mp4"
                 else -> "bin"
             }
+            val rawBytes = context.contentResolver.openInputStream(Uri.parse(partUri))?.use { it.readBytes() }
+                ?: return null
+            val plainBytes = decryptIfEncrypted(context, rawBytes)
+
             val file = File(context.cacheDir, "mms/recv_${System.currentTimeMillis()}.$ext")
                 .also { it.parentFile?.mkdirs() }
-            context.contentResolver.openInputStream(Uri.parse(partUri))?.use { input ->
-                FileOutputStream(file).use { input.copyTo(it) }
-            }
+            // At-rest encryption: the file on disk is ciphertext even though the sender's E2E
+            // encryption (if any) has already been unwrapped above. Display code must go through
+            // RelayFileCrypto.decryptedViewCopy() to render this.
+            RelayFileCrypto.writeEncrypted(context, file, plainBytes)
             file.absolutePath
         } catch (e: Exception) {
             Log.e("MmsReceiver", "Failed to copy MMS part $partUri", e)
             null
+        }
+
+        /** Strips and decrypts the E2E envelope if [bytes] carry [RelayCrypto.MMS_ENC_MAGIC]; otherwise returns as-is. */
+        private fun decryptIfEncrypted(context: Context, bytes: ByteArray): ByteArray {
+            val magic = RelayCrypto.MMS_ENC_MAGIC
+            if (bytes.size <= magic.size || !bytes.copyOfRange(0, magic.size).contentEquals(magic)) {
+                return bytes
+            }
+            val ciphertext = bytes.copyOfRange(magic.size, bytes.size)
+            return RelayCrypto.decryptMine(context, ciphertext) ?: bytes
         }
     }
 }

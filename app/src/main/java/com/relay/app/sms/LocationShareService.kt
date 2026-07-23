@@ -14,8 +14,10 @@ import android.os.IBinder
 import android.os.Looper
 import androidx.core.app.NotificationCompat
 import com.relay.app.data.db.RelayDbHelper
+import com.relay.app.data.model.Contact
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
+import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
@@ -102,9 +104,12 @@ class LocationShareService : Service() {
         location: Location,
     ) {
         val body = SmsMessageParser.formatLocation(location.latitude, location.longitude)
-        SmsSender.sendSms(this, phone, body)
+        val db = RelayDbHelper(this)
+        val contactRepo = ContactRepository(db)
+        val contact = contactRepo.getByIdSync(contactId) ?: Contact(id = contactId, name = contactName, phone = phone)
+        RelaySecureSend.send(this, contactRepo, contact, body)
 
-        val repo = MessageRepository(RelayDbHelper(this))
+        val repo = MessageRepository(db)
         repo.insertMessageSync(
             Message(
                 contactId = contactId,
@@ -125,9 +130,12 @@ class LocationShareService : Service() {
     }
 
     private fun sendDecline(phone: String, contactId: Long) {
-        SmsSender.sendSms(this, phone, SmsMessageParser.LOCATION_DECLINED_MSG)
+        val db = RelayDbHelper(this)
+        val contactRepo = ContactRepository(db)
+        val contact = contactRepo.getByIdSync(contactId) ?: Contact(id = contactId, name = phone, phone = phone)
+        RelaySecureSend.send(this, contactRepo, contact, SmsMessageParser.LOCATION_DECLINED_MSG)
 
-        val repo = MessageRepository(RelayDbHelper(this))
+        val repo = MessageRepository(db)
         repo.insertMessageSync(
             Message(
                 contactId = contactId,

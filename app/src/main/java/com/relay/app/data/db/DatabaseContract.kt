@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 5
+    const val DB_VERSION = 7
 
     object Contacts {
         const val TABLE = "contacts"
@@ -11,6 +11,9 @@ object DatabaseContract {
         const val COL_PHONE = "phone"
         const val COL_HAS_RELAY = "has_relay"
         const val COL_TRUST_LEVEL = "trust_level"
+        const val COL_PUBLIC_KEY = "public_key"
+        const val COL_SENT_PUBKEY = "sent_pubkey"
+        const val COL_PENDING_PUBLIC_KEY = "pending_public_key"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -18,12 +21,18 @@ object DatabaseContract {
                 $COL_NAME      TEXT    NOT NULL,
                 $COL_PHONE     TEXT    NOT NULL UNIQUE,
                 $COL_HAS_RELAY INTEGER NOT NULL DEFAULT 0,
-                $COL_TRUST_LEVEL TEXT  NOT NULL DEFAULT 'ask'
+                $COL_TRUST_LEVEL TEXT  NOT NULL DEFAULT 'ask',
+                $COL_PUBLIC_KEY TEXT,
+                $COL_SENT_PUBKEY INTEGER NOT NULL DEFAULT 0,
+                $COL_PENDING_PUBLIC_KEY TEXT
             )
         """
 
         const val ADD_HAS_RELAY = "ALTER TABLE $TABLE ADD COLUMN $COL_HAS_RELAY INTEGER NOT NULL DEFAULT 0"
         const val ADD_TRUST_LEVEL = "ALTER TABLE $TABLE ADD COLUMN $COL_TRUST_LEVEL TEXT NOT NULL DEFAULT 'ask'"
+        const val ADD_PUBLIC_KEY = "ALTER TABLE $TABLE ADD COLUMN $COL_PUBLIC_KEY TEXT"
+        const val ADD_SENT_PUBKEY = "ALTER TABLE $TABLE ADD COLUMN $COL_SENT_PUBKEY INTEGER NOT NULL DEFAULT 0"
+        const val ADD_PENDING_PUBLIC_KEY = "ALTER TABLE $TABLE ADD COLUMN $COL_PENDING_PUBLIC_KEY TEXT"
     }
 
     object Messages {

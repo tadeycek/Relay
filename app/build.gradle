@@ -55,6 +55,16 @@ dependencies {
     implementation 'org.osmdroid:osmdroid-android:6.1.18'
     implementation 'com.google.accompanist:accompanist-permissions:0.34.0'
     implementation 'io.coil-kt:coil-compose:2.6.0'
+
+    // Security: E2E message/media crypto (Tink), encrypted local DB (SQLCipher),
+    // Keystore-backed secret storage, biometric app lock, phone number normalization.
+    implementation 'com.google.crypto.tink:tink-android:1.23.0'
+    implementation 'net.zetetic:android-database-sqlcipher:4.5.4'
+    implementation 'androidx.sqlite:sqlite:2.4.0'
+    implementation 'androidx.security:security-crypto:1.1.0'
+    implementation 'androidx.biometric:biometric:1.1.0'
+    implementation 'com.googlecode.libphonenumber:libphonenumber:9.0.35'
+
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }

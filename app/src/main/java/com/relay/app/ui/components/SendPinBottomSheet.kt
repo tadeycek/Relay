@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Group
 import androidx.compose.material3.Button
@@ -37,6 +35,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,6 +46,7 @@ import com.relay.app.ui.theme.Accent
 import com.relay.app.ui.theme.Border
 import com.relay.app.ui.theme.IbmPlexMono
 import com.relay.app.ui.theme.IbmPlexSans
+import com.relay.app.ui.theme.OnAccent
 import com.relay.app.ui.theme.Surface1
 import com.relay.app.ui.theme.Surface2
 import com.relay.app.ui.theme.Surface3
@@ -78,7 +78,7 @@ fun SendPinBottomSheet(
         sheetState = sheetState,
         containerColor = Surface2,
         contentColor = TextPrimary,
-        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        shape = RectangleShape,
         dragHandle = null,
     ) {
         Column(
@@ -91,7 +91,7 @@ fun SendPinBottomSheet(
             Box(
                 modifier = Modifier
                     .size(36.dp, 4.dp)
-                    .clip(CircleShape)
+                    .clip(RectangleShape)
                     .background(Surface3)
                     .align(Alignment.CenterHorizontally),
             )
@@ -129,7 +129,7 @@ fun SendPinBottomSheet(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RectangleShape)
                         .background(Surface1)
                         .clickable { showExpiryMenu = true }
                         .padding(horizontal = 12.dp, vertical = 10.dp),
@@ -188,7 +188,7 @@ fun SendPinBottomSheet(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RectangleShape)
                                     .background(if (selected) Surface3 else Color.Transparent)
                                     .clickable { onGroupSelected(group.id) }
                                     .padding(12.dp),
@@ -198,13 +198,13 @@ fun SendPinBottomSheet(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .size(40.dp)
-                                        .clip(CircleShape)
+                                        .clip(RectangleShape)
                                         .background(if (selected) Accent else Surface3),
                                 ) {
                                     androidx.compose.material3.Icon(
                                         imageVector = Icons.Outlined.Group,
                                         contentDescription = null,
-                                        tint = if (selected) Color.White else TextSecondary,
+                                        tint = if (selected) OnAccent else TextSecondary,
                                         modifier = Modifier.size(20.dp),
                                     )
                                 }
@@ -239,7 +239,7 @@ fun SendPinBottomSheet(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(10.dp))
+                                    .clip(RectangleShape)
                                     .background(if (selected) Surface3 else Color.Transparent)
                                     .clickable { onContactSelected(contact.id) }
                                     .padding(12.dp),
@@ -249,12 +249,12 @@ fun SendPinBottomSheet(
                                     contentAlignment = Alignment.Center,
                                     modifier = Modifier
                                         .size(40.dp)
-                                        .clip(CircleShape)
+                                        .clip(RectangleShape)
                                         .background(if (selected) Accent else Surface3),
                                 ) {
                                     Text(
                                         text = contact.name.first().uppercaseChar().toString(),
-                                        color = if (selected) Color.White else TextSecondary,
+                                        color = if (selected) OnAccent else TextSecondary,
                                         fontFamily = IbmPlexSans,
                                         fontWeight = FontWeight.Medium,
                                         fontSize = 16.sp,
@@ -278,11 +278,11 @@ fun SendPinBottomSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(52.dp),
-                shape = RoundedCornerShape(14.dp),
+                shape = RectangleShape,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Accent,
                     disabledContainerColor = Surface3,
-                    contentColor = Color.White,
+                    contentColor = OnAccent,
                     disabledContentColor = TextSecondary,
                 ),
             ) {

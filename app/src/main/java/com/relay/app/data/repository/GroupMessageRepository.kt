@@ -1,13 +1,13 @@
 package com.relay.app.data.repository
 
 import android.content.ContentValues
-import android.database.Cursor
 import com.relay.app.data.db.DatabaseContract.GroupMessages
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.GroupMessage
 import com.relay.app.data.model.MessageType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import net.sqlcipher.Cursor
 
 class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
 

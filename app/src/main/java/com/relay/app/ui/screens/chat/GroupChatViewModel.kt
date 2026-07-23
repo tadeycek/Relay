@@ -17,7 +17,7 @@ import com.relay.app.data.model.MessageType
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.GroupMessageRepository
 import com.relay.app.data.repository.GroupRepository
-import com.relay.app.sms.SmsSender
+import com.relay.app.sms.RelaySecureSend
 import com.relay.app.util.SmsMessageParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -79,7 +79,7 @@ class GroupChatViewModel(
         viewModelScope.launch {
             val ts = System.currentTimeMillis()
             for (member in members) {
-                SmsSender.sendSms(context, member.phone, body)
+                RelaySecureSend.send(context, contactRepo, member, body)
             }
             groupMessageRepo.insertMessage(GroupMessage(
                 groupId = groupId,
@@ -98,7 +98,7 @@ class GroupChatViewModel(
         viewModelScope.launch {
             val body = SmsMessageParser.LOCATION_REQUEST_MSG
             for (member in members) {
-                SmsSender.sendSms(context, member.phone, body)
+                RelaySecureSend.send(context, contactRepo, member, body)
             }
             groupMessageRepo.insertMessage(GroupMessage(
                 groupId = groupId,

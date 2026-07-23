@@ -1,11 +1,33 @@
 package com.relay.app.data.db
 
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
+import net.sqlcipher.database.SQLiteDatabase
+import net.sqlcipher.database.SQLiteOpenHelper
 
+/**
+ * relay.db is opened through SQLCipher rather than the platform SQLite
+ * implementation, so the file is encrypted at rest. The passphrase is
+ * generated once and stored via [RelayDbPassphrase] (Keystore-backed
+ * EncryptedSharedPreferences) — callers never see or handle it directly,
+ * they just use `readableDatabase`/`writableDatabase` as before.
+ */
 class RelayDbHelper(context: Context) :
     SQLiteOpenHelper(context.applicationContext, DatabaseContract.DB_NAME, null, DatabaseContract.DB_VERSION) {
+
+    private val appContext = context.applicationContext
+
+    init {
+        SQLiteDatabase.loadLibs(appContext)
+    }
+
+    // Declared as real Kotlin properties (not just same-named functions) so existing call sites
+    // like `dbHelper.readableDatabase` keep working: Kotlin only auto-exposes getFoo()-as-.foo
+    // for Java-declared members, not for same-named Kotlin functions we add ourselves.
+    val readableDatabase: SQLiteDatabase
+        get() = getReadableDatabase(RelayDbPassphrase.get(appContext))
+
+    val writableDatabase: SQLiteDatabase
+        get() = getWritableDatabase(RelayDbPassphrase.get(appContext))
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(DatabaseContract.Contacts.CREATE)
@@ -36,6 +58,13 @@ class RelayDbHelper(context: Context) :
         }
         if (oldVersion < 5) {
             db.execSQL(DatabaseContract.Contacts.ADD_TRUST_LEVEL)
+        }
+        if (oldVersion < 6) {
+            db.execSQL(DatabaseContract.Contacts.ADD_PUBLIC_KEY)
+            db.execSQL(DatabaseContract.Contacts.ADD_SENT_PUBKEY)
+        }
+        if (oldVersion < 7) {
+            db.execSQL(DatabaseContract.Contacts.ADD_PENDING_PUBLIC_KEY)
         }
     }
 

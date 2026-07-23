@@ -73,4 +73,32 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
             _contacts.value = repo.getAllContacts()
         }
     }
+
+    fun acceptKeyChange(contactId: Long) {
+        viewModelScope.launch {
+            repo.acceptPendingPublicKeySync(contactId)
+            _contacts.value = repo.getAllContacts()
+        }
+    }
+
+    fun rejectKeyChange(contactId: Long) {
+        viewModelScope.launch {
+            repo.rejectPendingPublicKeySync(contactId)
+            _contacts.value = repo.getAllContacts()
+        }
+    }
+
+    fun removeMemberFromGroup(groupId: Long, contactId: Long) {
+        viewModelScope.launch {
+            groupRepo.removeMember(groupId, contactId)
+            _groups.value = groupRepo.getAllGroups()
+        }
+    }
+
+    fun addMemberToGroup(groupId: Long, contactId: Long) {
+        viewModelScope.launch {
+            groupRepo.addMember(groupId, contactId)
+            _groups.value = groupRepo.getAllGroups()
+        }
+    }
 }

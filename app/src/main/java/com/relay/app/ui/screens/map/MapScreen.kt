@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChatBubble
 import androidx.compose.material.icons.outlined.History
@@ -27,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
@@ -44,6 +44,7 @@ import com.relay.app.ui.components.SendPinBottomSheet
 import com.relay.app.ui.navigation.Screen
 import com.relay.app.ui.theme.Accent
 import com.relay.app.ui.theme.Background
+import com.relay.app.ui.theme.OnAccent
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.tileprovider.tilesource.XYTileSource
@@ -202,12 +203,12 @@ fun MapScreen(navController: NavController) {
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .size(32.dp)
-                    .background(Accent, RoundedCornerShape(8.dp)),
+                    .background(Accent, RectangleShape),
             ) {
                 Icon(
                     imageVector = Icons.Outlined.LocationOn,
                     contentDescription = null,
-                    tint = Color.White,
+                    tint = OnAccent,
                     modifier = Modifier.size(18.dp),
                 )
             }
@@ -266,9 +267,9 @@ fun MapScreen(navController: NavController) {
                     .align(Alignment.BottomEnd)
                     .padding(16.dp)
                     .size(56.dp),
-                shape = RoundedCornerShape(14.dp),
+                shape = RectangleShape,
                 containerColor = Accent,
-                contentColor = Color.White,
+                contentColor = OnAccent,
             ) {
                 Icon(
                     imageVector = Icons.Outlined.LocationOn,

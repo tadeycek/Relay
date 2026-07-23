@@ -12,8 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
@@ -31,14 +30,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.relay.app.crypto.RelayFileCrypto
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.ui.theme.Accent
 import com.relay.app.ui.theme.IbmPlexMono
 import com.relay.app.ui.theme.IbmPlexSans
+import com.relay.app.ui.theme.OnAccent
 import com.relay.app.ui.theme.Surface2
 import com.relay.app.ui.theme.TextPrimary
 import com.relay.app.ui.theme.TextSecondary
@@ -71,7 +73,7 @@ fun MessageBubble(message: Message) {
 @Composable
 private fun TextBubble(message: Message) {
     val bgColor = if (message.isSent) Accent else Surface2
-    val textColor = if (message.isSent) Color.White else TextPrimary
+    val textColor = if (message.isSent) OnAccent else TextPrimary
     val shape = bubbleShape(message.isSent)
 
     Column(
@@ -95,7 +97,7 @@ private fun TextBubble(message: Message) {
         ) {
             Text(
                 text = timeFormat.format(Date(message.timestamp)),
-                color = if (message.isSent) Color.White.copy(alpha = 0.7f) else TextSecondary,
+                color = if (message.isSent) OnAccent.copy(alpha = 0.6f) else TextSecondary,
                 fontFamily = IbmPlexMono,
                 fontSize = 10.sp,
             )
@@ -104,7 +106,7 @@ private fun TextBubble(message: Message) {
                 Icon(
                     imageVector = if (isRead) Icons.Filled.DoneAll else Icons.Filled.Done,
                     contentDescription = null,
-                    tint = if (isRead) Accent else Color.White.copy(alpha = 0.6f),
+                    tint = if (isRead) OnAccent else OnAccent.copy(alpha = 0.5f),
                     modifier = Modifier.size(12.dp),
                 )
             }
@@ -158,10 +160,30 @@ private fun LocationBubble(message: Message) {
     }
 }
 
+/**
+ * Received media is cached at rest as ciphertext ([RelayFileCrypto]); this produces a short-lived
+ * plaintext copy for Coil/MediaMetadataRetriever to render. Files that were never encrypted (e.g.
+ * media we sent) come back through unchanged via [RelayFileCrypto.decryptedViewCopy]'s fallback.
+ */
+@Composable
+private fun rememberDisplayFile(path: String): File? {
+    val context = LocalContext.current
+    return produceState<File?>(initialValue = null, key1 = path) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val original = File(path)
+                if (!original.exists()) null else RelayFileCrypto.decryptedViewCopy(context, original)
+            }.getOrNull()
+        }
+    }.value
+}
+
 @Composable
 private fun ImageBubble(message: Message) {
     val uri = message.mediaUri ?: return
     val shape = bubbleShape(message.isSent)
+    val displayFile = if (uri.startsWith("/")) rememberDisplayFile(uri) else null
+    val model: Any? = if (uri.startsWith("/")) displayFile else android.net.Uri.parse(uri)
 
     Column(
         modifier = Modifier
@@ -170,7 +192,7 @@ private fun ImageBubble(message: Message) {
             .background(Surface2),
     ) {
         AsyncImage(
-            model = if (uri.startsWith("/")) File(uri) else android.net.Uri.parse(uri),
+            model = model,
             contentDescription = "Image",
             contentScale = ContentScale.Crop,
             modifier = Modifier
@@ -202,17 +224,23 @@ private fun ImageBubble(message: Message) {
 private fun VideoBubble(message: Message) {
     val path = message.mediaUri ?: return
     val shape = bubbleShape(message.isSent)
+    val displayFile = rememberDisplayFile(path)
 
-    val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = path) {
-        value = withContext(Dispatchers.IO) {
-            val retriever = MediaMetadataRetriever()
-            try {
-                retriever.setDataSource(path)
-                retriever.getFrameAtTime(0)
-            } catch (e: Exception) {
-                null
-            } finally {
-                retriever.release()
+    val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = displayFile) {
+        val target = displayFile
+        value = if (target == null) {
+            null
+        } else {
+            withContext(Dispatchers.IO) {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(target.absolutePath)
+                    retriever.getFrameAtTime(0)
+                } catch (e: Exception) {
+                    null
+                } finally {
+                    retriever.release()
+                }
             }
         }
     }
@@ -247,7 +275,7 @@ private fun VideoBubble(message: Message) {
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .background(Color.Black.copy(alpha = 0.55f), CircleShape),
+                    .background(Color.Black.copy(alpha = 0.55f), RectangleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Icon(
@@ -345,8 +373,4 @@ private fun LocationDeclinedBubble(message: Message) {
     }
 }
 
-private fun bubbleShape(isSent: Boolean) = if (isSent) {
-    RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
-} else {
-    RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
-}
+private fun bubbleShape(isSent: Boolean): androidx.compose.ui.graphics.Shape = RectangleShape

@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -40,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -54,6 +54,7 @@ import com.relay.app.ui.theme.Background
 import com.relay.app.ui.theme.Border
 import com.relay.app.ui.theme.IbmPlexMono
 import com.relay.app.ui.theme.IbmPlexSans
+import com.relay.app.ui.theme.OnAccent
 import com.relay.app.ui.theme.Surface1
 import com.relay.app.ui.theme.Surface2
 import com.relay.app.ui.theme.TextPrimary
@@ -146,12 +147,8 @@ private fun GroupMessageBubble(message: GroupMessage) {
             isSent -> Accent
             else -> Surface2
         }
-        val shape = if (isSent) {
-            RoundedCornerShape(topStart = 16.dp, topEnd = 4.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
-        } else {
-            RoundedCornerShape(topStart = 4.dp, topEnd = 16.dp, bottomStart = 16.dp, bottomEnd = 16.dp)
-        }
-        val textColor = if (isSent && message.type == MessageType.TEXT) Color.White else TextPrimary
+        val shape = RectangleShape
+        val textColor = if (isSent && message.type == MessageType.TEXT) OnAccent else TextPrimary
 
         Column(
             modifier = Modifier
@@ -168,14 +165,14 @@ private fun GroupMessageBubble(message: GroupMessage) {
                         (message.pinLabel?.let { "\n$it" } ?: "")
                     else -> message.body
                 },
-                color = if (message.type == MessageType.TEXT && isSent) Color.White else TextPrimary,
+                color = if (message.type == MessageType.TEXT && isSent) OnAccent else TextPrimary,
                 fontFamily = IbmPlexSans,
                 fontSize = 14.sp,
                 lineHeight = 20.sp,
             )
             Text(
                 text = groupTimeFormat.format(Date(message.timestamp)),
-                color = if (isSent) Color.White.copy(alpha = 0.7f) else TextSecondary,
+                color = if (isSent) OnAccent.copy(alpha = 0.6f) else TextSecondary,
                 fontFamily = IbmPlexMono,
                 fontSize = 10.sp,
                 modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
@@ -208,7 +205,7 @@ private fun GroupMessageInputBar(
             placeholder = { Text("Message group", color = TextSecondary, fontFamily = IbmPlexSans) },
             singleLine = false,
             maxLines = 4,
-            shape = RoundedCornerShape(12.dp),
+            shape = RectangleShape,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions = KeyboardActions(onSend = { onSend() }),
             colors = OutlinedTextFieldDefaults.colors(
@@ -228,14 +225,14 @@ private fun GroupMessageInputBar(
                 .size(44.dp)
                 .background(
                     color = if (canSend) Accent else Surface2,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RectangleShape,
                 ),
         ) {
             IconButton(onClick = onSend, enabled = canSend) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Outlined.Send,
                     contentDescription = "Send",
-                    tint = if (canSend) Color.White else TextSecondary,
+                    tint = if (canSend) OnAccent else TextSecondary,
                     modifier = Modifier.size(20.dp),
                 )
             }
