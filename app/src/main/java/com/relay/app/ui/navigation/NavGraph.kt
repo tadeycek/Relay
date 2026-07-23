@@ -11,6 +11,7 @@ import com.relay.app.ui.screens.chat.GroupChatScreen
 import com.relay.app.ui.screens.contacts.ContactsScreen
 import com.relay.app.ui.screens.map.MapScreen
 import com.relay.app.ui.screens.map.PinHistoryScreen
+import com.relay.app.ui.screens.qr.QrExchangeScreen
 import com.relay.app.ui.screens.settings.SettingsScreen
 
 sealed class Screen(val route: String) {
@@ -18,6 +19,7 @@ sealed class Screen(val route: String) {
     object Contacts : Screen("contacts")
     object Settings : Screen("settings")
     object PinHistory : Screen("pin_history")
+    object QrExchange : Screen("qr_exchange")
     object Chat : Screen("chat/{contactId}") {
         const val ROUTE = "chat/{contactId}"
         fun routeFor(id: Long) = "chat/$id"
@@ -45,6 +47,9 @@ fun RelayNavGraph(navController: NavHostController) {
         }
         composable(Screen.PinHistory.route) {
             PinHistoryScreen(navController = navController)
+        }
+        composable(Screen.QrExchange.route) {
+            QrExchangeScreen(navController = navController)
         }
         composable(
             route = Screen.Chat.ROUTE,

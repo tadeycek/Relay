@@ -27,6 +27,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.QrCode
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
@@ -96,6 +97,13 @@ fun ContactsScreen(navController: NavController) {
                 title = "Contacts",
                 onBack = { navController.popBackStack() },
                 actions = {
+                    IconButton(onClick = { navController.navigate(Screen.QrExchange.route) }) {
+                        Icon(
+                            imageVector = Icons.Outlined.QrCode,
+                            contentDescription = "QR contact exchange",
+                            tint = TextSecondary,
+                        )
+                    }
                     IconButton(onClick = { showNewGroupDialog = true }) {
                         Icon(
                             imageVector = Icons.Outlined.Group,
