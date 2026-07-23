@@ -83,6 +83,7 @@ fun QrExchangeScreen(navController: NavController) {
     val context = LocalContext.current
     val prefs = remember { RelayPreferences(context) }
     var selectedTab by remember { mutableStateOf(QrTab.SCAN) }
+    var pendingContactId by remember { mutableStateOf<Long?>(null) }
 
     Scaffold(
         topBar = {
@@ -111,15 +112,32 @@ fun QrExchangeScreen(navController: NavController) {
             }
 
             when (selectedTab) {
-                QrTab.SCAN -> ScanTab(navController)
-                QrTab.MY_CODE -> MyCodeTab(prefs)
+                QrTab.SCAN -> ScanTab(
+                    onConnected = { contactId ->
+                        pendingContactId = contactId
+                        selectedTab = QrTab.MY_CODE
+                    },
+                )
+                QrTab.MY_CODE -> MyCodeTab(
+                    prefs = prefs,
+                    pendingContactId = pendingContactId,
+                    onProceedToChat = { contactId ->
+                        navController.navigate(Screen.Chat.routeFor(contactId)) {
+                            popUpTo(Screen.QrExchange.route) { inclusive = true }
+                        }
+                    },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun MyCodeTab(prefs: RelayPreferences) {
+private fun MyCodeTab(
+    prefs: RelayPreferences,
+    pendingContactId: Long? = null,
+    onProceedToChat: (Long) -> Unit = {},
+) {
     val context = LocalContext.current
     var name by remember { mutableStateOf(prefs.myName) }
     var phone by remember { mutableStateOf(prefs.myPhone) }
@@ -132,6 +150,27 @@ private fun MyCodeTab(prefs: RelayPreferences) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
+        if (pendingContactId != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Surface2)
+                    .padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    "Scanned! Have them scan your code below to finish the secure connection.",
+                    color = TextPrimary,
+                    fontFamily = IbmPlexSans,
+                    modifier = Modifier.padding(bottom = 8.dp),
+                )
+                TextButton(onClick = { onProceedToChat(pendingContactId) }) {
+                    Text("Skip — start chatting now", color = Accent, fontFamily = IbmPlexSans)
+                }
+            }
+            androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
+        }
+
         if (!profileSet) {
             Text(
                 "Set up your profile once — this is what people see when they scan your code.",
@@ -209,7 +248,7 @@ private fun MyCodeTab(prefs: RelayPreferences) {
 }
 
 @Composable
-private fun ScanTab(navController: NavController) {
+private fun ScanTab(onConnected: (Long) -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
@@ -234,9 +273,7 @@ private fun ScanTab(navController: NavController) {
             val contactRepo = ContactRepository(db)
             val contact = QrContactExchange.onScanned(context, contactRepo, value)
             withContext(Dispatchers.Main) {
-                navController.navigate(Screen.Chat.routeFor(contact.id)) {
-                    popUpTo(Screen.QrExchange.route) { inclusive = true }
-                }
+                onConnected(contact.id)
             }
         }
     }
