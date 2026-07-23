@@ -196,6 +196,13 @@ class SmsReceiver : BroadcastReceiver() {
         }
         contactRepo.markAsRelayUserSync(contact.id)
 
+        // Learn a display name from the handshake only if we don't already have a real one
+        // (findOrCreateByPhoneSync defaults an unknown contact's name to their phone number).
+        val incomingName = SmsMessageParser.parsePublicKeyName(body)
+        if (incomingName != null && contact.name == contact.phone) {
+            contactRepo.setNameSync(contact.id, incomingName)
+        }
+
         if (!contactRepo.hasSentPubkeySync(contact.id)) {
             val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return
             SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey))

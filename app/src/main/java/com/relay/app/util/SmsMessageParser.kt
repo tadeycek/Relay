@@ -11,7 +11,10 @@ object SmsMessageParser {
     private val EXPIRY_REGEX = Regex("""EXPIRY:(\w+)""", RegexOption.IGNORE_CASE)
     private val LABEL_REGEX = Regex("""LABEL:([^|]{1,30})""", RegexOption.IGNORE_CASE)
     private val READ_RECEIPT_REGEX = Regex("""TYPE:READ_RECEIPT\|MSG_ID:(\d+)""", RegexOption.IGNORE_CASE)
-    private val PUBKEY_REGEX = Regex("""TYPE:PUBKEY\|KEY:([A-Za-z0-9+/=]+)""", RegexOption.IGNORE_CASE)
+    private val PUBKEY_REGEX = Regex(
+        """TYPE:PUBKEY\|KEY:([A-Za-z0-9+/=]+)(?:\|NAME:([^|]{0,30}))?""",
+        RegexOption.IGNORE_CASE
+    )
     private val ENC_REGEX = Regex("""TYPE:ENC\|CT:([A-Za-z0-9+/=]+)""", RegexOption.IGNORE_CASE)
 
     const val LOCATION_REQUEST_MSG = "TYPE:LOCATION_REQUEST"
@@ -64,7 +67,15 @@ object SmsMessageParser {
 
     fun parsePublicKey(body: String): String? = PUBKEY_REGEX.find(body)?.groupValues?.get(1)
 
-    fun formatPublicKey(base64Key: String): String = "TYPE:PUBKEY|KEY:$base64Key"
+    /** Optional display name carried alongside the key (e.g. from a QR-triggered exchange). */
+    fun parsePublicKeyName(body: String): String? =
+        PUBKEY_REGEX.find(body)?.groupValues?.get(2)?.trim()?.takeIf { it.isNotEmpty() }
+
+    fun formatPublicKey(base64Key: String, name: String? = null): String {
+        val base = "TYPE:PUBKEY|KEY:$base64Key"
+        val safeName = name?.trim()?.take(30)?.replace("|", "")
+        return if (!safeName.isNullOrEmpty()) "$base|NAME:$safeName" else base
+    }
 
     fun isEncryptedMessage(body: String): Boolean = ENC_REGEX.find(body.trim()) != null
 

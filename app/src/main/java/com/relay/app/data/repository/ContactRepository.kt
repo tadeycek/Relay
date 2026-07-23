@@ -107,6 +107,12 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
     }
 
+    fun setNameSync(contactId: Long, name: String) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Contacts.COL_NAME, name) }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
     /** Holds an unverified candidate key without disturbing the currently-trusted one. */
     fun setPendingPublicKeySync(contactId: Long, pendingKeyBase64: String) {
         val db = dbHelper.writableDatabase

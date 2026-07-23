@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
@@ -53,7 +52,11 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.relay.app.crypto.RelayCrypto
+import com.relay.app.data.db.RelayDbHelper
+import com.relay.app.data.repository.ContactRepository
+import com.relay.app.sms.QrContactExchange
 import com.relay.app.ui.components.RelayTopBar
+import com.relay.app.ui.navigation.Screen
 import com.relay.app.ui.theme.Accent
 import com.relay.app.ui.theme.Background
 import com.relay.app.ui.theme.Border
@@ -69,6 +72,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.QrCode
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material3.Icon
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private enum class QrTab { SCAN, MY_CODE }
 
@@ -105,7 +111,7 @@ fun QrExchangeScreen(navController: NavController) {
             }
 
             when (selectedTab) {
-                QrTab.SCAN -> ScanTab()
+                QrTab.SCAN -> ScanTab(navController)
                 QrTab.MY_CODE -> MyCodeTab(prefs)
             }
         }
@@ -203,9 +209,10 @@ private fun MyCodeTab(prefs: RelayPreferences) {
 }
 
 @Composable
-private fun ScanTab() {
+private fun ScanTab(navController: NavController) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
     var hasCameraPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
@@ -216,8 +223,23 @@ private fun ScanTab() {
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted -> hasCameraPermission = granted }
 
-    var decoded by remember { mutableStateOf<QrContactCode.ScannedContact?>(null) }
     var scanned by remember { mutableStateOf(false) }
+    var connecting by remember { mutableStateOf(false) }
+
+    fun handleDecoded(value: QrContactCode.ScannedContact) {
+        scanned = true
+        connecting = true
+        coroutineScope.launch(Dispatchers.IO) {
+            val db = RelayDbHelper(context)
+            val contactRepo = ContactRepository(db)
+            val contact = QrContactExchange.onScanned(context, contactRepo, value)
+            withContext(Dispatchers.Main) {
+                navController.navigate(Screen.Chat.routeFor(contact.id)) {
+                    popUpTo(Screen.QrExchange.route) { inclusive = true }
+                }
+            }
+        }
+    }
 
     if (!hasCameraPermission) {
         Column(
@@ -244,10 +266,7 @@ private fun ScanTab() {
     Box(modifier = Modifier.fillMaxSize()) {
         val onDecodedState = rememberUpdatedState<(String) -> Unit> { raw ->
             if (!scanned) {
-                QrContactCode.decode(raw)?.let {
-                    scanned = true
-                    decoded = it
-                }
+                QrContactCode.decode(raw)?.let { handleDecoded(it) }
             }
         }
 
@@ -296,29 +315,17 @@ private fun ScanTab() {
                 runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() }
             }
         }
-    }
 
-    val found = decoded
-    if (found != null) {
-        AlertDialog(
-            onDismissRequest = { decoded = null; scanned = false },
-            containerColor = Surface1,
-            titleContentColor = TextPrimary,
-            textContentColor = TextSecondary,
-            title = { Text("Code scanned", fontFamily = IbmPlexSans) },
-            text = {
-                Text(
-                    "Name: ${found.name}\nPhone: ${found.phone}\n\n(Stage 1 — not saved as a contact yet.)",
-                    color = TextSecondary,
-                    fontFamily = IbmPlexSans,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { decoded = null; scanned = false }) {
-                    Text("OK", color = Accent, fontFamily = IbmPlexSans)
-                }
-            },
-        )
+        if (connecting) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.75f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text("Connecting…", color = TextPrimary, fontFamily = IbmPlexSans)
+            }
+        }
     }
 }
 
