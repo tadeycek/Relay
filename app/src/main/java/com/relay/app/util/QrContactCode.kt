@@ -9,7 +9,12 @@ package com.relay.app.util
 object QrContactCode {
 
     private const val VERSION = 1
-    private val REGEX = Regex("""RELAYQR:1\|PHONE:([^|]+)\|NAME:([^|]{0,30})\|KEY:([A-Za-z0-9+/=]+)""")
+    // Match the version generically (not a hardcoded "1") so bumping VERSION doesn't silently break
+    // decoding of freshly-encoded codes.
+    private val REGEX = Regex("""RELAYQR:(\d+)\|PHONE:([^|]+)\|NAME:([^|]{0,30})\|KEY:([A-Za-z0-9+/=]+)""")
+
+    /** Strip control/format chars (newlines, RTL-override, etc.) that could smuggle through a name. */
+    private fun sanitize(s: String): String = s.replace(Regex("""[\p{Cc}\p{Cf}]"""), "").replace("|", "")
 
     data class ScannedContact(
         val phone: String,
@@ -18,15 +23,16 @@ object QrContactCode {
     )
 
     fun encode(phone: String, name: String, publicKeyBase64: String): String {
-        val safeName = name.take(30).replace("|", "")
-        return "RELAYQR:$VERSION|PHONE:$phone|NAME:$safeName|KEY:$publicKeyBase64"
+        val safeName = sanitize(name).take(30)
+        val safePhone = sanitize(phone)
+        return "RELAYQR:$VERSION|PHONE:$safePhone|NAME:$safeName|KEY:$publicKeyBase64"
     }
 
     fun decode(raw: String): ScannedContact? {
         val match = REGEX.find(raw.trim()) ?: return null
-        val phone = match.groupValues[1].trim()
-        val name = match.groupValues[2].trim()
-        val key = match.groupValues[3]
+        val phone = sanitize(match.groupValues[2]).trim()
+        val name = sanitize(match.groupValues[3]).trim()
+        val key = match.groupValues[4]
         if (phone.isEmpty() || key.isEmpty()) return null
         return ScannedContact(
             phone = phone,

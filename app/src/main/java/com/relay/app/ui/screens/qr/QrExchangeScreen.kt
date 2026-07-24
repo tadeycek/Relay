@@ -23,6 +23,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -197,6 +198,7 @@ private fun MyCodeTab(
             )
             androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
             com.relay.app.ui.components.PhoneNumberField(
+                initialE164 = prefs.myPhone,
                 onE164Change = { phone = it },
                 modifier = Modifier.fillMaxWidth(),
             )
@@ -213,19 +215,26 @@ private fun MyCodeTab(
                 Text("Generate my code")
             }
         } else {
-            val myKey = remember { RelayCrypto.myPublicKeyBase64(context) }
-            if (myKey == null) {
-                Text(
-                    "Couldn't generate your encryption key. Try again shortly.",
-                    color = TextSecondary,
-                    fontFamily = IbmPlexSans,
-                )
-            } else {
-                val payload = remember(prefs.myPhone, prefs.myName, myKey) { QrContactCode.encode(prefs.myPhone, prefs.myName, myKey) }
-                val bitmap = remember(payload) { encodeQrBitmap(payload, 800) }
-                if (bitmap != null) {
+            // Keystore keypair generation + QR bitmap rendering are both expensive; run them off the
+            // main thread (this composes right after the post-scan auto tab-flip, so a main-thread
+            // stall here would freeze at the worst moment). null bitmap after done = failure.
+            var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
+            var qrFailed by remember { mutableStateOf(false) }
+            androidx.compose.runtime.LaunchedEffect(prefs.myPhone, prefs.myName) {
+                qrFailed = false
+                qrBitmap = null
+                val bmp = withContext(Dispatchers.Default) {
+                    val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return@withContext null
+                    encodeQrBitmap(QrContactCode.encode(prefs.myPhone, prefs.myName, myKey), 800)
+                }
+                if (bmp == null) qrFailed = true else qrBitmap = bmp
+            }
+
+            val bmp = qrBitmap
+            when {
+                bmp != null -> {
                     androidx.compose.foundation.Image(
-                        bitmap = bitmap.asImageBitmap(),
+                        bitmap = bmp.asImageBitmap(),
                         contentDescription = "Your QR code",
                         modifier = Modifier
                             .size(260.dp)
@@ -234,10 +243,16 @@ private fun MyCodeTab(
                     )
                     androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
                     Text(prefs.myName, color = TextPrimary, fontFamily = IbmPlexSans, fontSize = 16.sp)
+                    TextButton(onClick = { profileSet = false }) {
+                        Text("Edit profile", color = Accent, fontFamily = IbmPlexSans)
+                    }
                 }
-                TextButton(onClick = { profileSet = false }) {
-                    Text("Edit profile", color = Accent, fontFamily = IbmPlexSans)
-                }
+                qrFailed -> Text(
+                    "Couldn't generate your code. Try again.",
+                    color = TextSecondary,
+                    fontFamily = IbmPlexSans,
+                )
+                else -> Text("Generating your code…", color = TextSecondary, fontFamily = IbmPlexSans)
             }
         }
     }
@@ -260,16 +275,39 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
 
     var scanned by remember { mutableStateOf(false) }
     var connecting by remember { mutableStateOf(false) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+    var pendingScan by remember { mutableStateOf<QrContactCode.ScannedContact?>(null) }
+    val prefs = remember { RelayPreferences(context) }
 
-    fun handleDecoded(value: QrContactCode.ScannedContact) {
+    fun onDecoded(value: QrContactCode.ScannedContact) {
+        // Guard against scanning your own code (e.g. a screenshot / second device) — it would
+        // create a self-contact and fire an SMS to your own number.
+        if (prefs.myPhone.isNotBlank() && value.phone == prefs.myPhone) {
+            errorMsg = "That's your own code."
+            return
+        }
+        // Stop the scanner and ask for confirmation before saving + firing an SMS to the scanned
+        // number (the QR's number is attacker-choosable; don't act on it silently).
         scanned = true
+        pendingScan = value
+    }
+
+    fun confirmAdd(value: QrContactCode.ScannedContact) {
+        pendingScan = null
         connecting = true
         coroutineScope.launch(Dispatchers.IO) {
-            val db = RelayDbHelper(context)
-            val contactRepo = ContactRepository(db)
-            val contact = QrContactExchange.onScanned(context, contactRepo, value)
+            val result = runCatching {
+                val db = RelayDbHelper(context)
+                val contactRepo = ContactRepository(db)
+                QrContactExchange.onScanned(context, contactRepo, value)
+            }
             withContext(Dispatchers.Main) {
-                onConnected(contact.id)
+                result.onSuccess { onConnected(it.id) }
+                    .onFailure {
+                        connecting = false
+                        scanned = false
+                        errorMsg = "Couldn't add contact. Try again."
+                    }
             }
         }
     }
@@ -296,10 +334,19 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
         return
     }
 
+    // Held so the async camera-provider callback can be told to abort if the tab is disposed before
+    // it fires (otherwise it binds the camera *after* onDispose ran unbindAll, leaving it running),
+    // and so the ML Kit scanner (a Closeable native resource) gets released.
+    val disposed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
+    val scannerRef = remember { BarcodeScanning.getClient(
+        BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
+    ) }
+
     Box(modifier = Modifier.fillMaxSize()) {
         val onDecodedState = rememberUpdatedState<(String) -> Unit> { raw ->
             if (!scanned) {
-                QrContactCode.decode(raw)?.let { handleDecoded(it) }
+                val decoded = QrContactCode.decode(raw)
+                if (decoded != null) onDecoded(decoded) else errorMsg = "Not a Relay code."
             }
         }
 
@@ -308,12 +355,9 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
             factory = { ctx ->
                 val previewView = PreviewView(ctx)
                 val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-                val scannerOptions = BarcodeScannerOptions.Builder()
-                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                    .build()
-                val scanner = BarcodeScanning.getClient(scannerOptions)
 
                 cameraProviderFuture.addListener({
+                    if (disposed.get()) return@addListener
                     val cameraProvider = cameraProviderFuture.get()
                     val preview = Preview.Builder().build().also {
                         it.setSurfaceProvider(previewView.surfaceProvider)
@@ -323,7 +367,7 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
                         .build()
                     analysis.setAnalyzer(
                         ContextCompat.getMainExecutor(ctx),
-                        QrAnalyzer(scanner) { value -> onDecodedState.value(value) },
+                        QrAnalyzer(scannerRef) { value -> onDecodedState.value(value) },
                     )
                     try {
                         cameraProvider.unbindAll()
@@ -345,7 +389,9 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
 
         DisposableEffect(Unit) {
             onDispose {
+                disposed.set(true)
                 runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() }
+                runCatching { scannerRef.close() }
             }
         }
 
@@ -359,6 +405,50 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
                 Text("Connecting…", color = TextPrimary, fontFamily = IbmPlexSans)
             }
         }
+
+        errorMsg?.let { msg ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(24.dp)
+                    .background(Surface1)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Text(msg, color = TextPrimary, fontFamily = IbmPlexSans)
+            }
+            // Auto-clear so the scanner can retry.
+            androidx.compose.runtime.LaunchedEffect(msg) {
+                kotlinx.coroutines.delay(2500)
+                errorMsg = null
+            }
+        }
+    }
+
+    pendingScan?.let { scan ->
+        AlertDialog(
+            onDismissRequest = { pendingScan = null; scanned = false },
+            containerColor = Surface1,
+            titleContentColor = TextPrimary,
+            textContentColor = TextSecondary,
+            title = { Text("Add contact?", fontFamily = IbmPlexSans) },
+            text = {
+                Text(
+                    "${scan.name}\n${scan.phone}\n\nThis saves them and texts them your key.",
+                    color = TextSecondary,
+                    fontFamily = IbmPlexSans,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { confirmAdd(scan) }) {
+                    Text("Add", color = Accent, fontFamily = IbmPlexSans)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingScan = null; scanned = false }) {
+                    Text("Cancel", color = TextSecondary, fontFamily = IbmPlexSans)
+                }
+            },
+        )
     }
 }
 
@@ -384,13 +474,16 @@ private class QrAnalyzer(
 
 private fun encodeQrBitmap(content: String, size: Int): Bitmap? = try {
     val bitMatrix = QRCodeWriter().encode(content, BarcodeFormat.QR_CODE, size, size)
-    val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.RGB_565)
-    for (x in 0 until size) {
-        for (y in 0 until size) {
-            bmp.setPixel(x, y, if (bitMatrix.get(x, y)) AndroidColor.BLACK else AndroidColor.WHITE)
+    // Fill a plain IntArray and hand it to createBitmap in one shot, rather than size*size
+    // individual setPixel() JNI calls (640k of them at 800px).
+    val pixels = IntArray(size * size)
+    for (y in 0 until size) {
+        val row = y * size
+        for (x in 0 until size) {
+            pixels[row + x] = if (bitMatrix.get(x, y)) AndroidColor.BLACK else AndroidColor.WHITE
         }
     }
-    bmp
+    Bitmap.createBitmap(pixels, size, size, Bitmap.Config.RGB_565)
 } catch (e: Exception) {
     null
 }

@@ -640,6 +640,8 @@ private fun AddContactDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        modifier = Modifier.fillMaxWidth(0.94f),
         containerColor = Surface1,
         titleContentColor = TextPrimary,
         textContentColor = TextSecondary,

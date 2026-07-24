@@ -205,8 +205,9 @@ class SmsReceiver : BroadcastReceiver() {
 
         if (!contactRepo.hasSentPubkeySync(contact.id)) {
             val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return
-            SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey))
-            contactRepo.markSentPubkeySync(contact.id)
+            // Only mark sent if the SMS actually went out; otherwise the peer never gets our key.
+            val sent = SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey))
+            if (sent) contactRepo.markSentPubkeySync(contact.id)
         }
     }
 

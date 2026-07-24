@@ -69,11 +69,12 @@ object SmsMessageParser {
 
     /** Optional display name carried alongside the key (e.g. from a QR-triggered exchange). */
     fun parsePublicKeyName(body: String): String? =
-        PUBKEY_REGEX.find(body)?.groupValues?.get(2)?.trim()?.takeIf { it.isNotEmpty() }
+        PUBKEY_REGEX.find(body)?.groupValues?.get(2)
+            ?.replace(Regex("""[\p{Cc}\p{Cf}]"""), "")?.trim()?.takeIf { it.isNotEmpty() }
 
     fun formatPublicKey(base64Key: String, name: String? = null): String {
         val base = "TYPE:PUBKEY|KEY:$base64Key"
-        val safeName = name?.trim()?.take(30)?.replace("|", "")
+        val safeName = name?.replace(Regex("""[\p{Cc}\p{Cf}]"""), "")?.replace("|", "")?.trim()?.take(30)
         return if (!safeName.isNullOrEmpty()) "$base|NAME:$safeName" else base
     }
 
