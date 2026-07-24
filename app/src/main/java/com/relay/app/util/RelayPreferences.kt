@@ -67,6 +67,15 @@ class RelayPreferences(context: Context) {
         get() = prefs.getInt(KEY_DND_END_HOUR, 7)
         set(v) { prefs.edit().putInt(KEY_DND_END_HOUR, v.coerceIn(0, 23)).apply() }
 
+    /** Self-profile shown on your own QR code (Contacts -> QR icon -> My Code). Empty until set. */
+    var myName: String
+        get() = prefs.getString(KEY_MY_NAME, "") ?: ""
+        set(v) { prefs.edit().putString(KEY_MY_NAME, v).apply() }
+
+    var myPhone: String
+        get() = prefs.getString(KEY_MY_PHONE, "") ?: ""
+        set(v) { prefs.edit().putString(KEY_MY_PHONE, v).apply() }
+
     companion object {
         private const val PREFS_NAME = "relay_settings"
         private const val KEY_AUTO_APPROVE = "auto_approve_location"
@@ -84,6 +93,8 @@ class RelayPreferences(context: Context) {
         private const val KEY_DND_ENABLED = "dnd_enabled"
         private const val KEY_DND_START_HOUR = "dnd_start_hour"
         private const val KEY_DND_END_HOUR = "dnd_end_hour"
+        private const val KEY_MY_NAME = "my_name"
+        private const val KEY_MY_PHONE = "my_phone"
 
         const val FROM_ALL = "all"
         const val FROM_NOBODY = "nobody"
