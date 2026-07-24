@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -58,7 +57,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -66,6 +64,7 @@ import androidx.navigation.NavController
 import com.relay.app.data.model.Contact
 import com.relay.app.data.model.ContactTrustLevel
 import com.relay.app.data.model.Group
+import com.relay.app.ui.components.PhoneNumberField
 import com.relay.app.ui.components.RelayTopBar
 import com.relay.app.ui.navigation.Screen
 import com.relay.app.ui.theme.Accent
@@ -657,13 +656,8 @@ private fun AddContactDialog(
                     colors = fieldColors,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                OutlinedTextField(
-                    value = phone,
-                    onValueChange = { phone = it },
-                    label = { Text("Phone number", fontFamily = IbmPlexSans) },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    colors = fieldColors,
+                PhoneNumberField(
+                    onE164Change = { phone = it },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

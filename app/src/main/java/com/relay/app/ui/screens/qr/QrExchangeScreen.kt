@@ -196,12 +196,8 @@ private fun MyCodeTab(
                 modifier = Modifier.fillMaxWidth(),
             )
             androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
-            OutlinedTextField(
-                value = phone,
-                onValueChange = { phone = it },
-                label = { Text("Your phone number", fontFamily = IbmPlexSans) },
-                singleLine = true,
-                colors = fieldColors,
+            com.relay.app.ui.components.PhoneNumberField(
+                onE164Change = { phone = it },
                 modifier = Modifier.fillMaxWidth(),
             )
             androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
