@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import android.preference.PreferenceManager
+import com.relay.app.sms.KeyRotationReceiver
 import com.relay.app.sms.PinExpiryReceiver
 import org.osmdroid.config.Configuration
 import java.io.File
@@ -23,6 +24,7 @@ class RelayApplication : Application() {
             osmdroidTileCache = File(cacheDir, "osmdroid")
         }
         schedulePinExpiryAlarm()
+        scheduleKeyRotationCheck()
     }
 
     private fun schedulePinExpiryAlarm() {
@@ -36,6 +38,25 @@ class RelayApplication : Application() {
             AlarmManager.ELAPSED_REALTIME,
             SystemClock.elapsedRealtime() + 15 * 60 * 1000L,
             15 * 60 * 1000L,
+            intent,
+        )
+    }
+
+    /** Daily no-op-most-days check that actually rotates the E2E identity key once 30 days have
+     *  passed (see KeyRotationReceiver) — daily rather than a single long alarm since AlarmManager
+     *  wake-ups aren't reliably preserved across reboots/battery optimization for month-long gaps. */
+    private fun scheduleKeyRotationCheck() {
+        val am = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        val intent = PendingIntent.getBroadcast(
+            this, 0,
+            Intent(this, KeyRotationReceiver::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        val dayMs = 24 * 60 * 60 * 1000L
+        am.setInexactRepeating(
+            AlarmManager.ELAPSED_REALTIME,
+            SystemClock.elapsedRealtime() + dayMs,
+            dayMs,
             intent,
         )
     }

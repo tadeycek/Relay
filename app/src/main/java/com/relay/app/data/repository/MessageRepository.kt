@@ -39,6 +39,7 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             msg.pinLabel?.let { put(Messages.COL_PIN_LABEL, it) }
             msg.expiryAt?.let { put(Messages.COL_EXPIRY_AT, it) }
             msg.msgId?.let { put(Messages.COL_MSG_ID, it) }
+            put(Messages.COL_SENDER_VERIFIED, if (msg.senderVerified) 1 else 0)
         }
         return db.insert(Messages.TABLE, null, values)
     }
@@ -111,6 +112,7 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
         val expiryAtIdx = getColumnIndex(Messages.COL_EXPIRY_AT)
         val msgIdIdx = getColumnIndex(Messages.COL_MSG_ID)
         val readAtIdx = getColumnIndex(Messages.COL_READ_AT)
+        val senderVerifiedIdx = getColumnIndex(Messages.COL_SENDER_VERIFIED)
         return Message(
             id = getLong(getColumnIndexOrThrow(Messages.COL_ID)),
             contactId = getLong(getColumnIndexOrThrow(Messages.COL_CONTACT_ID)),
@@ -125,6 +127,9 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             expiryAt = if (expiryAtIdx >= 0 && !isNull(expiryAtIdx)) getLong(expiryAtIdx) else null,
             msgId = if (msgIdIdx >= 0 && !isNull(msgIdIdx)) getString(msgIdIdx) else null,
             readAt = if (readAtIdx >= 0 && !isNull(readAtIdx)) getLong(readAtIdx) else null,
+            senderVerified = if (senderVerifiedIdx >= 0 && !isNull(senderVerifiedIdx)) {
+                getInt(senderVerifiedIdx) == 1
+            } else true,
         )
     }
 }

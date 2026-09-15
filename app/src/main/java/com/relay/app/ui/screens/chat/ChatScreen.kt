@@ -31,6 +31,7 @@ import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.LocationSearching
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -192,6 +193,16 @@ fun ChatScreen(contactId: Long, navController: NavController) {
             RelayTopBar(
                 title = contact?.name ?: "",
                 onBack = { navController.popBackStack() },
+                titleIcon = if (contact?.publicKey != null) {
+                    {
+                        Icon(
+                            imageVector = Icons.Outlined.Lock,
+                            contentDescription = "Encrypted",
+                            tint = Accent,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                } else null,
                 actions = {
                     IconButton(onClick = { vm.sendLocationRequest(context) }) {
                         Icon(

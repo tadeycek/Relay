@@ -22,6 +22,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -137,6 +138,20 @@ fun SettingsScreen(navController: NavController) {
                 onSelect = { vm.updateDndEndHour(it.toInt()) },
             )
 
+            SectionHeader("Security")
+
+            ActionRow(
+                label = "Rotate encryption key now",
+                subtitle = if (vm.lastKeyRotationAt == 0L) {
+                    "Never rotated — happens automatically every 30 days"
+                } else {
+                    "Last rotated ${formatRotationDate(vm.lastKeyRotationAt)} — pushes a fresh key to every encrypted contact"
+                },
+                actionLabel = if (vm.rotatingKey) "Rotating…" else "Rotate",
+                enabled = !vm.rotatingKey,
+                onClick = vm::rotateEncryptionKeyNow,
+            )
+
             SectionHeader("Map")
 
             SliderRow(
@@ -162,6 +177,11 @@ fun SettingsScreen(navController: NavController) {
 
 private fun hourOptions(): List<Pair<String, String>> = (0..23).map { hour ->
     hour.toString() to String.format("%02d:00", hour)
+}
+
+private fun formatRotationDate(epochMillis: Long): String {
+    val formatter = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
+    return formatter.format(java.util.Date(epochMillis))
 }
 
 @Composable
@@ -212,6 +232,43 @@ private fun ToggleRow(
                 uncheckedBorderColor = Border,
             ),
         )
+    }
+}
+
+@Composable
+private fun ActionRow(
+    label: String,
+    subtitle: String,
+    actionLabel: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Surface1)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+            Text(
+                text = label,
+                color = TextPrimary,
+                fontFamily = IbmPlexSans,
+                fontSize = 14.sp,
+            )
+            Text(
+                text = subtitle,
+                color = TextSecondary,
+                fontFamily = IbmPlexSans,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        TextButton(onClick = onClick, enabled = enabled) {
+            Text(actionLabel, color = if (enabled) Accent else TextSecondary, fontFamily = IbmPlexSans)
+        }
     }
 }
 

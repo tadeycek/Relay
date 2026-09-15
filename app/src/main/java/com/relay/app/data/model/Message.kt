@@ -14,4 +14,13 @@ data class Message(
     val expiryAt: Long? = null,
     val msgId: String? = null,
     val readAt: Long? = null,
+    /**
+     * For a received, decrypted message: whether the sender's signature over the ciphertext
+     * verified against the contact's stored signing key. False means it decrypted fine but its
+     * authenticity couldn't be confirmed — either the sender/contact predates the signing-key
+     * handshake, or (rarer) the signature genuinely didn't match, e.g. a spoofed sender. True for
+     * every non-encrypted message and every message we sent ourselves — verification only applies
+     * to something we received and decrypted.
+     */
+    val senderVerified: Boolean = true,
 )

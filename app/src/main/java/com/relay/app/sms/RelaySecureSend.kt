@@ -24,7 +24,12 @@ object RelaySecureSend {
         val wireBody = if (publicKey != null) {
             val ciphertext = RelayCrypto.encryptTo(publicKey, plainBody.toByteArray(Charsets.UTF_8))
             if (ciphertext != null) {
-                SmsMessageParser.formatEncrypted(Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+                // Sign the ciphertext with our long-term signing key so the receiver can confirm
+                // it really came from us — Tink's hybrid encryption alone only proves the message
+                // was encrypted to the recipient's key, not who encrypted it (HPKE base mode has
+                // no sender authentication), and SMS sender IDs are trivially spoofable.
+                val signature = RelayCrypto.signBytes(context, ciphertext)
+                SmsMessageParser.formatEncrypted(Base64.encodeToString(ciphertext, Base64.NO_WRAP), signature)
             } else {
                 plainBody
             }
@@ -37,7 +42,8 @@ object RelaySecureSend {
     private fun maybeBootstrapKeyExchange(context: Context, contactRepo: ContactRepository, contact: Contact) {
         if (contactRepo.hasSentPubkeySync(contact.id)) return
         val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return
-        SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey))
+        val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
+        SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey, signingKeyBase64 = mySigningKey))
         contactRepo.markSentPubkeySync(contact.id)
     }
 }

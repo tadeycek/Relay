@@ -107,6 +107,20 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
     }
 
+    /**
+     * Stores the contact's signing public key the first time we learn it (initial QR/SMS
+     * pairing). Never overwrites an existing value — that key is the long-term trust anchor for
+     * verifying later key rotations, so once set it can only change via the normal
+     * pending-key-change review flow, exactly like [publicKey] itself.
+     */
+    fun setSigningPublicKeyIfAbsentSync(contactId: Long, signingKeyBase64: String) {
+        val contact = getByIdSync(contactId) ?: return
+        if (contact.signingPublicKey != null) return
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Contacts.COL_SIGNING_PUBLIC_KEY, signingKeyBase64) }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
     fun setNameSync(contactId: Long, name: String) {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply { put(Contacts.COL_NAME, name) }
@@ -187,6 +201,9 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
             if (idx >= 0 && !isNull(idx)) getString(idx) else null
         },
         pendingPublicKey = getColumnIndex(Contacts.COL_PENDING_PUBLIC_KEY).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getString(idx) else null
+        },
+        signingPublicKey = getColumnIndex(Contacts.COL_SIGNING_PUBLIC_KEY).let { idx ->
             if (idx >= 0 && !isNull(idx)) getString(idx) else null
         },
     )

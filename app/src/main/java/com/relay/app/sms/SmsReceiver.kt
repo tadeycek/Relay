@@ -55,8 +55,9 @@ class SmsReceiver : BroadcastReceiver() {
             }
 
             var body = rawBody
+            var senderVerified = true
             if (SmsMessageParser.isEncryptedMessage(rawBody)) {
-                val decrypted = decryptIncoming(context, rawBody)
+                val decrypted = decryptIncoming(context, contact, rawBody)
                 if (decrypted == null) {
                     messageRepo.insertMessageSync(
                         Message(
@@ -70,7 +71,8 @@ class SmsReceiver : BroadcastReceiver() {
                     broadcastUpdate(context, contact.id)
                     continue
                 }
-                body = decrypted
+                body = decrypted.body
+                senderVerified = decrypted.senderVerified
             }
 
             if (SmsMessageParser.isLocationRequest(body)) {
@@ -123,6 +125,7 @@ class SmsReceiver : BroadcastReceiver() {
                 timestamp = System.currentTimeMillis(),
                 pinLabel = pinLabel,
                 expiryAt = expiryAt,
+                senderVerified = senderVerified,
             )
             messageRepo.insertMessageSync(message)
             Log.d("SmsReceiver", "Stored message from ${contact.name}: type=${message.type}")
@@ -176,6 +179,12 @@ class SmsReceiver : BroadcastReceiver() {
      * user to explicitly accept/reject (see ContactsScreen) rather than silently swapped in —
      * otherwise an attacker could spoof a PUBKEY message and silently redirect our encryption to a
      * key they control.
+     *
+     * Exception: a key change carrying a valid [SmsMessageParser.parsePublicKeyRotationSignature]
+     * — verified against the contact's already-trusted [Contact.signingPublicKey] — is a routine
+     * key rotation (see RelayCrypto.rotateIdentityKey), not a spoof, so it's accepted immediately
+     * without the pending-review dialog. The signing key itself is never updated this way; it's
+     * only ever learned once (see [contact].signingPublicKey persistence in ContactRepository).
      */
     private fun handleIncomingPublicKey(
         context: Context,
@@ -187,14 +196,32 @@ class SmsReceiver : BroadcastReceiver() {
         val existing = contact.publicKey
 
         if (existing != null && existing != key) {
-            contactRepo.setPendingPublicKeySync(contact.id, key)
-            showKeyChangeNotification(context, contact)
+            val rotationSig = SmsMessageParser.parsePublicKeyRotationSignature(body)
+            val signingKey = contact.signingPublicKey
+            val keyBytes = if (rotationSig != null && signingKey != null) {
+                try { Base64.decode(key, Base64.NO_WRAP) } catch (e: Exception) { null }
+            } else null
+            val isVerifiedRotation = keyBytes != null && rotationSig != null && signingKey != null &&
+                RelayCrypto.verifyBytes(keyBytes, rotationSig, signingKey)
+            if (isVerifiedRotation) {
+                contactRepo.setPublicKeySync(contact.id, key)
+                contactRepo.rejectPendingPublicKeySync(contact.id)
+            } else {
+                contactRepo.setPendingPublicKeySync(contact.id, key)
+                showKeyChangeNotification(context, contact)
+            }
             return
         }
         if (existing == null) {
             contactRepo.setPublicKeySync(contact.id, key)
         }
         contactRepo.markAsRelayUserSync(contact.id)
+
+        // Learn the signing key once, the first time we see it — never overwritten afterward
+        // (see ContactRepository.setSigningPublicKeyIfAbsentSync).
+        SmsMessageParser.parsePublicKeySigningKey(body)?.let {
+            contactRepo.setSigningPublicKeyIfAbsentSync(contact.id, it)
+        }
 
         // Learn a display name from the handshake only if we don't already have a real one
         // (findOrCreateByPhoneSync defaults an unknown contact's name to their phone number).
@@ -205,8 +232,13 @@ class SmsReceiver : BroadcastReceiver() {
 
         if (!contactRepo.hasSentPubkeySync(contact.id)) {
             val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return
+            val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
             // Only mark sent if the SMS actually went out; otherwise the peer never gets our key.
-            val sent = SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey))
+            val sent = SmsSender.sendSms(
+                context,
+                contact.phone,
+                SmsMessageParser.formatPublicKey(myKey, signingKeyBase64 = mySigningKey),
+            )
             if (sent) contactRepo.markSentPubkeySync(contact.id)
         }
     }
@@ -231,7 +263,18 @@ class SmsReceiver : BroadcastReceiver() {
         nm.notify(SECURITY_NOTIF_BASE + (contact.id % 1000).toInt(), notification)
     }
 
-    private fun decryptIncoming(context: Context, body: String): String? {
+    private data class DecryptedIncoming(val body: String, val senderVerified: Boolean)
+
+    /**
+     * Decrypts an incoming `TYPE:ENC` message and checks whether it's authentically from
+     * [contact]. Tink's hybrid encryption here only proves the ciphertext was encrypted to *our*
+     * public key — anyone who knows it can produce a decryptable ciphertext, so without a
+     * separate signature check a spoofed SMS sender ID could deliver a forged "encrypted" message
+     * that looks identical to a real one. [DecryptedIncoming.senderVerified] is false whenever
+     * that check can't be done or fails; callers still show the message (see onReceive) but mark
+     * it distinctly rather than silently trusting it.
+     */
+    private fun decryptIncoming(context: Context, contact: Contact, body: String): DecryptedIncoming? {
         val ct = SmsMessageParser.parseEncryptedPayload(body) ?: return null
         val bytes = try {
             Base64.decode(ct, Base64.NO_WRAP)
@@ -239,11 +282,16 @@ class SmsReceiver : BroadcastReceiver() {
             return null
         }
         val plain = RelayCrypto.decryptMine(context, bytes) ?: return null
-        return try {
+        val plainText = try {
             String(plain, Charsets.UTF_8)
         } catch (e: Exception) {
-            null
+            return null
         }
+        val signature = SmsMessageParser.parseEncryptedSignature(body)
+        val signingKey = contact.signingPublicKey
+        val verified = signature != null && signingKey != null &&
+            RelayCrypto.verifyBytes(bytes, signature, signingKey)
+        return DecryptedIncoming(plainText, verified)
     }
 
     /** Simple per-contact cooldown so a malicious/misbehaving sender can't flood location requests or receipts. */

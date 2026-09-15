@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Group
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.QrCode
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.AlertDialog
@@ -560,6 +561,14 @@ private fun ContactRow(
                             .size(8.dp)
                             .clip(RectangleShape)
                             .background(Accent),
+                    )
+                }
+                if (contact.publicKey != null) {
+                    Icon(
+                        imageVector = Icons.Outlined.Lock,
+                        contentDescription = "Encrypted",
+                        tint = Accent,
+                        modifier = Modifier.size(14.dp),
                     )
                 }
             }

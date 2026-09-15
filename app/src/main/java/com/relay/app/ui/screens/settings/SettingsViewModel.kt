@@ -6,7 +6,12 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.relay.app.sms.KeyRotationReceiver
 import com.relay.app.util.RelayPreferences
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -50,6 +55,24 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     var dndEndHour by mutableStateOf(prefs.dndEndHour)
         private set
+
+    var rotatingKey by mutableStateOf(false)
+        private set
+
+    var lastKeyRotationAt by mutableStateOf(prefs.lastKeyRotationAt)
+        private set
+
+    /** Manually retires the current E2E encryption key and broadcasts a fresh one to every
+     *  already-paired contact — see KeyRotationReceiver for the same thing on a 30-day schedule. */
+    fun rotateEncryptionKeyNow() {
+        if (rotatingKey) return
+        rotatingKey = true
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { KeyRotationReceiver.rotateAndBroadcast(getApplication()) }
+            lastKeyRotationAt = prefs.lastKeyRotationAt
+            rotatingKey = false
+        }
+    }
 
     fun updateAutoApproveLocationRequests(v: Boolean) {
         prefs.autoApproveLocationRequests = v

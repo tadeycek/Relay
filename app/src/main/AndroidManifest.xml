@@ -67,6 +67,14 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".sms.PinExpiryReceiver"
+            android:exported="false" />
+
+        <receiver
+            android:name=".sms.KeyRotationReceiver"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

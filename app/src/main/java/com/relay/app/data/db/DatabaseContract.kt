@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 7
+    const val DB_VERSION = 9
 
     object Contacts {
         const val TABLE = "contacts"
@@ -14,6 +14,7 @@ object DatabaseContract {
         const val COL_PUBLIC_KEY = "public_key"
         const val COL_SENT_PUBKEY = "sent_pubkey"
         const val COL_PENDING_PUBLIC_KEY = "pending_public_key"
+        const val COL_SIGNING_PUBLIC_KEY = "signing_public_key"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -24,7 +25,8 @@ object DatabaseContract {
                 $COL_TRUST_LEVEL TEXT  NOT NULL DEFAULT 'ask',
                 $COL_PUBLIC_KEY TEXT,
                 $COL_SENT_PUBKEY INTEGER NOT NULL DEFAULT 0,
-                $COL_PENDING_PUBLIC_KEY TEXT
+                $COL_PENDING_PUBLIC_KEY TEXT,
+                $COL_SIGNING_PUBLIC_KEY TEXT
             )
         """
 
@@ -33,6 +35,7 @@ object DatabaseContract {
         const val ADD_PUBLIC_KEY = "ALTER TABLE $TABLE ADD COLUMN $COL_PUBLIC_KEY TEXT"
         const val ADD_SENT_PUBKEY = "ALTER TABLE $TABLE ADD COLUMN $COL_SENT_PUBKEY INTEGER NOT NULL DEFAULT 0"
         const val ADD_PENDING_PUBLIC_KEY = "ALTER TABLE $TABLE ADD COLUMN $COL_PENDING_PUBLIC_KEY TEXT"
+        const val ADD_SIGNING_PUBLIC_KEY = "ALTER TABLE $TABLE ADD COLUMN $COL_SIGNING_PUBLIC_KEY TEXT"
     }
 
     object Messages {
@@ -50,6 +53,7 @@ object DatabaseContract {
         const val COL_EXPIRY_AT = "expiry_at"
         const val COL_MSG_ID = "msg_id"
         const val COL_READ_AT = "read_at"
+        const val COL_SENDER_VERIFIED = "sender_verified"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -66,7 +70,8 @@ object DatabaseContract {
                 $COL_PIN_LABEL   TEXT,
                 $COL_EXPIRY_AT   INTEGER,
                 $COL_MSG_ID      TEXT,
-                $COL_READ_AT     INTEGER
+                $COL_READ_AT     INTEGER,
+                $COL_SENDER_VERIFIED INTEGER NOT NULL DEFAULT 1
             )
         """
 
@@ -79,6 +84,7 @@ object DatabaseContract {
         const val ADD_EXPIRY_AT = "ALTER TABLE $TABLE ADD COLUMN $COL_EXPIRY_AT INTEGER"
         const val ADD_MSG_ID = "ALTER TABLE $TABLE ADD COLUMN $COL_MSG_ID TEXT"
         const val ADD_READ_AT = "ALTER TABLE $TABLE ADD COLUMN $COL_READ_AT INTEGER"
+        const val ADD_SENDER_VERIFIED = "ALTER TABLE $TABLE ADD COLUMN $COL_SENDER_VERIFIED INTEGER NOT NULL DEFAULT 1"
     }
 
     object Groups {
