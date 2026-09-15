@@ -43,7 +43,11 @@ object RelaySecureSend {
         if (contactRepo.hasSentPubkeySync(contact.id)) return
         val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return
         val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
-        SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey, signingKeyBase64 = mySigningKey))
-        contactRepo.markSentPubkeySync(contact.id)
+        val sent = SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey, signingKeyBase64 = mySigningKey))
+        // Only mark sent if the SMS actually went out — same guard SmsReceiver.handleIncomingPublicKey
+        // already uses for its own reply, and for the same reason: marking this true on a failed
+        // send permanently blocks the contact from ever being retried and upgraded to encryption,
+        // since hasSentPubkeySync would now falsely report the handshake as already done.
+        if (sent) contactRepo.markSentPubkeySync(contact.id)
     }
 }

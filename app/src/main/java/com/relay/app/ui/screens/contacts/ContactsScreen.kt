@@ -58,6 +58,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -84,12 +86,18 @@ import com.relay.app.ui.theme.TextSecondary
 @Composable
 fun ContactsScreen(navController: NavController) {
     val vm: ContactsViewModel = viewModel()
+    val context = LocalContext.current
     val contacts by vm.contacts.collectAsState()
     val groups by vm.groups.collectAsState()
     var showAddDialog by remember { mutableStateOf(false) }
     var showNewGroupDialog by remember { mutableStateOf(false) }
     var manageGroupId by remember { mutableStateOf<Long?>(null) }
     var keyChangeContactId by remember { mutableStateOf<Long?>(null) }
+
+    DisposableEffect(Unit) {
+        vm.registerUpdates(context)
+        onDispose { vm.unregisterUpdates(context) }
+    }
 
     Scaffold(
         topBar = {

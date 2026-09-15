@@ -55,6 +55,8 @@ object RelayCrypto {
     private const val PREF_FILE_CURRENT = "relay_identity_keyset_prefs"
     private const val KEYSET_NAME_PREVIOUS = "relay_identity_keyset_previous"
     private const val PREF_FILE_PREVIOUS = "relay_identity_keyset_prefs_previous"
+    private const val KEYSET_NAME_TEMP_ROTATION = "relay_identity_keyset_temp_rotation"
+    private const val PREF_FILE_TEMP_ROTATION = "relay_identity_keyset_prefs_temp_rotation"
     private const val SIGNING_KEYSET_NAME = "relay_signing_keyset"
     private const val SIGNING_PREF_FILE = "relay_signing_keyset_prefs"
     private const val MASTER_KEY_URI = "android-keystore://relay_identity_master_key"
@@ -236,8 +238,31 @@ object RelayCrypto {
                 ensureConfig()
                 val appContext = context.applicationContext
 
-                // Move current -> previous by copying the still-wrapped keyset bytes directly
-                // (both keysets share the same Keystore master key, so no decryption needed here).
+                // Generate + sign the replacement key into a scratch slot first, and only once
+                // that has fully succeeded touch the real current/previous slots. Generating
+                // directly into the current slot (the old approach) meant clearing the working
+                // key *before* confirming a replacement could be produced — any failure after
+                // that point (Keystore error, signing failure) left the device with no usable
+                // identity key and nothing to roll back to, contradicting this function's own
+                // documented "leave the existing key in place on failure" contract.
+                val tempPrefs = appContext.getSharedPreferences(PREF_FILE_TEMP_ROTATION, Context.MODE_PRIVATE)
+                tempPrefs.edit().clear().apply() // discard any scratch state from a prior failed attempt
+                val tempHandle = AndroidKeysetManager.Builder()
+                    .withSharedPref(appContext, KEYSET_NAME_TEMP_ROTATION, PREF_FILE_TEMP_ROTATION)
+                    .withKeyTemplate(KeyTemplates.get(HYBRID_TEMPLATE))
+                    .withMasterKeyUri(MASTER_KEY_URI)
+                    .build()
+                    .keysetHandle
+                val newKeyBase64 = publicKeysetBase64(tempHandle)
+                val signature = signBytes(context, Base64.decode(newKeyBase64, Base64.NO_WRAP))
+                if (signature == null) {
+                    tempPrefs.edit().clear().apply()
+                    return null
+                }
+
+                // Replacement is generated and signed — safe to retire the old key now. Move
+                // current -> previous by copying the still-wrapped keyset bytes directly (both
+                // keysets share the same Keystore master key, so no decryption needed here).
                 val currentPrefs = appContext.getSharedPreferences(PREF_FILE_CURRENT, Context.MODE_PRIVATE)
                 val wrappedCurrent = currentPrefs.getString(KEYSET_NAME_CURRENT, null)
                 if (wrappedCurrent != null) {
@@ -246,12 +271,12 @@ object RelayCrypto {
                     RelayPreferences(context).previousKeyExpiresAt = System.currentTimeMillis() + GRACE_PERIOD_MS
                 }
 
-                // Clear the current slot so AndroidKeysetManager generates a brand new keypair.
-                currentPrefs.edit().clear().apply()
+                // Move temp -> current (same copy-the-wrapped-bytes approach) and clean up scratch state.
+                val wrappedTemp = tempPrefs.getString(KEYSET_NAME_TEMP_ROTATION, null)
+                currentPrefs.edit().clear().putString(KEYSET_NAME_CURRENT, wrappedTemp).apply()
+                tempPrefs.edit().clear().apply()
                 currentIdentity = null
 
-                val newKeyBase64 = myPublicKeyBase64(context) ?: return null
-                val signature = signBytes(context, Base64.decode(newKeyBase64, Base64.NO_WRAP)) ?: return null
                 RelayPreferences(context).lastKeyRotationAt = System.currentTimeMillis()
                 RotationResult(newKeyBase64, signature)
             } catch (e: Exception) {
