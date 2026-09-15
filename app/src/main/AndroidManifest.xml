@@ -42,18 +42,50 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Required (alongside the receiver/service below) for Relay to even be listed as a
+                 candidate in Android's default-SMS-app picker: an app must declare something that
+                 handles ACTION_SENDTO for sms/smsto/mms/mmsto, or the OS won't offer it at all. -->
+            <intent-filter>
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
         </activity>
 
         <service
             android:name=".sms.LocationShareService"
             android:exported="false" />
 
+        <!-- Required for default-SMS-app eligibility: handles the "quick response" action used
+             when declining a call with a text. -->
+        <service
+            android:name=".sms.HeadlessSmsSendService"
+            android:exported="true"
+            android:permission="android.permission.SEND_RESPOND_VIA_MESSAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.RESPOND_VIA_MESSAGE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".sms.SmsReceiver"
             android:exported="true"
             android:permission="android.permission.BROADCAST_SMS">
             <intent-filter android:priority="999">
+                <!-- SMS_RECEIVED: delivered to every app with the permission, default or not (kept
+                     so Relay still sees messages if it's ever installed but not set as default).
+                     SMS_DELIVER: delivered ONLY to the current default SMS app - required, not
+                     just nice-to-have, for that role's eligibility check. -->
                 <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+                <action android:name="android.provider.Telephony.SMS_DELIVER" />
             </intent-filter>
         </receiver>
 
@@ -62,7 +94,9 @@
             android:exported="true"
             android:permission="android.permission.BROADCAST_WAP_PUSH">
             <intent-filter>
+                <!-- Same RECEIVED-vs-DELIVER distinction as SmsReceiver above, for MMS. -->
                 <action android:name="android.provider.Telephony.WAP_PUSH_RECEIVED" />
+                <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
                 <data android:mimeType="application/vnd.wap.mms-message" />
             </intent-filter>
         </receiver>

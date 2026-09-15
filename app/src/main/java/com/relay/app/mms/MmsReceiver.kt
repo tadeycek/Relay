@@ -19,7 +19,11 @@ import java.io.File
 class MmsReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != "android.provider.Telephony.WAP_PUSH_RECEIVED") return
+        // WAP_PUSH_DELIVER only ever arrives when Relay is the default SMS app (see
+        // AndroidManifest.xml); WAP_PUSH_RECEIVED still arrives otherwise. Handle either the same way.
+        if (intent.action != "android.provider.Telephony.WAP_PUSH_RECEIVED" &&
+            intent.action != "android.provider.Telephony.WAP_PUSH_DELIVER"
+        ) return
         val mime = intent.type ?: return
         if (!mime.equals("application/vnd.wap.mms-message", ignoreCase = true)) return
 

@@ -33,7 +33,11 @@ import kotlinx.coroutines.launch
 class SmsReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+        // SMS_DELIVER only ever arrives when Relay is the default SMS app (see AndroidManifest.xml);
+        // SMS_RECEIVED still arrives otherwise. Handle either the same way.
+        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION &&
+            intent.action != Telephony.Sms.Intents.SMS_DELIVER_ACTION
+        ) return
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isNullOrEmpty()) return

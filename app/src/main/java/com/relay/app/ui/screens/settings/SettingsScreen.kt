@@ -1,5 +1,10 @@
 package com.relay.app.ui.screens.settings
 
+import android.app.role.RoleManager
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.provider.Telephony
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -30,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -52,6 +58,7 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(navController: NavController) {
     val vm: SettingsViewModel = viewModel()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -92,6 +99,18 @@ fun SettingsScreen(navController: NavController) {
 
             SectionHeader("General")
 
+            val isDefaultSmsApp = remember { Telephony.Sms.getDefaultSmsPackage(context) == context.packageName }
+            ActionRow(
+                label = "Default SMS app",
+                subtitle = if (isDefaultSmsApp) {
+                    "Relay is your default SMS app"
+                } else {
+                    "Relay can't reliably send/receive SMS until it's set as default"
+                },
+                actionLabel = if (isDefaultSmsApp) "Set" else "Set now",
+                enabled = !isDefaultSmsApp,
+                onClick = { requestDefaultSmsApp(context) },
+            )
             DropdownRow(
                 label = "Theme",
                 selected = vm.theme,
@@ -182,6 +201,22 @@ private fun hourOptions(): List<Pair<String, String>> = (0..23).map { hour ->
 private fun formatRotationDate(epochMillis: Long): String {
     val formatter = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
     return formatter.format(java.util.Date(epochMillis))
+}
+
+/** Launches the system flow to make Relay the default SMS app — required for it to reliably
+ *  send/receive SMS/MMS at all (see AndroidManifest.xml's SMS_DELIVER/WAP_PUSH_DELIVER/
+ *  RESPOND_VIA_MESSAGE/SENDTO components, which is what makes Relay eligible to be offered here
+ *  in the first place). RoleManager is the API 29+ mechanism; older versions use the legacy
+ *  ACTION_CHANGE_DEFAULT broadcast-style intent. */
+private fun requestDefaultSmsApp(context: Context) {
+    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val roleManager = context.getSystemService(RoleManager::class.java)
+        roleManager?.createRequestRoleIntent(RoleManager.ROLE_SMS)
+    } else {
+        Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
+            .putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
+    }
+    intent?.let { context.startActivity(it) }
 }
 
 @Composable
