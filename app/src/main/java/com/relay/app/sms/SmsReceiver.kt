@@ -10,6 +10,7 @@ import android.provider.Telephony
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.relay.app.MainActivity
 import com.relay.app.crypto.RelayCrypto
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
@@ -253,12 +254,23 @@ class SmsReceiver : BroadcastReceiver() {
             ).apply { description = "Encryption key changes and other security-relevant events" }
             nm.createNotificationChannel(channel)
         }
+        val openContactsIntent = Intent(context, MainActivity::class.java).apply {
+            putExtra("open_contacts", true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            SECURITY_NOTIF_BASE + (contact.id % 1000).toInt(),
+            openContactsIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val notification = NotificationCompat.Builder(context, RelayPreferences.SECURITY_ALERT_CHANNEL)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentTitle("${contact.name}'s encryption key changed")
             .setContentText("Review and confirm in Contacts before trusting it")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .setContentIntent(contentIntent)
             .build()
         nm.notify(SECURITY_NOTIF_BASE + (contact.id % 1000).toInt(), notification)
     }

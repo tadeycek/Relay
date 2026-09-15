@@ -117,7 +117,7 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             id = getLong(getColumnIndexOrThrow(Messages.COL_ID)),
             contactId = getLong(getColumnIndexOrThrow(Messages.COL_CONTACT_ID)),
             body = getString(getColumnIndexOrThrow(Messages.COL_BODY)),
-            type = MessageType.valueOf(getString(getColumnIndexOrThrow(Messages.COL_TYPE))),
+            type = MessageType.fromDb(getString(getColumnIndexOrThrow(Messages.COL_TYPE))),
             lat = if (isNull(latIdx)) null else getDouble(latIdx),
             lng = if (isNull(lngIdx)) null else getDouble(lngIdx),
             isSent = getInt(getColumnIndexOrThrow(Messages.COL_IS_SENT)) == 1,
