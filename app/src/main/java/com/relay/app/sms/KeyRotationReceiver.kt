@@ -8,6 +8,9 @@ import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Fired on a daily alarm (see RelayApplication.scheduleKeyRotationAlarm); actually rotates the
@@ -31,7 +34,16 @@ class KeyRotationReceiver : BroadcastReceiver() {
         }
         if (now - last < ROTATION_INTERVAL_MS) return
 
-        rotateAndBroadcast(context)
+        // Rotation does a Keystore-backed key generation/signing plus a DB read and a loop of SMS
+        // sends to every paired contact — real work, offloaded off the receiver's (main) thread.
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                rotateAndBroadcast(context)
+            } finally {
+                pendingResult.finish()
+            }
+        }
     }
 
     companion object {

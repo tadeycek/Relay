@@ -53,19 +53,27 @@ class MmsReceiver : BroadcastReceiver() {
                         val (partUri, mimeType) = getMediaPart(context, mmsId) ?: continue
 
                         // Copy to cache so we own the file
-                        val cachedPath = copyPartToCache(context, partUri, mimeType) ?: continue
-
-                        // Skip if already stored
-                        if (messageRepo.hasMediaUri(cachedPath)) continue
-
-                        val type = if (mimeType.startsWith("video")) MessageType.VIDEO else MessageType.IMAGE
-                        val msg = Message(
-                            contactId = contact.id,
-                            body = "",
-                            type = type,
-                            isSent = false,
-                            mediaUri = cachedPath,
-                        )
+                        val msg = when (val copyResult = copyPartToCache(context, partUri, mimeType)) {
+                            is CopyResult.Success -> {
+                                // Skip if already stored
+                                if (messageRepo.hasMediaUri(copyResult.path)) continue
+                                val type = if (mimeType.startsWith("video")) MessageType.VIDEO else MessageType.IMAGE
+                                Message(
+                                    contactId = contact.id,
+                                    body = "",
+                                    type = type,
+                                    isSent = false,
+                                    mediaUri = copyResult.path,
+                                )
+                            }
+                            CopyResult.DecryptionFailed -> Message(
+                                contactId = contact.id,
+                                body = "[Unable to decrypt media]",
+                                type = MessageType.TEXT,
+                                isSent = false,
+                            )
+                            CopyResult.Failed -> continue
+                        }
                         messageRepo.insertMessageSync(msg)
 
                         context.sendBroadcast(
@@ -106,7 +114,16 @@ class MmsReceiver : BroadcastReceiver() {
             }
         }
 
-        private fun copyPartToCache(context: Context, partUri: String, mimeType: String): String? = try {
+        /** Result of [copyPartToCache] — distinguishes "this part was encrypted but we couldn't
+         *  decrypt it" from every other failure, so the caller can surface that distinctly
+         *  instead of silently dropping the message (mirrors SmsReceiver's text-decrypt path). */
+        private sealed class CopyResult {
+            data class Success(val path: String) : CopyResult()
+            object DecryptionFailed : CopyResult()
+            object Failed : CopyResult()
+        }
+
+        private fun copyPartToCache(context: Context, partUri: String, mimeType: String): CopyResult = try {
             val ext = when {
                 mimeType.contains("jpeg") || mimeType.contains("jpg") -> "jpg"
                 mimeType.contains("png")  -> "png"
@@ -115,8 +132,8 @@ class MmsReceiver : BroadcastReceiver() {
                 else -> "bin"
             }
             val rawBytes = context.contentResolver.openInputStream(Uri.parse(partUri))?.use { it.readBytes() }
-                ?: return null
-            val plainBytes = decryptIfEncrypted(context, rawBytes)
+                ?: return CopyResult.Failed
+            val plainBytes = decryptIfEncrypted(context, rawBytes) ?: return CopyResult.DecryptionFailed
 
             val file = File(context.cacheDir, "mms/recv_${System.currentTimeMillis()}.$ext")
                 .also { it.parentFile?.mkdirs() }
@@ -124,20 +141,27 @@ class MmsReceiver : BroadcastReceiver() {
             // encryption (if any) has already been unwrapped above. Display code must go through
             // RelayFileCrypto.decryptedViewCopy() to render this.
             RelayFileCrypto.writeEncrypted(context, file, plainBytes)
-            file.absolutePath
+            CopyResult.Success(file.absolutePath)
         } catch (e: Exception) {
             Log.e("MmsReceiver", "Failed to copy MMS part $partUri", e)
-            null
+            CopyResult.Failed
         }
 
-        /** Strips and decrypts the E2E envelope if [bytes] carry [RelayCrypto.MMS_ENC_MAGIC]; otherwise returns as-is. */
-        private fun decryptIfEncrypted(context: Context, bytes: ByteArray): ByteArray {
+        /**
+         * Strips and decrypts the E2E envelope if [bytes] carry [RelayCrypto.MMS_ENC_MAGIC];
+         * returns [bytes] unchanged if there's no magic prefix (never encrypted). Returns null
+         * only when the magic prefix IS present but decryption fails — that case must be
+         * distinguishable from "not encrypted," since silently falling back to the raw ciphertext
+         * (the old behavior) stored garbage on disk and displayed it as if it were valid media,
+         * with zero indication anything was wrong.
+         */
+        private fun decryptIfEncrypted(context: Context, bytes: ByteArray): ByteArray? {
             val magic = RelayCrypto.MMS_ENC_MAGIC
             if (bytes.size <= magic.size || !bytes.copyOfRange(0, magic.size).contentEquals(magic)) {
                 return bytes
             }
             val ciphertext = bytes.copyOfRange(magic.size, bytes.size)
-            return RelayCrypto.decryptMine(context, ciphertext) ?: bytes
+            return RelayCrypto.decryptMine(context, ciphertext)
         }
     }
 }

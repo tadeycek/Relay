@@ -6,6 +6,7 @@ import com.relay.app.data.db.DatabaseContract.GroupMembers
 import com.relay.app.data.db.DatabaseContract.Groups
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
+import com.relay.app.data.model.ContactTrustLevel
 import com.relay.app.data.model.Group
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -93,12 +94,20 @@ class GroupRepository(private val dbHelper: RelayDbHelper) {
             val list = mutableListOf<Contact>()
             while (c.moveToNext()) {
                 val keyIdx = c.getColumnIndex(Contacts.COL_PUBLIC_KEY)
+                val pendingKeyIdx = c.getColumnIndex(Contacts.COL_PENDING_PUBLIC_KEY)
+                val signingKeyIdx = c.getColumnIndex(Contacts.COL_SIGNING_PUBLIC_KEY)
+                val trustLevelIdx = c.getColumnIndex(Contacts.COL_TRUST_LEVEL)
                 list.add(Contact(
                     id = c.getLong(c.getColumnIndexOrThrow(Contacts.COL_ID)),
                     name = c.getString(c.getColumnIndexOrThrow(Contacts.COL_NAME)),
                     phone = c.getString(c.getColumnIndexOrThrow(Contacts.COL_PHONE)),
                     hasRelay = c.getInt(c.getColumnIndexOrThrow(Contacts.COL_HAS_RELAY)) == 1,
+                    trustLevel = ContactTrustLevel.fromDb(
+                        if (trustLevelIdx >= 0) c.getString(trustLevelIdx) else null
+                    ),
                     publicKey = if (keyIdx >= 0 && !c.isNull(keyIdx)) c.getString(keyIdx) else null,
+                    pendingPublicKey = if (pendingKeyIdx >= 0 && !c.isNull(pendingKeyIdx)) c.getString(pendingKeyIdx) else null,
+                    signingPublicKey = if (signingKeyIdx >= 0 && !c.isNull(signingKeyIdx)) c.getString(signingKeyIdx) else null,
                 ))
             }
             list

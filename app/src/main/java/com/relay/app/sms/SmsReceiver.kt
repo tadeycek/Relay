@@ -7,6 +7,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
+import android.telephony.SmsMessage
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
@@ -25,6 +26,9 @@ import com.relay.app.data.repository.GroupRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class SmsReceiver : BroadcastReceiver() {
 
@@ -34,6 +38,21 @@ class SmsReceiver : BroadcastReceiver() {
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isNullOrEmpty()) return
 
+        // SQLCipher DB opens, Tink crypto, and (on the group-routing path) further queries are
+        // real work, not appropriate to run synchronously on whatever thread delivered this
+        // broadcast (the main thread) — goAsync() + a background coroutine keeps the receiver
+        // itself fast while still telling the system to wait for us to finish.
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                handleMessages(context, messages)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    private fun handleMessages(context: Context, messages: Array<SmsMessage>) {
         val grouped = messages.groupBy { it.originatingAddress }
 
         val db = RelayDbHelper(context)
@@ -134,11 +153,10 @@ class SmsReceiver : BroadcastReceiver() {
             // Route to group chats if the contact is a member
             if (type != MessageType.LOCATION_DECLINED) {
                 val groups = runCatching {
-                    // Sync call — use raw query on same thread
-                    val groupsDb = RelayDbHelper(context)
-                    val repo = GroupRepository(groupsDb)
-                    // We can't call suspend here, use a blocking approach via rawQuery
-                    val groupDb = groupsDb.readableDatabase
+                    // Sync call — use raw query on same thread. Reuses the RelayDbHelper already
+                    // open in this function rather than opening a second SQLCipher connection
+                    // (Keystore-backed passphrase derivation + DB open) per message.
+                    val groupDb = db.readableDatabase
                     val cursor = groupDb.rawQuery(
                         "SELECT g._id, g.name FROM groups g INNER JOIN group_members gm ON g._id = gm.group_id WHERE gm.contact_id = ?",
                         arrayOf(contact.id.toString())
