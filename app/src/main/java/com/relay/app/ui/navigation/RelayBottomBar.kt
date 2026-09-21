@@ -3,10 +3,10 @@ package com.relay.app.ui.navigation
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
-import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
-import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -35,7 +35,7 @@ enum class Tab(
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
 ) {
-    MAP(Screen.Map.route, "MAP", Icons.Filled.Map, Icons.Outlined.Map),
+    PEOPLE(Screen.People.route, "PEOPLE", Icons.Filled.People, Icons.Outlined.People),
     MESSAGES(Screen.Messages.route, "MESSAGES", Icons.Filled.ChatBubble, Icons.Outlined.ChatBubbleOutline),
     ACCOUNT(Screen.Account.route, "ACCOUNT", Icons.Filled.Person, Icons.Outlined.PersonOutline);
 

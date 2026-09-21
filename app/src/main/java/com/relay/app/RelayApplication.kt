@@ -6,25 +6,15 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
-import android.preference.PreferenceManager
 import com.relay.app.messaging.MessagingRuntime
 import com.relay.app.messaging.PollWorker
 import com.relay.app.sms.KeyRotationReceiver
 import com.relay.app.sms.PinExpiryReceiver
-import org.osmdroid.config.Configuration
-import java.io.File
 
 class RelayApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        @Suppress("DEPRECATION")
-        Configuration.getInstance().apply {
-            load(this@RelayApplication, PreferenceManager.getDefaultSharedPreferences(this@RelayApplication))
-            userAgentValue = BuildConfig.APPLICATION_ID
-            osmdroidBasePath = getExternalFilesDir(null) ?: filesDir
-            osmdroidTileCache = File(cacheDir, "osmdroid")
-        }
         schedulePinExpiryAlarm()
         scheduleKeyRotationCheck()
         // Connect the internet transport, receive messages and drain the outbox for as long as the

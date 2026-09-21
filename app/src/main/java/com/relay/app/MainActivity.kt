@@ -21,6 +21,8 @@ import com.relay.app.ui.lock.deviceSupportsAppLock
 import com.relay.app.ui.lock.promptAppUnlock
 import com.relay.app.ui.navigation.RelayNavGraph
 import com.relay.app.ui.navigation.Screen
+import com.relay.app.ui.navigation.Tab
+import com.relay.app.ui.navigation.navigateToTab
 import com.relay.app.ui.theme.RelayTheme
 import com.relay.app.util.RelayPreferences
 
@@ -68,7 +70,7 @@ class MainActivity : FragmentActivity() {
                     val shouldOpenContacts by pendingOpenContacts
                     LaunchedEffect(shouldOpenContacts) {
                         if (shouldOpenContacts) {
-                            navController.navigate(Screen.Contacts.route)
+                            navController.navigateToTab(Tab.PEOPLE)
                             pendingOpenContacts.value = false
                         }
                     }

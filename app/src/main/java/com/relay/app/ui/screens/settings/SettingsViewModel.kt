@@ -42,12 +42,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     var incomingMessageNotification by mutableStateOf(prefs.incomingMessageNotification)
         private set
 
-    var defaultMapZoom by mutableFloatStateOf(prefs.defaultMapZoom)
-        private set
-
-    var keepScreenOnMap by mutableStateOf(prefs.keepScreenOnMap)
-        private set
-
     var defaultPinExpiry by mutableStateOf(prefs.defaultPinExpiry)
         private set
 
@@ -171,16 +165,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun updateIncomingMessageNotification(v: Boolean) {
         prefs.incomingMessageNotification = v
         incomingMessageNotification = v
-    }
-
-    fun updateDefaultMapZoom(v: Float) {
-        prefs.defaultMapZoom = v
-        defaultMapZoom = v
-    }
-
-    fun updateKeepScreenOnMap(v: Boolean) {
-        prefs.keepScreenOnMap = v
-        keepScreenOnMap = v
     }
 
     fun updateDefaultPinExpiry(v: String) {

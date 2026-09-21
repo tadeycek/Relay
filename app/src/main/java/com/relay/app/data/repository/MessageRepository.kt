@@ -77,29 +77,6 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
         return cursor.use { it.moveToFirst() }
     }
 
-    suspend fun getSavedPins(): List<Message> = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            Messages.TABLE, null,
-            "${Messages.COL_TYPE} = ? AND (${Messages.COL_EXPIRY_AT} IS NULL OR ${Messages.COL_EXPIRY_AT} > ?)",
-            arrayOf(MessageType.LOCATION.name, now.toString()),
-            null, null, "${Messages.COL_TIMESTAMP} DESC"
-        )
-        cursor.use { it.toMessageList() }
-    }
-
-    suspend fun getPinHistory(): List<Message> = withContext(Dispatchers.IO) {
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            Messages.TABLE, null,
-            "${Messages.COL_TYPE} = ?",
-            arrayOf(MessageType.LOCATION.name),
-            null, null, "${Messages.COL_TIMESTAMP} DESC"
-        )
-        cursor.use { it.toMessageList() }
-    }
-
     fun deleteExpiredPinsSync() {
         val now = System.currentTimeMillis()
         val db = dbHelper.writableDatabase

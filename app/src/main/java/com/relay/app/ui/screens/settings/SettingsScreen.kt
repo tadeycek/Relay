@@ -234,21 +234,10 @@ fun SettingsScreen(navController: NavController) {
                 onClick = vm::rotateEncryptionKeyNow,
             )
 
-            SectionHeader("Map")
+            SectionHeader("Shared locations")
 
-            SliderRow(
-                label = "Default map zoom level",
-                value = vm.defaultMapZoom,
-                onValueChange = vm::updateDefaultMapZoom,
-                valueRange = 5f..20f,
-            )
-            ToggleRow(
-                label = "Keep screen on while map is open",
-                checked = vm.keepScreenOnMap,
-                onCheckedChange = vm::updateKeepScreenOnMap,
-            )
             DropdownRow(
-                label = "Default pin expiry",
+                label = "Shared locations expire after",
                 selected = vm.defaultPinExpiry,
                 options = PinExpiry.entries.map { it.smsCode to it.label },
                 onSelect = vm::updateDefaultPinExpiry,

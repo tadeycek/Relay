@@ -15,7 +15,6 @@
     <!-- Location pins and location sharing. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
 
     <!-- QR pairing (camera) and sending photos/video. -->
     <uses-permission android:name="android.permission.CAMERA" />
