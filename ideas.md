@@ -40,7 +40,7 @@ being able to message.
 **Cost:** about one focused step: the NFC permission, an emulation service and a reader-mode screen inside
 "Meet in person".
 
-**Status:** proposed, not started.
+**Status:** built (commit "Pairing (3/4)"), untested between two real phones. One phone emulates a Type 4 tag while "Show my code" is open; the other reads it in reader mode on the scan tab and feeds it through the same path as a QR scan. The tag protocol is unit-tested by running the emulator against the reader. Possible extra: register the contact MIME type so a tap opens Relay from outside the app.
 
 ## Trust and privacy
 
@@ -72,3 +72,23 @@ being able to message.
 
 **Suggested first picks:** remote glyph comparison, the encrypted backup, and notification and screenshot
 privacy. All are small, and the backup closes the largest gap.
+
+## Mutual in-person verification (built)
+
+A scans B's code (QR or NFC) and taps yes. B is asked "A added you. Add them back?". Both are marked verified
+only if both say yes within about 3 minutes; otherwise nothing is kept and a contact the pairing created is
+removed again.
+
+- B's code carries a one-time code (QR v4 `PAIR` field). A repeats it in the request, so B's phone knows the
+  sender really saw its screen; a request with an unknown, used or expired code is ignored and leaves no
+  trace. Codes are single-use and rotate after 10 minutes.
+- A waits 45 s longer than B has to answer (the "grace"), so B's answer can still arrive over the network.
+- If both scan each other at the same time, each request counts as the other's yes.
+- Older codes (no `PAIR` field) keep the one-sided flow, so un-updated phones still work.
+- Known limit: the person who answers last is verified immediately; the first person only learns when the
+  confirmation arrives. If that message is lost, one side ends up verified and the other does not. It fails
+  towards "not verified" and a rescan fixes it.
+- Not done: a notification when the recipient's app is in the background (the question shows on whatever
+  screen the app is on), and an explicit "No" message (a "No" just lets the first person's wait run out or be
+  cancelled).
+- Untested end to end between two phones.

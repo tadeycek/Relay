@@ -210,3 +210,11 @@ Not yet verified on a device: the phone was disconnected during the redesign, so
 and the pure logic is unit-tested (contrast, glyphs, chat timeline, trust line), but nothing has been
 looked at on screen in either theme. Still to do there: screenshots in both themes, font scaling at 200%,
 TalkBack pass, and a README screenshot refresh.
+
+## Mutual pairing and NFC
+
+Pairing now verifies both people: one scan (QR or NFC tap) asks the other phone "add them back?", and both
+are verified only if both say yes within about 3 minutes. It uses a one-time code in the shown code so the
+question only reaches someone who really saw the screen. Details, limits and what is untested are in
+`ideas.md` ("Mutual in-person verification"). Pure rules and the NFC Type 4 tag protocol are unit-tested;
+the flow between two real phones has not been run, because only one phone was available.
