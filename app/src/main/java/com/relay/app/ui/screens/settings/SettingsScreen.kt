@@ -1,5 +1,10 @@
 package com.relay.app.ui.screens.settings
 
+import android.app.role.RoleManager
+import android.content.Context
+import android.content.Intent
+import android.os.Build
+import android.provider.Telephony
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -22,6 +27,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,6 +35,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -51,6 +58,7 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(navController: NavController) {
     val vm: SettingsViewModel = viewModel()
+    val context = LocalContext.current
 
     Scaffold(
         topBar = {
@@ -91,6 +99,18 @@ fun SettingsScreen(navController: NavController) {
 
             SectionHeader("General")
 
+            val isDefaultSmsApp = remember { Telephony.Sms.getDefaultSmsPackage(context) == context.packageName }
+            ActionRow(
+                label = "Default SMS app",
+                subtitle = if (isDefaultSmsApp) {
+                    "Relay is your default SMS app"
+                } else {
+                    "Relay can't reliably send/receive SMS until it's set as default"
+                },
+                actionLabel = if (isDefaultSmsApp) "Set" else "Set now",
+                enabled = !isDefaultSmsApp,
+                onClick = { requestDefaultSmsApp(context) },
+            )
             DropdownRow(
                 label = "Theme",
                 selected = vm.theme,
@@ -137,6 +157,20 @@ fun SettingsScreen(navController: NavController) {
                 onSelect = { vm.updateDndEndHour(it.toInt()) },
             )
 
+            SectionHeader("Security")
+
+            ActionRow(
+                label = "Rotate encryption key now",
+                subtitle = if (vm.lastKeyRotationAt == 0L) {
+                    "Never rotated — happens automatically every 30 days"
+                } else {
+                    "Last rotated ${formatRotationDate(vm.lastKeyRotationAt)} — pushes a fresh key to every encrypted contact"
+                },
+                actionLabel = if (vm.rotatingKey) "Rotating…" else "Rotate",
+                enabled = !vm.rotatingKey,
+                onClick = vm::rotateEncryptionKeyNow,
+            )
+
             SectionHeader("Map")
 
             SliderRow(
@@ -162,6 +196,27 @@ fun SettingsScreen(navController: NavController) {
 
 private fun hourOptions(): List<Pair<String, String>> = (0..23).map { hour ->
     hour.toString() to String.format("%02d:00", hour)
+}
+
+private fun formatRotationDate(epochMillis: Long): String {
+    val formatter = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
+    return formatter.format(java.util.Date(epochMillis))
+}
+
+/** Launches the system flow to make Relay the default SMS app — required for it to reliably
+ *  send/receive SMS/MMS at all (see AndroidManifest.xml's SMS_DELIVER/WAP_PUSH_DELIVER/
+ *  RESPOND_VIA_MESSAGE/SENDTO components, which is what makes Relay eligible to be offered here
+ *  in the first place). RoleManager is the API 29+ mechanism; older versions use the legacy
+ *  ACTION_CHANGE_DEFAULT broadcast-style intent. */
+private fun requestDefaultSmsApp(context: Context) {
+    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+        val roleManager = context.getSystemService(RoleManager::class.java)
+        roleManager?.createRequestRoleIntent(RoleManager.ROLE_SMS)
+    } else {
+        Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
+            .putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
+    }
+    intent?.let { context.startActivity(it) }
 }
 
 @Composable
@@ -212,6 +267,43 @@ private fun ToggleRow(
                 uncheckedBorderColor = Border,
             ),
         )
+    }
+}
+
+@Composable
+private fun ActionRow(
+    label: String,
+    subtitle: String,
+    actionLabel: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Surface1)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 16.dp)) {
+            Text(
+                text = label,
+                color = TextPrimary,
+                fontFamily = IbmPlexSans,
+                fontSize = 14.sp,
+            )
+            Text(
+                text = subtitle,
+                color = TextSecondary,
+                fontFamily = IbmPlexSans,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 2.dp),
+            )
+        }
+        TextButton(onClick = onClick, enabled = enabled) {
+            Text(actionLabel, color = if (enabled) Accent else TextSecondary, fontFamily = IbmPlexSans)
+        }
     }
 }
 

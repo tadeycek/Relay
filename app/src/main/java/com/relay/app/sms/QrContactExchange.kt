@@ -46,12 +46,20 @@ object QrContactExchange {
         contactRepo.setPublicKeySync(contact.id, scanned.publicKeyBase64)
         contactRepo.rejectPendingPublicKeySync(contact.id)
         contactRepo.markAsRelayUserSync(contact.id)
+        // Also learn their signing key here (out-of-band verified, same as the encryption key) so
+        // a later routine key rotation over SMS can be auto-verified instead of alarming the user.
+        scanned.signingPublicKeyBase64?.let { contactRepo.setSigningPublicKeyIfAbsentSync(contact.id, it) }
 
         if (!contactRepo.hasSentPubkeySync(contact.id)) {
             val myKey = RelayCrypto.myPublicKeyBase64(context)
             if (myKey != null) {
                 val myName = RelayPreferences(context).myName
-                val sent = SmsSender.sendSms(context, scanned.phone, SmsMessageParser.formatPublicKey(myKey, myName))
+                val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
+                val sent = SmsSender.sendSms(
+                    context,
+                    scanned.phone,
+                    SmsMessageParser.formatPublicKey(myKey, myName, signingKeyBase64 = mySigningKey),
+                )
                 // Only mark the handshake done if the SMS actually went out — otherwise the other
                 // side never gets our key and can never decrypt us, silently and permanently.
                 if (sent) contactRepo.markSentPubkeySync(contact.id)

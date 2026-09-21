@@ -7,9 +7,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.provider.Telephony
+import android.telephony.SmsMessage
 import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.relay.app.MainActivity
 import com.relay.app.crypto.RelayCrypto
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
@@ -24,15 +26,37 @@ import com.relay.app.data.repository.GroupRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class SmsReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION) return
+        // SMS_DELIVER only ever arrives when Relay is the default SMS app (see AndroidManifest.xml);
+        // SMS_RECEIVED still arrives otherwise. Handle either the same way.
+        if (intent.action != Telephony.Sms.Intents.SMS_RECEIVED_ACTION &&
+            intent.action != Telephony.Sms.Intents.SMS_DELIVER_ACTION
+        ) return
 
         val messages = Telephony.Sms.Intents.getMessagesFromIntent(intent)
         if (messages.isNullOrEmpty()) return
 
+        // SQLCipher DB opens, Tink crypto, and (on the group-routing path) further queries are
+        // real work, not appropriate to run synchronously on whatever thread delivered this
+        // broadcast (the main thread) — goAsync() + a background coroutine keeps the receiver
+        // itself fast while still telling the system to wait for us to finish.
+        val pendingResult = goAsync()
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                handleMessages(context, messages)
+            } finally {
+                pendingResult.finish()
+            }
+        }
+    }
+
+    private fun handleMessages(context: Context, messages: Array<SmsMessage>) {
         val grouped = messages.groupBy { it.originatingAddress }
 
         val db = RelayDbHelper(context)
@@ -43,129 +67,143 @@ class SmsReceiver : BroadcastReceiver() {
 
         for ((phone, parts) in grouped) {
             if (phone == null) continue
-            val rawBody = parts.joinToString("") { it.messageBody }
 
             // Unknown numbers still get a thread (matching how any default SMS app behaves)
             // rather than having the message silently dropped.
             val contact = contactRepo.findOrCreateByPhoneSync(phone)
 
-            if (SmsMessageParser.isPublicKeyMessage(rawBody)) {
-                handleIncomingPublicKey(context, contactRepo, contact, rawBody)
-                continue
-            }
+            // True multipart fragments of one logical SMS arrive with the same timestamp; two
+            // separate, independently-sent single-segment texts from the same number that happen
+            // to land in the same broadcast do not. Grouping by timestamp before concatenating
+            // avoids merging unrelated messages into one garbled (and possibly misparsed) string.
+            // This is a heuristic — the public SmsMessage API doesn't expose the actual multipart
+            // reference number — but it's far better than assuming every message in this batch
+            // for one sender is always one logical message.
+            val logicalMessages = parts.groupBy { it.timestampMillis }.values
 
-            var body = rawBody
-            if (SmsMessageParser.isEncryptedMessage(rawBody)) {
-                val decrypted = decryptIncoming(context, rawBody)
-                if (decrypted == null) {
-                    messageRepo.insertMessageSync(
-                        Message(
-                            contactId = contact.id,
-                            body = "[Unable to decrypt message]",
-                            type = MessageType.TEXT,
-                            isSent = false,
-                            timestamp = System.currentTimeMillis(),
+            for (fragmentGroup in logicalMessages) {
+                val rawBody = fragmentGroup.joinToString("") { it.messageBody }
+
+                if (SmsMessageParser.isPublicKeyMessage(rawBody)) {
+                    handleIncomingPublicKey(context, contactRepo, contact, rawBody)
+                    continue
+                }
+
+                var body = rawBody
+                var senderVerified = true
+                if (SmsMessageParser.isEncryptedMessage(rawBody)) {
+                    val decrypted = decryptIncoming(context, contact, rawBody)
+                    if (decrypted == null) {
+                        messageRepo.insertMessageSync(
+                            Message(
+                                contactId = contact.id,
+                                body = "[Unable to decrypt message]",
+                                type = MessageType.TEXT,
+                                isSent = false,
+                                timestamp = System.currentTimeMillis(),
+                            )
                         )
-                    )
+                        broadcastUpdate(context, contact.id)
+                        continue
+                    }
+                    body = decrypted.body
+                    senderVerified = decrypted.senderVerified
+                }
+
+                if (SmsMessageParser.isLocationRequest(body)) {
+                    contactRepo.markAsRelayUserSync(contact.id)
+                    handleLocationRequest(context, contact)
+                    continue
+                }
+
+                if (SmsMessageParser.isReadReceipt(body)) {
+                    if (!allowRateLimited(lastReadReceiptAt, contact.id)) continue
+                    val ts = SmsMessageParser.parseReadReceipt(body) ?: continue
+                    messageRepo.markReadUpToSync(contact.id, ts)
                     broadcastUpdate(context, contact.id)
                     continue
                 }
-                body = decrypted
-            }
 
-            if (SmsMessageParser.isLocationRequest(body)) {
-                contactRepo.markAsRelayUserSync(contact.id)
-                handleLocationRequest(context, contact)
-                continue
-            }
+                val parsedLoc = SmsMessageParser.parseLocation(body)
+                val isDeclined = SmsMessageParser.isLocationDeclined(body)
 
-            if (SmsMessageParser.isReadReceipt(body)) {
-                if (!allowRateLimited(lastReadReceiptAt, contact.id)) continue
-                val ts = SmsMessageParser.parseReadReceipt(body) ?: continue
-                messageRepo.markReadUpToSync(contact.id, ts)
-                broadcastUpdate(context, contact.id)
-                continue
-            }
-
-            val parsedLoc = SmsMessageParser.parseLocation(body)
-            val isDeclined = SmsMessageParser.isLocationDeclined(body)
-
-            if (parsedLoc != null) {
-                contactRepo.markAsRelayUserSync(contact.id)
-            }
-
-            val type = when {
-                parsedLoc != null -> MessageType.LOCATION
-                isDeclined -> MessageType.LOCATION_DECLINED
-                else -> MessageType.TEXT
-            }
-
-            val expiry: PinExpiry
-            val pinLabel: String?
-            val expiryAt: Long?
-            if (parsedLoc != null) {
-                expiry = SmsMessageParser.parseExpiry(body)
-                pinLabel = SmsMessageParser.parseLabel(body)
-                expiryAt = expiry.durationMs?.let { System.currentTimeMillis() + it }
-            } else {
-                expiry = PinExpiry.NEVER
-                pinLabel = null
-                expiryAt = null
-            }
-
-            val message = Message(
-                contactId = contact.id,
-                body = body,
-                type = type,
-                lat = parsedLoc?.lat,
-                lng = parsedLoc?.lng,
-                isSent = false,
-                timestamp = System.currentTimeMillis(),
-                pinLabel = pinLabel,
-                expiryAt = expiryAt,
-            )
-            messageRepo.insertMessageSync(message)
-            Log.d("SmsReceiver", "Stored message from ${contact.name}: type=${message.type}")
-
-            // Route to group chats if the contact is a member
-            if (type != MessageType.LOCATION_DECLINED) {
-                val groups = runCatching {
-                    // Sync call — use raw query on same thread
-                    val groupsDb = RelayDbHelper(context)
-                    val repo = GroupRepository(groupsDb)
-                    // We can't call suspend here, use a blocking approach via rawQuery
-                    val groupDb = groupsDb.readableDatabase
-                    val cursor = groupDb.rawQuery(
-                        "SELECT g._id, g.name FROM groups g INNER JOIN group_members gm ON g._id = gm.group_id WHERE gm.contact_id = ?",
-                        arrayOf(contact.id.toString())
-                    )
-                    val list = mutableListOf<Pair<Long, String>>()
-                    cursor.use { c ->
-                        while (c.moveToNext()) {
-                            list.add(c.getLong(0) to c.getString(1))
-                        }
-                    }
-                    list
-                }.getOrDefault(emptyList())
-
-                for ((groupId, _) in groups) {
-                    groupMessageRepo.insertMessageSync(GroupMessage(
-                        groupId = groupId,
-                        contactId = contact.id,
-                        body = body,
-                        type = type,
-                        lat = parsedLoc?.lat,
-                        lng = parsedLoc?.lng,
-                        isSent = false,
-                        timestamp = System.currentTimeMillis(),
-                        pinLabel = pinLabel,
-                        expiryAt = expiryAt,
-                    ))
-                    broadcastGroupUpdate(context, groupId)
+                if (parsedLoc != null) {
+                    contactRepo.markAsRelayUserSync(contact.id)
                 }
-            }
 
-            broadcastUpdate(context, contact.id)
+                val type = when {
+                    parsedLoc != null -> MessageType.LOCATION
+                    isDeclined -> MessageType.LOCATION_DECLINED
+                    else -> MessageType.TEXT
+                }
+
+                val expiry: PinExpiry
+                val pinLabel: String?
+                val expiryAt: Long?
+                if (parsedLoc != null) {
+                    expiry = SmsMessageParser.parseExpiry(body)
+                    pinLabel = SmsMessageParser.parseLabel(body)
+                    expiryAt = expiry.durationMs?.let { System.currentTimeMillis() + it }
+                } else {
+                    expiry = PinExpiry.NEVER
+                    pinLabel = null
+                    expiryAt = null
+                }
+
+                val message = Message(
+                    contactId = contact.id,
+                    body = body,
+                    type = type,
+                    lat = parsedLoc?.lat,
+                    lng = parsedLoc?.lng,
+                    isSent = false,
+                    timestamp = System.currentTimeMillis(),
+                    pinLabel = pinLabel,
+                    expiryAt = expiryAt,
+                    senderVerified = senderVerified,
+                )
+                messageRepo.insertMessageSync(message)
+                Log.d("SmsReceiver", "Stored message from ${contact.name}: type=${message.type}")
+
+                // Route to group chats if the contact is a member
+                if (type != MessageType.LOCATION_DECLINED) {
+                    val groups = runCatching {
+                        // Sync call — use raw query on same thread. Reuses the RelayDbHelper
+                        // already open in this function rather than opening a second SQLCipher
+                        // connection (Keystore-backed passphrase derivation + DB open) per message.
+                        val groupDb = db.readableDatabase
+                        val cursor = groupDb.rawQuery(
+                            "SELECT g._id, g.name FROM groups g INNER JOIN group_members gm ON g._id = gm.group_id WHERE gm.contact_id = ?",
+                            arrayOf(contact.id.toString())
+                        )
+                        val list = mutableListOf<Pair<Long, String>>()
+                        cursor.use { c ->
+                            while (c.moveToNext()) {
+                                list.add(c.getLong(0) to c.getString(1))
+                            }
+                        }
+                        list
+                    }.getOrDefault(emptyList())
+
+                    for ((groupId, _) in groups) {
+                        groupMessageRepo.insertMessageSync(GroupMessage(
+                            groupId = groupId,
+                            contactId = contact.id,
+                            body = body,
+                            type = type,
+                            lat = parsedLoc?.lat,
+                            lng = parsedLoc?.lng,
+                            isSent = false,
+                            timestamp = System.currentTimeMillis(),
+                            pinLabel = pinLabel,
+                            expiryAt = expiryAt,
+                        ))
+                        broadcastGroupUpdate(context, groupId)
+                    }
+                }
+
+                broadcastUpdate(context, contact.id)
+            }
         }
     }
 
@@ -176,6 +214,12 @@ class SmsReceiver : BroadcastReceiver() {
      * user to explicitly accept/reject (see ContactsScreen) rather than silently swapped in —
      * otherwise an attacker could spoof a PUBKEY message and silently redirect our encryption to a
      * key they control.
+     *
+     * Exception: a key change carrying a valid [SmsMessageParser.parsePublicKeyRotationSignature]
+     * — verified against the contact's already-trusted [Contact.signingPublicKey] — is a routine
+     * key rotation (see RelayCrypto.rotateIdentityKey), not a spoof, so it's accepted immediately
+     * without the pending-review dialog. The signing key itself is never updated this way; it's
+     * only ever learned once (see [contact].signingPublicKey persistence in ContactRepository).
      */
     private fun handleIncomingPublicKey(
         context: Context,
@@ -187,14 +231,33 @@ class SmsReceiver : BroadcastReceiver() {
         val existing = contact.publicKey
 
         if (existing != null && existing != key) {
-            contactRepo.setPendingPublicKeySync(contact.id, key)
-            showKeyChangeNotification(context, contact)
+            val rotationSig = SmsMessageParser.parsePublicKeyRotationSignature(body)
+            val signingKey = contact.signingPublicKey
+            val keyBytes = if (rotationSig != null && signingKey != null) {
+                try { Base64.decode(key, Base64.NO_WRAP) } catch (e: Exception) { null }
+            } else null
+            val isVerifiedRotation = keyBytes != null && rotationSig != null && signingKey != null &&
+                RelayCrypto.verifyBytes(keyBytes, rotationSig, signingKey)
+            if (isVerifiedRotation) {
+                contactRepo.setPublicKeySync(contact.id, key)
+                contactRepo.rejectPendingPublicKeySync(contact.id)
+            } else {
+                contactRepo.setPendingPublicKeySync(contact.id, key)
+                showKeyChangeNotification(context, contact)
+            }
+            broadcastUpdate(context, contact.id)
             return
         }
         if (existing == null) {
             contactRepo.setPublicKeySync(contact.id, key)
         }
         contactRepo.markAsRelayUserSync(contact.id)
+
+        // Learn the signing key once, the first time we see it — never overwritten afterward
+        // (see ContactRepository.setSigningPublicKeyIfAbsentSync).
+        SmsMessageParser.parsePublicKeySigningKey(body)?.let {
+            contactRepo.setSigningPublicKeyIfAbsentSync(contact.id, it)
+        }
 
         // Learn a display name from the handshake only if we don't already have a real one
         // (findOrCreateByPhoneSync defaults an unknown contact's name to their phone number).
@@ -203,10 +266,20 @@ class SmsReceiver : BroadcastReceiver() {
             contactRepo.setNameSync(contact.id, incomingName)
         }
 
+        // Fires regardless of what happens below (including the early return a few lines down if
+        // we can't reply with our own key) — everything mutated above this point (public key,
+        // relay-user flag, signing key, name) needs the UI to actually refresh live.
+        broadcastUpdate(context, contact.id)
+
         if (!contactRepo.hasSentPubkeySync(contact.id)) {
             val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return
+            val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
             // Only mark sent if the SMS actually went out; otherwise the peer never gets our key.
-            val sent = SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey))
+            val sent = SmsSender.sendSms(
+                context,
+                contact.phone,
+                SmsMessageParser.formatPublicKey(myKey, signingKeyBase64 = mySigningKey),
+            )
             if (sent) contactRepo.markSentPubkeySync(contact.id)
         }
     }
@@ -221,17 +294,39 @@ class SmsReceiver : BroadcastReceiver() {
             ).apply { description = "Encryption key changes and other security-relevant events" }
             nm.createNotificationChannel(channel)
         }
+        val openContactsIntent = Intent(context, MainActivity::class.java).apply {
+            putExtra("open_contacts", true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            SECURITY_NOTIF_BASE + (contact.id % 1000).toInt(),
+            openContactsIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val notification = NotificationCompat.Builder(context, RelayPreferences.SECURITY_ALERT_CHANNEL)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentTitle("${contact.name}'s encryption key changed")
             .setContentText("Review and confirm in Contacts before trusting it")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
+            .setContentIntent(contentIntent)
             .build()
         nm.notify(SECURITY_NOTIF_BASE + (contact.id % 1000).toInt(), notification)
     }
 
-    private fun decryptIncoming(context: Context, body: String): String? {
+    private data class DecryptedIncoming(val body: String, val senderVerified: Boolean)
+
+    /**
+     * Decrypts an incoming `TYPE:ENC` message and checks whether it's authentically from
+     * [contact]. Tink's hybrid encryption here only proves the ciphertext was encrypted to *our*
+     * public key — anyone who knows it can produce a decryptable ciphertext, so without a
+     * separate signature check a spoofed SMS sender ID could deliver a forged "encrypted" message
+     * that looks identical to a real one. [DecryptedIncoming.senderVerified] is false whenever
+     * that check can't be done or fails; callers still show the message (see onReceive) but mark
+     * it distinctly rather than silently trusting it.
+     */
+    private fun decryptIncoming(context: Context, contact: Contact, body: String): DecryptedIncoming? {
         val ct = SmsMessageParser.parseEncryptedPayload(body) ?: return null
         val bytes = try {
             Base64.decode(ct, Base64.NO_WRAP)
@@ -239,11 +334,16 @@ class SmsReceiver : BroadcastReceiver() {
             return null
         }
         val plain = RelayCrypto.decryptMine(context, bytes) ?: return null
-        return try {
+        val plainText = try {
             String(plain, Charsets.UTF_8)
         } catch (e: Exception) {
-            null
+            return null
         }
+        val signature = SmsMessageParser.parseEncryptedSignature(body)
+        val signingKey = contact.signingPublicKey
+        val verified = signature != null && signingKey != null &&
+            RelayCrypto.verifyBytes(bytes, signature, signingKey)
+        return DecryptedIncoming(plainText, verified)
     }
 
     /** Simple per-contact cooldown so a malicious/misbehaving sender can't flood location requests or receipts. */

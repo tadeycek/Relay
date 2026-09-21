@@ -76,6 +76,16 @@ class RelayPreferences(context: Context) {
         get() = prefs.getString(KEY_MY_PHONE, "") ?: ""
         set(v) { prefs.edit().putString(KEY_MY_PHONE, v).apply() }
 
+    /** Epoch millis after which the retired identity key (kept only to decrypt late-arriving
+     *  messages right after a rotation) is permanently deleted. 0 = no retired key on file. */
+    var previousKeyExpiresAt: Long
+        get() = prefs.getLong(KEY_PREV_KEY_EXPIRES_AT, 0L)
+        set(v) { prefs.edit().putLong(KEY_PREV_KEY_EXPIRES_AT, v).apply() }
+
+    var lastKeyRotationAt: Long
+        get() = prefs.getLong(KEY_LAST_ROTATION_AT, 0L)
+        set(v) { prefs.edit().putLong(KEY_LAST_ROTATION_AT, v).apply() }
+
     companion object {
         private const val PREFS_NAME = "relay_settings"
         private const val KEY_AUTO_APPROVE = "auto_approve_location"
@@ -95,6 +105,8 @@ class RelayPreferences(context: Context) {
         private const val KEY_DND_END_HOUR = "dnd_end_hour"
         private const val KEY_MY_NAME = "my_name"
         private const val KEY_MY_PHONE = "my_phone"
+        private const val KEY_PREV_KEY_EXPIRES_AT = "prev_identity_key_expires_at"
+        private const val KEY_LAST_ROTATION_AT = "last_identity_key_rotation_at"
 
         const val FROM_ALL = "all"
         const val FROM_NOBODY = "nobody"

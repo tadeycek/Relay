@@ -225,7 +225,11 @@ private fun MyCodeTab(
                 qrBitmap = null
                 val bmp = withContext(Dispatchers.Default) {
                     val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return@withContext null
-                    encodeQrBitmap(QrContactCode.encode(prefs.myPhone, prefs.myName, myKey), 800)
+                    val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
+                    encodeQrBitmap(
+                        QrContactCode.encode(prefs.myPhone, prefs.myName, myKey, mySigningKey),
+                        800,
+                    )
                 }
                 if (bmp == null) qrFailed = true else qrBitmap = bmp
             }

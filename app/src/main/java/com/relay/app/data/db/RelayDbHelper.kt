@@ -66,6 +66,12 @@ class RelayDbHelper(context: Context) :
         if (oldVersion < 7) {
             db.execSQL(DatabaseContract.Contacts.ADD_PENDING_PUBLIC_KEY)
         }
+        if (oldVersion < 8) {
+            db.execSQL(DatabaseContract.Contacts.ADD_SIGNING_PUBLIC_KEY)
+        }
+        if (oldVersion < 9) {
+            db.execSQL(DatabaseContract.Messages.ADD_SENDER_VERIFIED)
+        }
     }
 
     override fun onConfigure(db: SQLiteDatabase) {

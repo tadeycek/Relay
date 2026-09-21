@@ -32,10 +32,19 @@ object RelayDbPassphrase {
         )
         prefs.getString(KEY_PASSPHRASE, null)?.let { return it }
 
-        val bytes = ByteArray(32)
-        SecureRandom().nextBytes(bytes)
-        val generated = Base64.encodeToString(bytes, Base64.NO_WRAP)
-        prefs.edit().putString(KEY_PASSPHRASE, generated).commit()
-        return generated
+        // Two near-simultaneous first-time callers (e.g. an incoming SMS arriving while the UI is
+        // also initializing) could otherwise each generate a different passphrase and each open
+        // relay.db under their own value before either commits — whichever passphrase doesn't win
+        // the final write would leave the physical DB file encrypted under a value that no longer
+        // matches what's stored, permanently failing to decrypt on the next open. Serialize
+        // "check, else generate + persist" and re-check after acquiring the lock.
+        synchronized(this) {
+            prefs.getString(KEY_PASSPHRASE, null)?.let { return it }
+            val bytes = ByteArray(32)
+            SecureRandom().nextBytes(bytes)
+            val generated = Base64.encodeToString(bytes, Base64.NO_WRAP)
+            prefs.edit().putString(KEY_PASSPHRASE, generated).commit()
+            return generated
+        }
     }
 }

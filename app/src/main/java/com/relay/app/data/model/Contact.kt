@@ -14,4 +14,11 @@ data class Contact(
      * key-change is awaiting the user's explicit accept/reject.
      */
     val pendingPublicKey: String? = null,
+    /**
+     * Base64 Ed25519 signing public key, learned once at pairing time and never overwritten
+     * afterward. Used to verify that a later [publicKey] rotation really came from this same
+     * contact (see RelayCrypto/SmsReceiver) so routine key rotation doesn't need to go through
+     * the scary pending-key-change dialog. A change to *this* key is always treated as suspicious.
+     */
+    val signingPublicKey: String? = null,
 )

@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.LocationOff
 import androidx.compose.material.icons.outlined.LocationSearching
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -95,6 +96,14 @@ private fun TextBubble(message: Message) {
             horizontalArrangement = Arrangement.spacedBy(4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (!message.isSent && !message.senderVerified) {
+                Icon(
+                    imageVector = Icons.Outlined.Warning,
+                    contentDescription = "Decrypted, but the sender couldn't be verified",
+                    tint = TextSecondary,
+                    modifier = Modifier.size(11.dp),
+                )
+            }
             Text(
                 text = timeFormat.format(Date(message.timestamp)),
                 color = if (message.isSent) OnAccent.copy(alpha = 0.6f) else TextSecondary,

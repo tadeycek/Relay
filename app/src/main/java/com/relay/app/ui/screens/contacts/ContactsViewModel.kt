@@ -1,6 +1,11 @@
 package com.relay.app.ui.screens.contacts
 
 import android.app.Application
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.relay.app.data.db.RelayDbHelper
@@ -26,8 +31,34 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
     val groups: StateFlow<List<Group>> = _groups.asStateFlow()
 
+    private var updateReceiver: BroadcastReceiver? = null
+
     init {
         loadAll()
+    }
+
+    /**
+     * Without this, pairing, key rotation, and key-change review state (contact.publicKey,
+     * signingPublicKey, pendingPublicKey) only ever refreshed after an explicit user action in
+     * this screen — SmsReceiver mutates that state from a background broadcast, so without
+     * listening for it the lock icon and the key-change dialog silently never appeared until the
+     * app was killed and reopened, even though the security notification fired correctly.
+     */
+    fun registerUpdates(context: Context) {
+        updateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) = loadAll()
+        }
+        ContextCompat.registerReceiver(
+            context,
+            updateReceiver,
+            IntentFilter("com.relay.app.NEW_MESSAGE"),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+    }
+
+    fun unregisterUpdates(context: Context) {
+        updateReceiver?.let { context.unregisterReceiver(it) }
+        updateReceiver = null
     }
 
     private fun loadAll() {
