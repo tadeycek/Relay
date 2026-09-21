@@ -109,6 +109,7 @@ internal fun ColumnScope.SettingsSections(vm: SettingsViewModel) {
                 checked = vm.torEnabled,
                 onCheckedChange = vm::updateTorEnabled,
             )
+            TorSetupGuide(orbotInstalled = vm.orbotInstalled, torEnabled = vm.torEnabled, onOpenOrbot = vm::openOrbot)
             if (vm.torEnabled) {
                 ActionRow(
                     label = "Tor status",
@@ -230,6 +231,71 @@ private fun formatRotationDate(epochMillis: Long): String {
 }
 
 /**
+ * Step-by-step setup shown right under the Tor switch, so nobody has to guess that the switch alone is
+ * not enough: Relay does not include Tor, it uses the separate Orbot app.
+ */
+@Composable
+private fun TorSetupGuide(orbotInstalled: Boolean, torEnabled: Boolean, onOpenOrbot: () -> Unit) {
+    val steps = listOf(
+        "Install Orbot, the free Tor app from the Guardian Project (Play Store or F-Droid).",
+        "Open Orbot and tap Start. Wait until it says it is connected to Tor.",
+        "Come back here and switch on \"Hide my IP from relays\". The status below should change to " +
+            "\"Connected through Tor\".",
+        "Keep Orbot running. If it stops, Relay pauses sending and shows \"Waiting for Tor\" until it is back.",
+    )
+    Column(modifier = Modifier.fillMaxWidth().background(Surface1).padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Text(
+            text = "Needs the Orbot app",
+            color = TextPrimary,
+            fontFamily = IbmPlexSans,
+            fontSize = 13.sp,
+        )
+        Text(
+            text = "Relay does not include Tor. With Orbot missing or stopped this switch does nothing except " +
+                "pause your messages.",
+            color = TextSecondary,
+            fontFamily = IbmPlexSans,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            modifier = Modifier.padding(top = 2.dp, bottom = 6.dp),
+        )
+        steps.forEachIndexed { i, step ->
+            Text(
+                text = "${i + 1}.  $step",
+                color = TextSecondary,
+                fontFamily = IbmPlexSans,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+        }
+        Text(
+            text = "Relay expects Orbot's usual proxy address, 127.0.0.1 port 9050. Orbot: " +
+                if (orbotInstalled) "installed." else "not installed on this phone.",
+            color = if (orbotInstalled) TextSecondary else Accent,
+            fontFamily = IbmPlexMono,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+        TextButton(onClick = onOpenOrbot) {
+            Text(
+                text = if (orbotInstalled) "Open Orbot" else "Get Orbot",
+                color = Accent,
+                fontFamily = IbmPlexSans,
+            )
+        }
+        if (!torEnabled) {
+            Text(
+                text = "Off by default. Once it is on, messages and photos go through Tor and are slower.",
+                color = TextSecondary,
+                fontFamily = IbmPlexSans,
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
+/**
  * Plain-language pros and cons of the Tor option. Kept honest about what it does not cover
  * (a maps app opened from a shared location, the friend's side, timing analysis) so users do not over-trust it.
  */
@@ -276,7 +342,7 @@ private fun TorExplanation() {
         Block(
             "What it does not cover",
             listOf(
-                "\"Open in Maps\" hands a location to your maps app, which then connects on its own, outside Tor.",
+                "Anything you open in another app (a link, a shared location) connects on its own, outside Tor.",
                 "Your contact's IP is still visible to relays unless they use Tor too.",
                 "Your mobile carrier can see that you're using Tor.",
                 "It doesn't protect you if your phone is compromised, and it can't hide that a message " +

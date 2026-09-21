@@ -31,6 +31,11 @@
     <!-- Not every device has a camera; pairing then just isn't offered. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Lets Settings tell whether Orbot (the Tor app) is installed, for the Tor setup guide. -->
+    <queries>
+        <package android:name="org.torproject.android" />
+    </queries>
+
     <application
         android:name=".RelayApplication"
         android:label="@string/app_name"

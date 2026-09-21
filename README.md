@@ -28,7 +28,7 @@ Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext
 Lightweight, local groups; sending fans out one message per member (NIP-17 discourages groups beyond ~10). There is no group membership authentication.
 
 ### Tor (optional)
-Settings → Privacy → "Hide my IP from relays (Tor)" routes relay and media connections through Orbot's SOCKS proxy. It **fails closed**: with Tor on and Orbot not running, nothing is sent. Off by default. Embedded Tor is not built.
+Settings → Privacy → "Hide my IP from relays (Tor)" routes relay and media connections through **Orbot** (the Guardian Project's Tor app), which must be installed and started separately: Relay does not include Tor. Setup is written out under the switch in the app: install Orbot, open it and tap Start, then turn the switch on; Relay expects Orbot at 127.0.0.1:9050. It **fails closed**: with Tor on and Orbot not running, nothing is sent and the status shows "Waiting for Tor". Off by default. Embedded Tor is not built, and the real Tor path has not been tested.
 
 ## Security architecture
 

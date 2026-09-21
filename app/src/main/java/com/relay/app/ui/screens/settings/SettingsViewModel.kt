@@ -86,6 +86,15 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         reconnectNow()
     }
 
+    var orbotInstalled by mutableStateOf(false)
+        private set
+
+    /** Re-checks whether Orbot is installed (call when the screen resumes, e.g. after installing it). */
+    fun refreshOrbotInstalled() {
+        orbotInstalled = getApplication<Application>().packageManager
+            .getLaunchIntentForPackage(TorControl.ORBOT_PACKAGE) != null
+    }
+
     /** Opens Orbot if installed, otherwise its store page, so the user can start or get it. */
     fun openOrbot() {
         val app = getApplication<Application>()
@@ -99,6 +108,7 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        refreshOrbotInstalled()
         viewModelScope.launch {
             Transports.get(app).status.collect { connectionStatus = it }
         }
