@@ -13,6 +13,8 @@ import com.relay.app.transport.nostr.InboxRelays
  *  - v3 (internet transport): `NAME`, `NPUB` (64-char hex Nostr public key), `KEY`, optional
  *    `SIGKEY`, optional `RELAYS` (comma-separated `wss://` inbox relay hints). No phone number is
  *    carried — the Nostr key is the address, and leaving the number out keeps it private.
+ *  - v4: v3 plus `PAIR` (32 hex chars), a one-time code that lets the scanner ask the shower to add them
+ *    back and verify both sides. An app that predates it ignores the field and works as before.
  *
  * Legacy codes still decode (they yield a contact with a phone and no Nostr key, which can be shown
  * as "legacy, cannot receive new messages").
@@ -20,6 +22,7 @@ import com.relay.app.transport.nostr.InboxRelays
 object QrContactCode {
 
     private const val VERSION = 3
+    private const val VERSION_WITH_PAIRING = 4
     private const val MAX_RELAY_HINTS = 5
     private const val MAX_RELAY_LENGTH = 100
     private val BASE64 = Regex("""[A-Za-z0-9+/=]+""")
@@ -37,6 +40,8 @@ object QrContactCode {
         /** 64-char lowercase hex Nostr public key. Present in v3 codes. */
         val nostrPubkeyHex: String? = null,
         val relayHints: List<String> = emptyList(),
+        /** One-time pairing code from a v4 code; null for older codes, which use the one-sided flow. */
+        val pairNonce: String? = null,
     )
 
     fun encode(
@@ -45,12 +50,14 @@ object QrContactCode {
         publicKeyBase64: String,
         signingPublicKeyBase64: String? = null,
         relayHints: List<String> = emptyList(),
+        pairNonce: String? = null,
     ): String {
         val safeName = sanitize(name).take(30)
-        val sb = StringBuilder("RELAYQR:$VERSION|NAME:$safeName|NPUB:${nostrPubkeyHex.lowercase()}|KEY:$publicKeyBase64")
+        val sb = StringBuilder("RELAYQR:${if (pairNonce != null) VERSION_WITH_PAIRING else VERSION}|NAME:$safeName|NPUB:${nostrPubkeyHex.lowercase()}|KEY:$publicKeyBase64")
         if (!signingPublicKeyBase64.isNullOrEmpty()) sb.append("|SIGKEY:$signingPublicKeyBase64")
         val hints = cleanRelayHints(relayHints)
         if (hints.isNotEmpty()) sb.append("|RELAYS:").append(hints.joinToString(","))
+        if (pairNonce != null) sb.append("|PAIR:").append(pairNonce)
         return sb.toString()
     }
 
@@ -84,6 +91,7 @@ object QrContactCode {
                 signingPublicKeyBase64 = signingKey,
                 nostrPubkeyHex = npub,
                 relayHints = cleanRelayHints(fields["RELAYS"]?.split(',').orEmpty()),
+                pairNonce = fields["PAIR"]?.lowercase()?.takeIf { com.relay.app.pairing.PairingMessages.isValidNonce(it) },
             )
         }
 
