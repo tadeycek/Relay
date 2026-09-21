@@ -9,6 +9,10 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Background relay connection (messaging foreground service). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
@@ -58,6 +62,11 @@
         <service
             android:name=".sms.LocationShareService"
             android:exported="false" />
+
+        <service
+            android:name=".messaging.ConnectionService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
 
         <!-- Required for default-SMS-app eligibility: handles the "quick response" action used
              when declining a call with a text. -->

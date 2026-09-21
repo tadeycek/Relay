@@ -28,6 +28,7 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.repository.ContactRepository
+import com.relay.app.messaging.ConnectionService
 import com.relay.app.messaging.MessageNotifier
 import com.relay.app.ui.lock.AppLockScreen
 import com.relay.app.ui.lock.deviceSupportsAppLock
@@ -135,6 +136,12 @@ class MainActivity : FragmentActivity() {
             val contact = ContactRepository(db).findOrCreateByPhoneSync(phone)
             pendingChatContactId.value = contact.id
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // The activity is visible, which is when Android allows starting a foreground service.
+        if (RelayPreferences(applicationContext).backgroundConnection) ConnectionService.start(this)
     }
 
     override fun onStop() {

@@ -95,7 +95,16 @@ class RelayPreferences(context: Context) {
             ?: DefaultRelays.CLEARNET
         set(v) { prefs.edit().putString(KEY_NOSTR_RELAYS, v.joinToString("\n")).apply() }
 
+    /**
+     * Keep a foreground service running so messages arrive while the app is closed. On by default
+     * (without it there is no closed-app delivery); costs battery and shows a persistent notification.
+     */
+    var backgroundConnection: Boolean
+        get() = prefs.getBoolean(KEY_BACKGROUND_CONNECTION, true)
+        set(v) { prefs.edit().putBoolean(KEY_BACKGROUND_CONNECTION, v).apply() }
+
     companion object {
+        private const val KEY_BACKGROUND_CONNECTION = "background_connection"
         private const val KEY_NOSTR_RELAYS = "nostr_relays"
         private const val PREFS_NAME = "relay_settings"
         private const val KEY_AUTO_APPROVE = "auto_approve_location"
