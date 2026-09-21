@@ -262,12 +262,16 @@ class IncomingMessageHandler(context: Context) {
     private fun handleLocationRequest(contact: Contact, now: Long) {
         if (!locationRequestCooldown.allow(contact.id, now)) return
         val prefs = RelayPreferences(appContext)
-        if (prefs.locationRequestFrom == RelayPreferences.FROM_NOBODY) return
-        if (contact.trustLevel == ContactTrustLevel.BLOCKED) return
-        if (isWithinDndWindow(prefs)) return
-
-        if (prefs.autoApproveLocationRequests || contact.trustLevel == ContactTrustLevel.TRUSTED) {
-            appContext.startService(
+        val decision = LocationRequestPolicy.decide(
+            fromNobody = prefs.locationRequestFrom == RelayPreferences.FROM_NOBODY,
+            autoApproveAll = prefs.autoApproveLocationRequests,
+            trust = contact.trustLevel,
+            verified = contact.qrVerified,
+            inDndWindow = isWithinDndWindow(prefs),
+        )
+        when (decision) {
+            LocationRequestPolicy.Decision.DROP -> Unit
+            LocationRequestPolicy.Decision.AUTO_SHARE -> appContext.startService(
                 Intent(appContext, LocationShareService::class.java).apply {
                     action = LocationShareService.ACTION_SHARE
                     putExtra(LocationShareService.EXTRA_PHONE, contact.phone)
@@ -276,8 +280,8 @@ class IncomingMessageHandler(context: Context) {
                     putExtra(LocationShareService.EXTRA_NOTIFY, prefs.notifyOnAutoShare)
                 }
             )
-        } else {
-            LocationRequestNotifier.show(appContext, contact, prefs.notifyOnAutoShare)
+            LocationRequestPolicy.Decision.ASK ->
+                LocationRequestNotifier.show(appContext, contact, prefs.notifyOnAutoShare)
         }
     }
 

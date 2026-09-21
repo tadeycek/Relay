@@ -59,6 +59,7 @@ object QrContactExchange {
         contactRepo.setPublicKeySync(contact.id, scanned.publicKeyBase64)
         contactRepo.rejectPendingPublicKeySync(contact.id)
         contactRepo.markAsRelayUserSync(contact.id)
+        contactRepo.markQrVerifiedSync(contact.id) // met in person: the strongest trust signal we have
         scanned.signingPublicKeyBase64?.let { contactRepo.setSigningPublicKeyIfAbsentSync(contact.id, it) }
 
         if (!contactRepo.hasSentPubkeySync(contact.id)) {

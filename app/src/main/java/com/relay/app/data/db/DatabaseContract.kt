@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 11
+    const val DB_VERSION = 12
 
     object Contacts {
         const val TABLE = "contacts"
@@ -17,6 +17,7 @@ object DatabaseContract {
         const val COL_SIGNING_PUBLIC_KEY = "signing_public_key"
         const val COL_NOSTR_PUBKEY = "nostr_pubkey"
         const val COL_RELAY_HINTS = "relay_hints"
+        const val COL_QR_VERIFIED = "qr_verified"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -30,12 +31,14 @@ object DatabaseContract {
                 $COL_PENDING_PUBLIC_KEY TEXT,
                 $COL_SIGNING_PUBLIC_KEY TEXT,
                 $COL_NOSTR_PUBKEY TEXT,
-                $COL_RELAY_HINTS TEXT
+                $COL_RELAY_HINTS TEXT,
+                $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0
             )
         """
 
         const val ADD_NOSTR_PUBKEY = "ALTER TABLE $TABLE ADD COLUMN $COL_NOSTR_PUBKEY TEXT"
         const val ADD_RELAY_HINTS = "ALTER TABLE $TABLE ADD COLUMN $COL_RELAY_HINTS TEXT"
+        const val ADD_QR_VERIFIED = "ALTER TABLE $TABLE ADD COLUMN $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0"
 
         /** One contact per Nostr key. Partial so the many legacy rows with NULL do not collide. */
         const val INDEX_NOSTR_PUBKEY = """

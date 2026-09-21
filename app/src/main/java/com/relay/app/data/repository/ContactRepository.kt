@@ -231,6 +231,13 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
     }
 
+    /** Marks the contact as met in person (their QR code was scanned). */
+    fun markQrVerifiedSync(contactId: Long) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Contacts.COL_QR_VERIFIED, 1) }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
     fun setRelayHintsSync(contactId: Long, hints: List<String>) {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
@@ -264,6 +271,9 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         },
         relayHints = getColumnIndex(Contacts.COL_RELAY_HINTS).let { idx ->
             if (idx >= 0 && !isNull(idx)) getString(idx).lines().filter { it.isNotBlank() } else emptyList()
+        },
+        qrVerified = getColumnIndex(Contacts.COL_QR_VERIFIED).let { idx ->
+            idx >= 0 && !isNull(idx) && getInt(idx) == 1
         },
     )
 }

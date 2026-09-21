@@ -62,9 +62,10 @@ object MediaReceiver {
     fun receive(context: Context, contact: Contact, payloadId: String, ref: MediaRef, sentAt: Long) {
         val repo = MessageRepository(MessagingDb.get(context))
 
-        // Fetching a URL a sender chose reveals our IP to that host, so only do it for contacts we
-        // paired with in person (we hold their key). Anyone else gets a placeholder instead.
-        if (contact.publicKey == null) {
+        // Fetching a URL a sender chose reveals our IP to that host, so only do it for contacts whose
+        // QR code we scanned in person. Anyone else (a stranger who knows our key can announce any
+        // name and key) gets a placeholder instead.
+        if (!contact.qrVerified) {
             store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media from an unverified contact was not downloaded]", null)
             return
         }

@@ -94,3 +94,26 @@ Use `rebuild/dev/build.sh <gradle args>`.
 - **Limits:** if an upload fails the user must retry (uploads are not in the durable outbox; only the small reference
   message is); no resumable/chunked upload; no transcoding (video is only size/length checked: 12 MB / 60 s, images
   3 MB / 2048 px). Default Blossom servers are **unverified** (limits, auth, payment, retention unknown).
+
+## Phase 6: Key rotation, unknown senders, hardening
+
+- Built and unit-tested: `InboxRelays` (NIP-17 kind 10050 parse/publish/target selection), `LocationRequestPolicy`,
+  `Contact` model rules. Built, device-unverified: publishing our kind 10050 list, looking up recipients' lists,
+  rotation announcements queued through the outbox.
+- **Security review (self-review of the new code; the `/security-review` command was not run).** Findings acted on:
+  1. A stranger who knows our key could announce any name and, with "auto-approve location requests" on, receive an
+     automatic location share (the SMS-era behaviour applied to any number). New `qr_verified` column (**DB v12**) is
+     set only by scanning the contact's QR in person; `LocationRequestPolicy` never auto-shares to an unverified
+     contact unless the user explicitly marked them Trusted.
+  2. Auto-downloading a sender-chosen media URL reveals our IP to that host; media is now fetched only for
+     `qr_verified` contacts (others get a placeholder).
+  3. Unverified contacts are labelled "unverified" in lists (a self-declared name such as "Mom" is otherwise
+     indistinguishable from a real contact).
+  4. Received media directory excluded from backup/device transfer.
+  5. Lint: the 6 lint errors present are all pre-existing (CameraX opt-in marker, and missing
+     `uses-feature` for telephony/camera). The telephony ones disappear with SMS removal in Phase 8; the camera
+     `uses-feature` will be added there.
+- **Residual risks (not fixed):** relay URLs from a scanned QR or a published list are contacted automatically
+  (validated wss:// only, max 5), which reveals our IP to those relays; a hostile QR could therefore point us at
+  a relay of the attacker's choosing. Mitigated by the Tor option (Phase 7). Groups still have no membership
+  authentication (a group is a local list; senders are matched by contact).

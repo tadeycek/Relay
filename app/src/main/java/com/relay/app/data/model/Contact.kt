@@ -31,6 +31,12 @@ data class Contact(
     val nostrPubkey: String? = null,
     /** Extra `wss://` inbox relays learned from the contact's QR code, tried besides our own list. */
     val relayHints: List<String> = emptyList(),
+    /**
+     * True once this contact's QR code was scanned in person. A stranger who only knows our key can
+     * message us and announce any name, so unverified contacts get no automatic media downloads or
+     * location sharing (see LocationRequestPolicy / MediaReceiver).
+     */
+    val qrVerified: Boolean = false,
 ) {
     /** True when [phone] is a real number rather than the placeholder used for internet-only contacts. */
     val hasPhone: Boolean get() = !phone.startsWith(NOSTR_PHONE_PREFIX)
@@ -42,7 +48,7 @@ data class Contact(
     val subtitle: String
         get() = when {
             hasPhone -> phone
-            nostrPubkey != null && publicKey == null ->
+            nostrPubkey != null && !qrVerified ->
                 "Relay ID ${nostrPubkey.take(8)}…${nostrPubkey.takeLast(4)} · unverified"
             nostrPubkey != null -> "Relay ID ${nostrPubkey.take(8)}…${nostrPubkey.takeLast(4)}"
             else -> ""

@@ -92,6 +92,11 @@ class RelayDbHelper(context: Context) :
         if (oldVersion < 11) {
             db.execSQL(DatabaseContract.SeenPayloads.CREATE)
         }
+        if (oldVersion < 12) {
+            // "Met in person": set only by scanning the contact's QR code. Distinguishes a verified
+            // contact from a stranger who merely knows our key (name and key are self-declared).
+            db.execSQL(DatabaseContract.Contacts.ADD_QR_VERIFIED)
+        }
     }
 
     override fun onConfigure(db: SQLiteDatabase) {

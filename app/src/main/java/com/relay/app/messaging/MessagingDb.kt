@@ -1,5 +1,6 @@
 package com.relay.app.messaging
 
+import android.annotation.SuppressLint
 import android.content.Context
 import com.relay.app.data.db.RelayDbHelper
 
@@ -10,6 +11,9 @@ import com.relay.app.data.db.RelayDbHelper
  * writing the same file invites "database is locked" errors.
  */
 object MessagingDb {
+    // The helper only ever holds the *application* context (RelayDbHelper applies applicationContext),
+    // so this static reference cannot leak an Activity.
+    @SuppressLint("StaticFieldLeak")
     @Volatile private var instance: RelayDbHelper? = null
 
     fun get(context: Context): RelayDbHelper =

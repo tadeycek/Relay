@@ -1,5 +1,6 @@
 package com.relay.app.transport.nostr
 
+import android.annotation.SuppressLint
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -22,6 +23,9 @@ object NostrIdentity {
 
     @Volatile private var cached: Keys? = null
 
+    // commit(), not apply(): the freshly generated key must be durably on disk before anything is
+    // published under it, otherwise a crash right after first use would orphan that identity.
+    @SuppressLint("ApplySharedPref")
     fun keys(context: Context): Keys {
         cached?.let { return it }
         synchronized(this) {

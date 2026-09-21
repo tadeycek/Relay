@@ -8,4 +8,5 @@
     <exclude domain="sharedpref" path="relay_signing_keyset_prefs.xml" />
     <exclude domain="sharedpref" path="relay_media_keyset_prefs.xml" />
     <exclude domain="sharedpref" path="relay_nostr_identity.xml" />
+        <exclude domain="file" path="media/" />
 </full-backup-content>
