@@ -156,6 +156,8 @@ class IncomingMessageHandler(context: Context) {
                 msgId = payloadId,
                 // Authenticated by the Nostr seal signature, so no separate "unverified sender" state.
                 senderVerified = true,
+                // New for the user until they open the chat (a declined-location notice is not worth a badge).
+                unread = type != MessageType.LOCATION_DECLINED,
             )
         )
     }
@@ -196,6 +198,7 @@ class IncomingMessageHandler(context: Context) {
                     timestamp = timestamp,
                     pinLabel = pinLabel,
                     expiryAt = expiryAt,
+                    unread = type != MessageType.LOCATION_DECLINED,
                 )
             )
             appContext.sendBroadcast(Intent("com.relay.app.NEW_GROUP_MESSAGE").apply {

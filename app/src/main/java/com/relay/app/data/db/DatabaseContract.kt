@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 12
+    const val DB_VERSION = 13
 
     object Contacts {
         const val TABLE = "contacts"
@@ -71,6 +71,7 @@ object DatabaseContract {
         const val COL_READ_AT = "read_at"
         const val COL_SENDER_VERIFIED = "sender_verified"
         const val COL_DELIVERY_STATE = "delivery_state"
+        const val COL_UNREAD = "unread"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -89,8 +90,16 @@ object DatabaseContract {
                 $COL_MSG_ID      TEXT,
                 $COL_READ_AT     INTEGER,
                 $COL_SENDER_VERIFIED INTEGER NOT NULL DEFAULT 1,
-                $COL_DELIVERY_STATE INTEGER NOT NULL DEFAULT 0
+                $COL_DELIVERY_STATE INTEGER NOT NULL DEFAULT 0,
+                $COL_UNREAD INTEGER NOT NULL DEFAULT 0
             )
+        """
+
+        /** Added in DB v13. A per-row flag (not a last-read timestamp): sender timestamps can be older than the read time when messages arrive late. */
+        const val ADD_UNREAD = "ALTER TABLE $TABLE ADD COLUMN $COL_UNREAD INTEGER NOT NULL DEFAULT 0"
+
+        const val INDEX_UNREAD = """
+            CREATE INDEX IF NOT EXISTS idx_messages_unread ON $TABLE($COL_CONTACT_ID, $COL_UNREAD)
         """
 
         const val INDEX_CONTACT = """
@@ -204,6 +213,7 @@ object DatabaseContract {
         const val COL_MEDIA_URI = "media_uri"
         const val COL_PIN_LABEL = "pin_label"
         const val COL_EXPIRY_AT = "expiry_at"
+        const val COL_UNREAD = "unread"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -218,12 +228,20 @@ object DatabaseContract {
                 $COL_TIMESTAMP   INTEGER NOT NULL,
                 $COL_MEDIA_URI   TEXT,
                 $COL_PIN_LABEL   TEXT,
-                $COL_EXPIRY_AT   INTEGER
+                $COL_EXPIRY_AT   INTEGER,
+                $COL_UNREAD      INTEGER NOT NULL DEFAULT 0
             )
         """
 
         const val INDEX_GROUP = """
             CREATE INDEX idx_group_messages_group ON $TABLE($COL_GROUP_ID, $COL_TIMESTAMP DESC)
+        """
+
+        /** Added in DB v13, same meaning as Messages.COL_UNREAD. */
+        const val ADD_UNREAD = "ALTER TABLE $TABLE ADD COLUMN $COL_UNREAD INTEGER NOT NULL DEFAULT 0"
+
+        const val INDEX_UNREAD = """
+            CREATE INDEX IF NOT EXISTS idx_group_messages_unread ON $TABLE($COL_GROUP_ID, $COL_UNREAD)
         """
     }
 }

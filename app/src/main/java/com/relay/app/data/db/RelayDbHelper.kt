@@ -42,6 +42,8 @@ class RelayDbHelper(context: Context) :
         db.execSQL(DatabaseContract.Outbox.CREATE)
         db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
         db.execSQL(DatabaseContract.SeenPayloads.CREATE)
+        db.execSQL(DatabaseContract.Messages.INDEX_UNREAD)
+        db.execSQL(DatabaseContract.GroupMessages.INDEX_UNREAD)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -96,6 +98,14 @@ class RelayDbHelper(context: Context) :
             // "Met in person": set only by scanning the contact's QR code. Distinguishes a verified
             // contact from a stranger who merely knows our key (name and key are self-declared).
             db.execSQL(DatabaseContract.Contacts.ADD_QR_VERIFIED)
+        }
+        if (oldVersion < 13) {
+            // Unread badges for the conversation list. Existing messages start as read (DEFAULT 0):
+            // we cannot know what the user has seen, and a wall of "unread" after an update would be noise.
+            db.execSQL(DatabaseContract.Messages.ADD_UNREAD)
+            db.execSQL(DatabaseContract.GroupMessages.ADD_UNREAD)
+            db.execSQL(DatabaseContract.Messages.INDEX_UNREAD)
+            db.execSQL(DatabaseContract.GroupMessages.INDEX_UNREAD)
         }
     }
 

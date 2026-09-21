@@ -41,8 +41,26 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             msg.msgId?.let { put(Messages.COL_MSG_ID, it) }
             put(Messages.COL_SENDER_VERIFIED, if (msg.senderVerified) 1 else 0)
             put(Messages.COL_DELIVERY_STATE, msg.deliveryState)
+            put(Messages.COL_UNREAD, if (msg.unread) 1 else 0)
         }
         return db.insert(Messages.TABLE, null, values)
+    }
+
+    /** Clears the unread flag on everything received in this conversation (called when its chat is on screen). */
+    fun markConversationReadSync(contactId: Long) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Messages.COL_UNREAD, 0) }
+        db.update(
+            Messages.TABLE, values,
+            "${Messages.COL_CONTACT_ID} = ? AND ${Messages.COL_UNREAD} = 1", arrayOf(contactId.toString()),
+        )
+    }
+
+    /** Number of unread received messages across all one-to-one chats. */
+    fun totalUnreadSync(): Int {
+        val db = dbHelper.readableDatabase
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM ${Messages.TABLE} WHERE ${Messages.COL_UNREAD} = 1", null)
+        return cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
     }
 
     /** True if a message with this payload id is already stored for [contactId] (idempotent receive). */
@@ -114,6 +132,7 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
         val readAtIdx = getColumnIndex(Messages.COL_READ_AT)
         val senderVerifiedIdx = getColumnIndex(Messages.COL_SENDER_VERIFIED)
         val deliveryStateIdx = getColumnIndex(Messages.COL_DELIVERY_STATE)
+        val unreadIdx = getColumnIndex(Messages.COL_UNREAD)
         return Message(
             id = getLong(getColumnIndexOrThrow(Messages.COL_ID)),
             contactId = getLong(getColumnIndexOrThrow(Messages.COL_CONTACT_ID)),
@@ -132,6 +151,7 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
                 getInt(senderVerifiedIdx) == 1
             } else true,
             deliveryState = if (deliveryStateIdx >= 0 && !isNull(deliveryStateIdx)) getInt(deliveryStateIdx) else 0,
+            unread = unreadIdx >= 0 && !isNull(unreadIdx) && getInt(unreadIdx) == 1,
         )
     }
 }

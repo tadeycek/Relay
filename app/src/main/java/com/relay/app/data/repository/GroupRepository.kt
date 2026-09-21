@@ -84,33 +84,23 @@ class GroupRepository(private val dbHelper: RelayDbHelper) {
         )
     }
 
+    /**
+     * Members as full [Contact]s. These used to be built by hand from a subset of columns, which silently
+     * dropped the Nostr key and relay hints: a group message to such a member could not be queued (no
+     * address), so group sends failed without any error. Loading through [ContactRepository] keeps the
+     * mapping in one place so new contact fields cannot be forgotten here again.
+     */
     private fun getMembersSync(groupId: Long): List<Contact> {
         val db = dbHelper.readableDatabase
-        val cursor = db.rawQuery(
-            "SELECT c.* FROM ${Contacts.TABLE} c INNER JOIN ${GroupMembers.TABLE} gm ON c.${Contacts.COL_ID} = gm.${GroupMembers.COL_CONTACT_ID} WHERE gm.${GroupMembers.COL_GROUP_ID} = ?",
+        val ids = db.rawQuery(
+            "SELECT ${GroupMembers.COL_CONTACT_ID} FROM ${GroupMembers.TABLE} WHERE ${GroupMembers.COL_GROUP_ID} = ?",
             arrayOf(groupId.toString())
-        )
-        return cursor.use { c ->
-            val list = mutableListOf<Contact>()
-            while (c.moveToNext()) {
-                val keyIdx = c.getColumnIndex(Contacts.COL_PUBLIC_KEY)
-                val pendingKeyIdx = c.getColumnIndex(Contacts.COL_PENDING_PUBLIC_KEY)
-                val signingKeyIdx = c.getColumnIndex(Contacts.COL_SIGNING_PUBLIC_KEY)
-                val trustLevelIdx = c.getColumnIndex(Contacts.COL_TRUST_LEVEL)
-                list.add(Contact(
-                    id = c.getLong(c.getColumnIndexOrThrow(Contacts.COL_ID)),
-                    name = c.getString(c.getColumnIndexOrThrow(Contacts.COL_NAME)),
-                    phone = c.getString(c.getColumnIndexOrThrow(Contacts.COL_PHONE)),
-                    hasRelay = c.getInt(c.getColumnIndexOrThrow(Contacts.COL_HAS_RELAY)) == 1,
-                    trustLevel = ContactTrustLevel.fromDb(
-                        if (trustLevelIdx >= 0) c.getString(trustLevelIdx) else null
-                    ),
-                    publicKey = if (keyIdx >= 0 && !c.isNull(keyIdx)) c.getString(keyIdx) else null,
-                    pendingPublicKey = if (pendingKeyIdx >= 0 && !c.isNull(pendingKeyIdx)) c.getString(pendingKeyIdx) else null,
-                    signingPublicKey = if (signingKeyIdx >= 0 && !c.isNull(signingKeyIdx)) c.getString(signingKeyIdx) else null,
-                ))
-            }
+        ).use { c ->
+            val list = mutableListOf<Long>()
+            while (c.moveToNext()) list.add(c.getLong(0))
             list
         }
+        val contacts = ContactRepository(dbHelper)
+        return ids.mapNotNull { contacts.getByIdSync(it) }
     }
 }

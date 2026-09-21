@@ -120,6 +120,7 @@ object MediaReceiver {
                 timestamp = sentAt,
                 mediaUri = mediaPath,
                 msgId = payloadId,
+                unread = true,
             )
         )
         context.sendBroadcast(Intent("com.relay.app.NEW_MESSAGE").apply {

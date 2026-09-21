@@ -39,8 +39,26 @@ class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
             msg.mediaUri?.let { put(GroupMessages.COL_MEDIA_URI, it) }
             msg.pinLabel?.let { put(GroupMessages.COL_PIN_LABEL, it) }
             msg.expiryAt?.let { put(GroupMessages.COL_EXPIRY_AT, it) }
+            put(GroupMessages.COL_UNREAD, if (msg.unread) 1 else 0)
         }
         return db.insert(GroupMessages.TABLE, null, values)
+    }
+
+    /** Clears the unread flag on everything received in this group (called when its chat is on screen). */
+    fun markGroupReadSync(groupId: Long) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(GroupMessages.COL_UNREAD, 0) }
+        db.update(
+            GroupMessages.TABLE, values,
+            "${GroupMessages.COL_GROUP_ID} = ? AND ${GroupMessages.COL_UNREAD} = 1", arrayOf(groupId.toString()),
+        )
+    }
+
+    /** Number of unread received messages across all groups. */
+    fun totalUnreadSync(): Int {
+        val db = dbHelper.readableDatabase
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM ${GroupMessages.TABLE} WHERE ${GroupMessages.COL_UNREAD} = 1", null)
+        return cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
     }
 
     fun deleteExpiredPinsSync() {
