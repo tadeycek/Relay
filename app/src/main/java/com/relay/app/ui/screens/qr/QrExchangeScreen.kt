@@ -56,6 +56,7 @@ import com.relay.app.crypto.RelayCrypto
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.sms.QrContactExchange
+import com.relay.app.transport.nostr.NostrIdentity
 import com.relay.app.ui.components.RelayTopBar
 import com.relay.app.ui.navigation.Screen
 import com.relay.app.ui.theme.Accent
@@ -141,8 +142,7 @@ private fun MyCodeTab(
 ) {
     val context = LocalContext.current
     var name by remember { mutableStateOf(prefs.myName) }
-    var phone by remember { mutableStateOf(prefs.myPhone) }
-    var profileSet by remember { mutableStateOf(prefs.myName.isNotBlank() && prefs.myPhone.isNotBlank()) }
+    var profileSet by remember { mutableStateOf(prefs.myName.isNotBlank()) }
 
     Column(
         modifier = Modifier
@@ -196,20 +196,13 @@ private fun MyCodeTab(
                 colors = fieldColors,
                 modifier = Modifier.fillMaxWidth(),
             )
-            androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
-            com.relay.app.ui.components.PhoneNumberField(
-                initialE164 = prefs.myPhone,
-                onE164Change = { phone = it },
-                modifier = Modifier.fillMaxWidth(),
-            )
             androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
             Button(
                 onClick = {
                     prefs.myName = name.trim()
-                    prefs.myPhone = phone.trim()
-                    profileSet = name.isNotBlank() && phone.isNotBlank()
+                    profileSet = name.isNotBlank()
                 },
-                enabled = name.isNotBlank() && phone.isNotBlank(),
+                enabled = name.isNotBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent),
             ) {
                 Text("Generate my code")
@@ -220,14 +213,22 @@ private fun MyCodeTab(
             // stall here would freeze at the worst moment). null bitmap after done = failure.
             var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
             var qrFailed by remember { mutableStateOf(false) }
-            androidx.compose.runtime.LaunchedEffect(prefs.myPhone, prefs.myName) {
+            androidx.compose.runtime.LaunchedEffect(prefs.myName) {
                 qrFailed = false
                 qrBitmap = null
                 val bmp = withContext(Dispatchers.Default) {
                     val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return@withContext null
                     val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
+                    val myNostr = runCatching { NostrIdentity.publicKeyHex(context) }.getOrNull()
+                        ?: return@withContext null
                     encodeQrBitmap(
-                        QrContactCode.encode(prefs.myPhone, prefs.myName, myKey, mySigningKey),
+                        QrContactCode.encode(
+                            name = prefs.myName,
+                            nostrPubkeyHex = myNostr,
+                            publicKeyBase64 = myKey,
+                            signingPublicKeyBase64 = mySigningKey,
+                            relayHints = prefs.nostrRelays.take(3),
+                        ),
                         800,
                     )
                 }
@@ -285,13 +286,14 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
 
     fun onDecoded(value: QrContactCode.ScannedContact) {
         // Guard against scanning your own code (e.g. a screenshot / second device) — it would
-        // create a self-contact and fire an SMS to your own number.
-        if (prefs.myPhone.isNotBlank() && value.phone == prefs.myPhone) {
+        // create a self-contact and send a handshake to ourselves.
+        val myNostr = runCatching { NostrIdentity.publicKeyHex(context) }.getOrNull()
+        if (value.nostrPubkeyHex != null && value.nostrPubkeyHex == myNostr) {
             errorMsg = "That's your own code."
             return
         }
-        // Stop the scanner and ask for confirmation before saving + firing an SMS to the scanned
-        // number (the QR's number is attacker-choosable; don't act on it silently).
+        // Stop the scanner and ask for confirmation before saving and sending our key to the
+        // scanned contact (don't act on a scanned code silently).
         scanned = true
         pendingScan = value
     }
@@ -436,8 +438,16 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
             textContentColor = TextSecondary,
             title = { Text("Add contact?", fontFamily = IbmPlexSans) },
             text = {
+                val idLine = scan.nostrPubkeyHex
+                    ?.let { "Relay ID ${it.take(8)}…${it.takeLast(4)}" }
+                    ?: (scan.phone ?: "")
+                val actionLine = if (scan.nostrPubkeyHex != null) {
+                    "This saves them and sends them your key over the internet."
+                } else {
+                    "Legacy code: this saves them and texts them your key by SMS."
+                }
                 Text(
-                    "${scan.name}\n${scan.phone}\n\nThis saves them and texts them your key.",
+                    "${scan.name}\n$idLine\n\n$actionLine",
                     color = TextSecondary,
                     fontFamily = IbmPlexSans,
                 )

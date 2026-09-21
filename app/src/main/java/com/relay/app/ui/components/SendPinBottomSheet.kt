@@ -263,7 +263,7 @@ fun SendPinBottomSheet(
                                 Spacer(Modifier.width(12.dp))
                                 Column {
                                     Text(text = contact.name, color = TextPrimary, fontFamily = IbmPlexSans, fontSize = 14.sp)
-                                    Text(text = contact.phone, color = TextSecondary, fontFamily = IbmPlexMono, fontSize = 12.sp)
+                                    Text(text = contact.subtitle, color = TextSecondary, fontFamily = IbmPlexMono, fontSize = 12.sp)
                                 }
                             }
                         }

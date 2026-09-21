@@ -581,7 +581,7 @@ private fun ContactRow(
                 }
             }
             Text(
-                text = contact.phone,
+                text = contact.subtitle,
                 color = TextSecondary,
                 fontFamily = IbmPlexMono,
                 fontSize = 12.sp,
