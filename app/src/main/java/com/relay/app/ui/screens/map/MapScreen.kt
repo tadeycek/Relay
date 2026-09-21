@@ -234,25 +234,12 @@ fun MapScreen(navController: NavController) {
                     vm.setMapStyle(next, context)
                 },
             )
-            NavIconButton(
-                icon = Icons.Outlined.Settings,
-                contentDescription = "Settings",
-                onClick = { navController.navigate(Screen.Settings.route) },
-            )
+            // Settings, chats and contacts now live in the bottom bar; only the map-specific
+            // shortcuts stay here.
             NavIconButton(
                 icon = Icons.Outlined.History,
                 contentDescription = "Pin history",
                 onClick = { navController.navigate(Screen.PinHistory.route) },
-            )
-            NavIconButton(
-                icon = Icons.Outlined.ChatBubble,
-                contentDescription = "Chats",
-                onClick = { navController.navigate(Screen.Contacts.route) },
-            )
-            NavIconButton(
-                icon = Icons.Outlined.Person,
-                contentDescription = "Contacts",
-                onClick = { navController.navigate(Screen.Contacts.route) },
             )
         }
 
