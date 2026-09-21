@@ -77,6 +77,12 @@ dependencies {
     // Kotlin bindings. Alpha-quality upstream; pinned and wrapped behind com.relay.app.transport.
     implementation 'org.rust-nostr:nostr-sdk-kmp-android:0.44.8'
 
+    // JVM unit tests for the pure logic (payload codec, outbox policy, dedupe, QR codec, handlers).
+    // org.json is included because android.jar's org.json is only stubs on the JVM.
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0'
+
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
