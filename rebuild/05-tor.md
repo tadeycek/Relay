@@ -31,7 +31,6 @@ Library choice for embedding (tor-android, Guardian Project components, or Arti)
    Use SOCKS5 with **remote DNS** so hostnames are resolved by Tor, not by the phone.
 3. **Separate relay list** for Tor mode, with Tor-friendly and `.onion` relays. Some relays block Tor exit nodes.
 4. **Map tiles**: no longer applicable, the map was removed. Links opened in other apps (for example a shared location in the user's maps app) connect outside Tor; the in-app panel says so.
-   mode or warn (see 08).
 5. **Push path**: FCM/UnifiedPush endpoints see the device IP. In Tor mode disable push-based wake-ups or say so in the
    UI. The foreground-service connection can go through Tor.
 6. Transport must accept an injectable `Proxy`/socket factory from day one, even before Tor exists.
