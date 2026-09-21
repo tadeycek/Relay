@@ -1,6 +1,6 @@
 package com.relay.app.transport
 
-import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 
 /**
@@ -12,8 +12,12 @@ interface Transport {
 
     val status: StateFlow<TransportStatus>
 
-    /** Decrypted, signature-checked messages from any sender. Callers decide whether the sender is a known contact. */
-    val incoming: SharedFlow<IncomingEnvelope>
+    /**
+     * Decrypted, signature-checked messages from any sender. Callers decide whether the sender is a
+     * known contact. Backed by a buffered channel (single consumer) rather than a SharedFlow so
+     * nothing is dropped if a message arrives before the collector is attached.
+     */
+    val incoming: Flow<IncomingEnvelope>
 
     suspend fun start()
 

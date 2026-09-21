@@ -1,6 +1,7 @@
 package com.relay.app.util
 
 import android.content.Context
+import com.relay.app.transport.nostr.DefaultRelays
 
 class RelayPreferences(context: Context) {
 
@@ -86,7 +87,16 @@ class RelayPreferences(context: Context) {
         get() = prefs.getLong(KEY_LAST_ROTATION_AT, 0L)
         set(v) { prefs.edit().putLong(KEY_LAST_ROTATION_AT, v).apply() }
 
+    /** Nostr relays used for sending and receiving (one URL per stored line). Falls back to the built-in defaults. */
+    var nostrRelays: List<String>
+        get() = prefs.getString(KEY_NOSTR_RELAYS, null)
+            ?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: DefaultRelays.CLEARNET
+        set(v) { prefs.edit().putString(KEY_NOSTR_RELAYS, v.joinToString("\n")).apply() }
+
     companion object {
+        private const val KEY_NOSTR_RELAYS = "nostr_relays"
         private const val PREFS_NAME = "relay_settings"
         private const val KEY_AUTO_APPROVE = "auto_approve_location"
         private const val KEY_NOTIFY_AUTO_SHARE = "notify_auto_share"

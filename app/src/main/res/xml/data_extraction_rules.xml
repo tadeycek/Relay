@@ -4,6 +4,20 @@
         <exclude domain="database" path="relay.db" />
         <exclude domain="sharedpref" path="relay_db_secret.xml" />
         <exclude domain="sharedpref" path="relay_identity_keyset_prefs.xml" />
+        <exclude domain="sharedpref" path="relay_identity_keyset_prefs_previous.xml" />
+        <exclude domain="sharedpref" path="relay_identity_keyset_prefs_temp_rotation.xml" />
+        <exclude domain="sharedpref" path="relay_signing_keyset_prefs.xml" />
         <exclude domain="sharedpref" path="relay_media_keyset_prefs.xml" />
+        <exclude domain="sharedpref" path="relay_nostr_identity.xml" />
     </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="relay.db" />
+        <exclude domain="sharedpref" path="relay_db_secret.xml" />
+        <exclude domain="sharedpref" path="relay_identity_keyset_prefs.xml" />
+        <exclude domain="sharedpref" path="relay_identity_keyset_prefs_previous.xml" />
+        <exclude domain="sharedpref" path="relay_identity_keyset_prefs_temp_rotation.xml" />
+        <exclude domain="sharedpref" path="relay_signing_keyset_prefs.xml" />
+        <exclude domain="sharedpref" path="relay_media_keyset_prefs.xml" />
+        <exclude domain="sharedpref" path="relay_nostr_identity.xml" />
+    </device-transfer>
 </data-extraction-rules>
