@@ -60,10 +60,23 @@ class ChatViewModel(
         loadData()
     }
 
+    /**
+     * The first message that was unread when the chat was opened, kept for as long as the chat is
+     * open so the "new messages" divider stays put after the unread flags are cleared.
+     */
+    private val _unreadAnchorId = MutableStateFlow<Long?>(null)
+    val unreadAnchorId: StateFlow<Long?> = _unreadAnchorId.asStateFlow()
+    private var anchorCaptured = false
+
     private fun loadData() {
         viewModelScope.launch {
             _contact.value = contactRepo.getById(contactId)
-            _messages.value = messageRepo.getMessages(contactId)
+            val loaded = messageRepo.getMessages(contactId)
+            _messages.value = loaded
+            if (!anchorCaptured) {
+                anchorCaptured = true
+                _unreadAnchorId.value = loaded.firstOrNull { !it.isSent && it.unread }?.id
+            }
             markReadIfVisible()
         }
     }

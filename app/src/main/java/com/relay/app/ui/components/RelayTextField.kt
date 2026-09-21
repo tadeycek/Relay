@@ -8,6 +8,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.text.input.VisualTransformation
 import com.relay.app.ui.theme.Accent
 import com.relay.app.ui.theme.Border
@@ -31,6 +32,7 @@ fun RelayTextField(
     keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
     keyboardActions: KeyboardActions = KeyboardActions.Default,
     visualTransformation: VisualTransformation = VisualTransformation.None,
+    shape: Shape = RelayShapeTokens.control,
 ) {
     OutlinedTextField(
         value = value,
@@ -43,7 +45,7 @@ fun RelayTextField(
         isError = isError,
         supportingText = supportingText?.let { { Text(it) } },
         textStyle = MaterialTheme.typography.bodyLarge,
-        shape = RelayShapeTokens.control,
+        shape = shape,
         keyboardOptions = keyboardOptions,
         keyboardActions = keyboardActions,
         visualTransformation = visualTransformation,

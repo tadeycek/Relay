@@ -75,6 +75,7 @@ object ChatTimeline {
             }
             val starts = previous == null ||
                 previous!!.isSent != m.isSent ||
+                (!m.isSent && previous!!.contactId != m.contactId) || // another group member is speaking
                 m.timestamp - previous!!.timestamp > GROUP_GAP_MS
             items.add(ChatItem.Bubble(m, startsGroup = starts, endsGroup = false))
             previous = m

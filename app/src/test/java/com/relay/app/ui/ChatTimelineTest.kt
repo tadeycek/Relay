@@ -71,6 +71,21 @@ class ChatTimelineTest {
     }
 
     @Test
+    fun aDifferentGroupMemberStartsANewGroupEvenWithoutAChangeOfDirection() {
+        fun from(sender: Long, ts: Long) = msg(ts, false).copy(contactId = sender)
+        val b = bubbles(build(listOf(from(1, at(21, 9, 0)), from(1, at(21, 9, 1)), from(2, at(21, 9, 2)), from(2, at(21, 9, 3)))))
+        assertEquals(listOf(true, false, true, false), b.map { it.startsGroup })
+        assertEquals(listOf(false, true, false, true), b.map { it.endsGroup })
+    }
+
+    @Test
+    fun oneToOneReceivedMessagesFromTheSamePersonStayGroupedRegardlessOfSentMessagesElsewhere() {
+        // In a 1:1 chat sent and received messages share the contact id; direction alone decides.
+        val b = bubbles(build(listOf(msg(at(21, 9, 0), false), msg(at(21, 9, 1), false), msg(at(21, 9, 2), true))))
+        assertEquals(listOf(true, false, true), b.map { it.startsGroup })
+    }
+
+    @Test
     fun aLongGapSplitsAGroupButExactlyTheGapDoesNot() {
         val gap = ChatTimeline.GROUP_GAP_MS
         val t0 = at(21, 9, 0)
