@@ -67,7 +67,6 @@ import androidx.navigation.NavController
 import com.relay.app.data.model.Contact
 import com.relay.app.data.model.ContactTrustLevel
 import com.relay.app.data.model.Group
-import com.relay.app.ui.components.PhoneNumberField
 import com.relay.app.ui.components.RelayTopBar
 import com.relay.app.ui.navigation.Screen
 import com.relay.app.ui.theme.Accent
@@ -89,7 +88,6 @@ fun ContactsScreen(navController: NavController) {
     val context = LocalContext.current
     val contacts by vm.contacts.collectAsState()
     val groups by vm.groups.collectAsState()
-    var showAddDialog by remember { mutableStateOf(false) }
     var showNewGroupDialog by remember { mutableStateOf(false) }
     var manageGroupId by remember { mutableStateOf<Long?>(null) }
     var keyChangeContactId by remember { mutableStateOf<Long?>(null) }
@@ -124,12 +122,12 @@ fun ContactsScreen(navController: NavController) {
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { showAddDialog = true },
+                onClick = { navController.navigate(Screen.QrExchange.route) },
                 containerColor = Accent,
                 contentColor = OnAccent,
                 shape = RectangleShape,
             ) {
-                Icon(Icons.Outlined.Add, contentDescription = "Add contact")
+                Icon(Icons.Outlined.Add, contentDescription = "Add contact by scanning a QR code")
             }
         },
         containerColor = Background,
@@ -142,7 +140,7 @@ fun ContactsScreen(navController: NavController) {
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = "No contacts yet",
+                    text = "No contacts yet - tap + to swap QR codes with a friend",
                     color = TextSecondary,
                     fontFamily = IbmPlexSans,
                 )
@@ -209,15 +207,6 @@ fun ContactsScreen(navController: NavController) {
         }
     }
 
-    if (showAddDialog) {
-        AddContactDialog(
-            onConfirm = { name, phone ->
-                vm.addContact(name, phone)
-                showAddDialog = false
-            },
-            onDismiss = { showAddDialog = false },
-        )
-    }
 
     if (showNewGroupDialog) {
         NewGroupDialog(
@@ -634,65 +623,6 @@ private fun ContactRow(
     }
 }
 
-@Composable
-private fun AddContactDialog(
-    onConfirm: (String, String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var name by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    val canSave = name.isNotBlank() && phone.isNotBlank()
-
-    val fieldColors = OutlinedTextFieldDefaults.colors(
-        focusedBorderColor = Accent,
-        unfocusedBorderColor = Border,
-        focusedLabelColor = Accent,
-        unfocusedLabelColor = TextSecondary,
-        focusedTextColor = TextPrimary,
-        unfocusedTextColor = TextPrimary,
-        cursorColor = Accent,
-        focusedContainerColor = Surface2,
-        unfocusedContainerColor = Surface2,
-    )
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
-        modifier = Modifier.fillMaxWidth(0.94f),
-        containerColor = Surface1,
-        titleContentColor = TextPrimary,
-        textContentColor = TextSecondary,
-        title = {
-            Text(text = "Add Contact", fontFamily = IbmPlexSans, fontWeight = FontWeight.SemiBold)
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("Name", fontFamily = IbmPlexSans) },
-                    singleLine = true,
-                    colors = fieldColors,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                PhoneNumberField(
-                    onE164Change = { phone = it },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(name, phone) }, enabled = canSave) {
-                Text("Save", color = if (canSave) Accent else TextSecondary, fontFamily = IbmPlexSans)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel", color = TextSecondary, fontFamily = IbmPlexSans)
-            }
-        },
-    )
-}
 
 @Composable
 private fun NewGroupDialog(

@@ -21,7 +21,6 @@ import com.relay.app.data.repository.MessageRepository
 import com.relay.app.media.MediaSender
 import com.relay.app.messaging.ActiveChat
 import com.relay.app.mms.MediaCompressor
-import com.relay.app.mms.MmsSender
 import com.relay.app.sms.RelaySecureSend
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
@@ -187,57 +186,11 @@ class ChatViewModel(
 
     fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context) {
         val contact = _contact.value ?: return
-        val phone = contact.phone
-        if (contact.canUseInternetTransport) {
-            sendMediaOverInternet(uri, mimeType, textBody, contact, context)
+        if (!contact.canUseInternetTransport) {
+            viewModelScope.launch { _toastMessage.emit("Scan this contact's QR code to message them") }
             return
         }
-        viewModelScope.launch {
-            if (!MmsSender.isNetworkAvailable(context)) {
-                _toastMessage.emit("Media requires a connection")
-                return@launch
-            }
-
-            val result = withContext(Dispatchers.IO) {
-                if (mimeType.startsWith("image")) {
-                    MediaCompressor.compressImage(context, uri)
-                } else {
-                    MediaCompressor.prepareVideo(context, uri)
-                }
-            }
-
-            when (result) {
-                is MediaCompressor.Result.TooLarge -> {
-                    _toastMessage.emit(result.message)
-                }
-                is MediaCompressor.Result.Error -> {
-                    _toastMessage.emit("Failed to process media")
-                }
-                is MediaCompressor.Result.Success -> {
-                    val sent = withContext(Dispatchers.IO) {
-                        MmsSender.sendMms(
-                            context, phone, result.file, result.mimeType,
-                            textBody.ifBlank { null },
-                            contact.publicKey,
-                        )
-                    }
-                    if (sent) {
-                        val type = if (result.mimeType.startsWith("image")) MessageType.IMAGE else MessageType.VIDEO
-                        val msg = Message(
-                            contactId = contactId,
-                            body = textBody.ifBlank { "" },
-                            type = type,
-                            isSent = true,
-                            mediaUri = result.file.absolutePath,
-                        )
-                        messageRepo.insertMessage(msg)
-                        _messages.value = messageRepo.getMessages(contactId)
-                    } else {
-                        _toastMessage.emit("Failed to send MMS")
-                    }
-                }
-            }
-        }
+        sendMediaOverInternet(uri, mimeType, textBody, contact, context)
     }
 }
 

@@ -74,10 +74,6 @@ class RelayPreferences(context: Context) {
         get() = prefs.getString(KEY_MY_NAME, "") ?: ""
         set(v) { prefs.edit().putString(KEY_MY_NAME, v).apply() }
 
-    var myPhone: String
-        get() = prefs.getString(KEY_MY_PHONE, "") ?: ""
-        set(v) { prefs.edit().putString(KEY_MY_PHONE, v).apply() }
-
     /** Epoch millis after which the retired identity key (kept only to decrypt late-arriving
      *  messages right after a rotation) is permanently deleted. 0 = no retired key on file. */
     var previousKeyExpiresAt: Long
@@ -95,6 +91,11 @@ class RelayPreferences(context: Context) {
             ?.takeIf { it.isNotEmpty() }
             ?: DefaultRelays.CLEARNET
         set(v) { prefs.edit().putString(KEY_NOSTR_RELAYS, v.joinToString("\n")).apply() }
+
+    /** Whether the one-time Android 13+ notification permission prompt has been shown. */
+    var askedNotificationPermission: Boolean
+        get() = prefs.getBoolean(KEY_ASKED_NOTIF_PERMISSION, false)
+        set(v) { prefs.edit().putBoolean(KEY_ASKED_NOTIF_PERMISSION, v).apply() }
 
     /** Route relay and media-server connections through Tor (Orbot). Off by default: slower and heavier on battery. */
     var torEnabled: Boolean
@@ -123,6 +124,7 @@ class RelayPreferences(context: Context) {
         set(v) { prefs.edit().putBoolean(KEY_BACKGROUND_CONNECTION, v).apply() }
 
     companion object {
+        private const val KEY_ASKED_NOTIF_PERMISSION = "asked_notification_permission"
         private const val KEY_TOR_ENABLED = "tor_enabled"
         private const val KEY_TOR_FALLBACK = "tor_fallback_direct"
         private const val KEY_BLOSSOM_SERVERS = "blossom_servers"
@@ -145,7 +147,6 @@ class RelayPreferences(context: Context) {
         private const val KEY_DND_START_HOUR = "dnd_start_hour"
         private const val KEY_DND_END_HOUR = "dnd_end_hour"
         private const val KEY_MY_NAME = "my_name"
-        private const val KEY_MY_PHONE = "my_phone"
         private const val KEY_PREV_KEY_EXPIRES_AT = "prev_identity_key_expires_at"
         private const val KEY_LAST_ROTATION_AT = "last_identity_key_rotation_at"
 

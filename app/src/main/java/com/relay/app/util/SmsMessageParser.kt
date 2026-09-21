@@ -2,6 +2,12 @@ package com.relay.app.util
 
 import com.relay.app.data.model.PinExpiry
 
+/**
+ * The `TYPE:...` message-body protocol (pins, location requests, read receipts, key announcements,
+ * media references). The name is historical: these strings used to travel as SMS bodies and now
+ * travel as the `body` of an internet [com.relay.app.transport.RelayPayload]. Kept under its old
+ * name to avoid churn; it has no SMS dependency.
+ */
 object SmsMessageParser {
 
     private val LOCATION_REGEX = Regex(

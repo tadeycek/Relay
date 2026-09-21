@@ -63,7 +63,6 @@ dependencies {
     implementation 'androidx.sqlite:sqlite:2.4.0'
     implementation 'androidx.security:security-crypto:1.1.0'
     implementation 'androidx.biometric:biometric:1.1.0'
-    implementation 'com.googlecode.libphonenumber:libphonenumber:9.0.35'
 
     // QR contact exchange: QR generation (encode-only, no UI dep) + in-app camera scanning.
     implementation 'com.google.zxing:core:3.5.4'

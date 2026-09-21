@@ -1,72 +1,29 @@
 package com.relay.app.sms
 
 import android.content.Context
-import android.util.Base64
-import com.relay.app.crypto.RelayCrypto
 import com.relay.app.data.model.Contact
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.messaging.Outgoing
-import com.relay.app.util.SmsMessageParser
 
 /**
- * Wraps [SmsSender] with opportunistic end-to-end encryption: if we already
- * know a contact's public key, the structured Relay payload is hybrid
- * -encrypted before it becomes the SMS body. Otherwise it goes out as plain
- * text (today's behavior) and, on the first message ever sent to that
- * contact, we also send them our own public key so a future reply can
- * complete the handshake and switch both directions to ciphertext.
+ * Entry point the UI uses to send a message body to a contact. Since the move to the internet
+ * transport this only queues the message in the durable outbox (sealed with the contact's Tink
+ * key when known, then wrapped by the transport); delivery is asynchronous, so `ok` means
+ * "accepted for delivery", not "delivered".
+ *
+ * A contact without a Nostr address (created in the SMS era and never re-paired by QR) cannot be
+ * reached: `ok` is false and the UI shows that the message did not send.
  */
 object RelaySecureSend {
 
-    /** Outcome of handing a message to a transport. [msgId] is set for internet sends so the stored
-     *  message row can be matched to delivery-state updates; it is null for SMS. */
+    /** Outcome of queuing a message. [msgId] is the payload id that ties the stored row to later delivery-state updates. */
     data class SendHandle(val ok: Boolean, val msgId: String? = null)
 
-    /**
-     * Sends [plainBody] to [contact]: over the internet transport (queued in the durable outbox, so
-     * `ok` means "accepted for delivery", not "delivered") when the contact has a Nostr address,
-     * otherwise over legacy SMS.
-     */
-    fun sendWithId(context: Context, contactRepo: ContactRepository, contact: Contact, plainBody: String): SendHandle {
-        if (contact.canUseInternetTransport) {
-            val id = Outgoing.enqueue(context, contact, plainBody)
-            return SendHandle(ok = id != null, msgId = id)
-        }
-        return SendHandle(ok = send(context, contactRepo, contact, plainBody))
+    fun sendWithId(context: Context, @Suppress("UNUSED_PARAMETER") contactRepo: ContactRepository, contact: Contact, plainBody: String): SendHandle {
+        val id = Outgoing.enqueue(context, contact, plainBody)
+        return SendHandle(ok = id != null, msgId = id)
     }
 
-    fun send(context: Context, contactRepo: ContactRepository, contact: Contact, plainBody: String): Boolean {
-        if (contact.canUseInternetTransport) return Outgoing.enqueue(context, contact, plainBody) != null
-        maybeBootstrapKeyExchange(context, contactRepo, contact)
-
-        val publicKey = contact.publicKey
-        val wireBody = if (publicKey != null) {
-            val ciphertext = RelayCrypto.encryptTo(publicKey, plainBody.toByteArray(Charsets.UTF_8))
-            if (ciphertext != null) {
-                // Sign the ciphertext with our long-term signing key so the receiver can confirm
-                // it really came from us — Tink's hybrid encryption alone only proves the message
-                // was encrypted to the recipient's key, not who encrypted it (HPKE base mode has
-                // no sender authentication), and SMS sender IDs are trivially spoofable.
-                val signature = RelayCrypto.signBytes(context, ciphertext)
-                SmsMessageParser.formatEncrypted(Base64.encodeToString(ciphertext, Base64.NO_WRAP), signature)
-            } else {
-                plainBody
-            }
-        } else {
-            plainBody
-        }
-        return SmsSender.sendSms(context, contact.phone, wireBody)
-    }
-
-    private fun maybeBootstrapKeyExchange(context: Context, contactRepo: ContactRepository, contact: Contact) {
-        if (contactRepo.hasSentPubkeySync(contact.id)) return
-        val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return
-        val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
-        val sent = SmsSender.sendSms(context, contact.phone, SmsMessageParser.formatPublicKey(myKey, signingKeyBase64 = mySigningKey))
-        // Only mark sent if the SMS actually went out — same guard SmsReceiver.handleIncomingPublicKey
-        // already uses for its own reply, and for the same reason: marking this true on a failed
-        // send permanently blocks the contact from ever being retried and upgraded to encryption,
-        // since hasSentPubkeySync would now falsely report the handshake as already done.
-        if (sent) contactRepo.markSentPubkeySync(contact.id)
-    }
+    fun send(context: Context, contactRepo: ContactRepository, contact: Contact, plainBody: String): Boolean =
+        sendWithId(context, contactRepo, contact, plainBody).ok
 }

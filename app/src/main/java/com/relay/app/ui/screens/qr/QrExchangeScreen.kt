@@ -287,6 +287,10 @@ private fun ScanTab(onConnected: (Long) -> Unit) {
     fun onDecoded(value: QrContactCode.ScannedContact) {
         // Guard against scanning your own code (e.g. a screenshot / second device) — it would
         // create a self-contact and send a handshake to ourselves.
+        if (!QrContactExchange.canPair(value)) {
+            errorMsg = "That's an older Relay code. Ask them to update the app."
+            return
+        }
         val myNostr = runCatching { NostrIdentity.publicKeyHex(context) }.getOrNull()
         if (value.nostrPubkeyHex != null && value.nostrPubkeyHex == myNostr) {
             errorMsg = "That's your own code."

@@ -54,7 +54,8 @@ class KeyRotationReceiver : BroadcastReceiver() {
          *  contact. Used by the periodic alarm and by the manual "Rotate encryption key now"
          *  action in Settings. Returns true if the rotation itself succeeded (broadcast delivery
          *  to individual contacts is best-effort — a contact who's offline just gets the new key
-         *  next time they receive any PUBKEY message, e.g. via [SmsReceiver]'s own handshake). */
+         *  next time they receive any PUBKEY message, e.g. via the handshake reply in
+         *  IncomingMessageHandler). */
         fun rotateAndBroadcast(context: Context): Boolean {
             val result = RelayCrypto.rotateIdentityKey(context) ?: return false
 
@@ -68,14 +69,11 @@ class KeyRotationReceiver : BroadcastReceiver() {
                 rotationSignatureBase64 = result.signatureBase64,
             )
             for (contact in paired) {
-                if (contact.canUseInternetTransport) {
-                    // Not sealed with the (about to be replaced) inner key: the rotation announcement
-                    // carries its own signature from the long-term signing key, and the Nostr seal
-                    // already authenticates the sender. Queued durably, so an offline contact gets it later.
-                    Outgoing.enqueue(context, contact, wireBody, seal = false)
-                } else {
-                    SmsSender.sendSms(context, contact.phone, wireBody)
-                }
+                if (!contact.canUseInternetTransport) continue // legacy SMS-only contact: unreachable
+                // Not sealed with the (about to be replaced) inner key: the rotation announcement
+                // carries its own signature from the long-term signing key, and the Nostr seal
+                // already authenticates the sender. Queued durably, so an offline contact gets it later.
+                Outgoing.enqueue(context, contact, wireBody, seal = false)
             }
             return true
         }

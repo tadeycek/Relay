@@ -68,14 +68,6 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun addContact(name: String, phone: String) {
-        if (name.isBlank() || phone.isBlank()) return
-        viewModelScope.launch {
-            repo.insertContact(name.trim(), phone.trim())
-            _contacts.value = repo.getAllContacts()
-        }
-    }
-
     fun deleteContact(id: Long) {
         viewModelScope.launch {
             repo.deleteContact(id)

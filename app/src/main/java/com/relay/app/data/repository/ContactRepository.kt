@@ -1,7 +1,6 @@
 package com.relay.app.data.repository
 
 import android.content.ContentValues
-import com.google.i18n.phonenumbers.PhoneNumberUtil
 import com.relay.app.data.db.DatabaseContract.Contacts
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
@@ -20,48 +19,9 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         cursor.use { it.toContactList() }
     }
 
-    suspend fun insertContact(name: String, phone: String): Long = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        val values = ContentValues().apply {
-            put(Contacts.COL_NAME, name)
-            put(Contacts.COL_PHONE, phone)
-        }
-        db.insertWithOnConflict(Contacts.TABLE, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
-    }
-
     suspend fun deleteContact(id: Long) = withContext(Dispatchers.IO) {
         val db = dbHelper.writableDatabase
         db.delete(Contacts.TABLE, "${Contacts.COL_ID} = ?", arrayOf(id.toString()))
-    }
-
-    suspend fun findByPhone(phone: String): Contact? = withContext(Dispatchers.IO) {
-        findByPhoneSync(phone)
-    }
-
-    /** Looks up a contact by phone, creating a minimal one (name = phone number) if none exists yet. */
-    fun findOrCreateByPhoneSync(phone: String): Contact {
-        findByPhoneSync(phone)?.let { return it }
-        val db = dbHelper.writableDatabase
-        val values = ContentValues().apply {
-            put(Contacts.COL_NAME, phone)
-            put(Contacts.COL_PHONE, phone)
-        }
-        db.insertWithOnConflict(Contacts.TABLE, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
-        return findByPhoneSync(phone) ?: Contact(name = phone, phone = phone)
-    }
-
-    fun findByPhoneSync(phone: String): Contact? {
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            Contacts.TABLE, null, null, null, null, null, null
-        )
-        return cursor.use { c ->
-            while (c.moveToNext()) {
-                val stored = c.getString(c.getColumnIndexOrThrow(Contacts.COL_PHONE))
-                if (phoneMatches(stored, phone)) return@use c.toContact()
-            }
-            null
-        }
     }
 
     suspend fun getById(id: Long): Contact? = withContext(Dispatchers.IO) {
@@ -76,29 +36,6 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
             null, null, null
         )
         return cursor.use { if (it.moveToFirst()) it.toContact() else null }
-    }
-
-    private fun phoneMatches(stored: String, incoming: String): Boolean {
-        // libphonenumber understands country codes/formatting variants; fall back to a
-        // last-N-digit suffix comparison for numbers it can't parse (e.g. short local numbers).
-        val matchType = try {
-            PhoneNumberUtil.getInstance().isNumberMatch(stored, incoming)
-        } catch (e: Exception) {
-            null
-        }
-        when (matchType) {
-            PhoneNumberUtil.MatchType.EXACT_MATCH,
-            PhoneNumberUtil.MatchType.NSN_MATCH,
-            PhoneNumberUtil.MatchType.SHORT_NSN_MATCH -> return true
-            PhoneNumberUtil.MatchType.NO_MATCH -> return false
-            else -> Unit
-        }
-
-        val s = stored.filter { it.isDigit() }
-        val i = incoming.filter { it.isDigit() }
-        val len = minOf(s.length, i.length, 9)
-        if (len == 0) return false
-        return s.takeLast(len) == i.takeLast(len)
     }
 
     fun setPublicKeySync(contactId: Long, publicKeyBase64: String) {

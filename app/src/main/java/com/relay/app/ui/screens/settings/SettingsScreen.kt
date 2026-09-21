@@ -174,18 +174,6 @@ fun SettingsScreen(navController: NavController) {
 
             SectionHeader("General")
 
-            val isDefaultSmsApp = remember { Telephony.Sms.getDefaultSmsPackage(context) == context.packageName }
-            ActionRow(
-                label = "Default SMS app",
-                subtitle = if (isDefaultSmsApp) {
-                    "Relay is your default SMS app"
-                } else {
-                    "Relay can't reliably send/receive SMS until it's set as default"
-                },
-                actionLabel = if (isDefaultSmsApp) "Set" else "Set now",
-                enabled = !isDefaultSmsApp,
-                onClick = { requestDefaultSmsApp(context) },
-            )
             DropdownRow(
                 label = "Theme",
                 selected = vm.theme,
@@ -276,22 +264,6 @@ private fun hourOptions(): List<Pair<String, String>> = (0..23).map { hour ->
 private fun formatRotationDate(epochMillis: Long): String {
     val formatter = java.text.SimpleDateFormat("MMM d, yyyy", java.util.Locale.getDefault())
     return formatter.format(java.util.Date(epochMillis))
-}
-
-/** Launches the system flow to make Relay the default SMS app — required for it to reliably
- *  send/receive SMS/MMS at all (see AndroidManifest.xml's SMS_DELIVER/WAP_PUSH_DELIVER/
- *  RESPOND_VIA_MESSAGE/SENDTO components, which is what makes Relay eligible to be offered here
- *  in the first place). RoleManager is the API 29+ mechanism; older versions use the legacy
- *  ACTION_CHANGE_DEFAULT broadcast-style intent. */
-private fun requestDefaultSmsApp(context: Context) {
-    val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        val roleManager = context.getSystemService(RoleManager::class.java)
-        roleManager?.createRequestRoleIntent(RoleManager.ROLE_SMS)
-    } else {
-        Intent(Telephony.Sms.Intents.ACTION_CHANGE_DEFAULT)
-            .putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
-    }
-    intent?.let { context.startActivity(it) }
 }
 
 /**
