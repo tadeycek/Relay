@@ -153,7 +153,8 @@ private fun SmsPermissionGate(content: @Composable () -> Unit) {
             Manifest.permission.RECEIVE_SMS,
             Manifest.permission.READ_SMS,
             Manifest.permission.RECEIVE_MMS,
-            Manifest.permission.READ_MMS,
+            // No public constant for READ_MMS in the SDK 36 android.Manifest.permission class.
+            "android.permission.READ_MMS",
         )
     }
     val permState = rememberMultiplePermissionsState(smsPermissions)
