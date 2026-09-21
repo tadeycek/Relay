@@ -17,6 +17,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.outlined.LocationOn
+import com.relay.app.util.GeoLinks
 import androidx.compose.material.icons.outlined.LocationOff
 import androidx.compose.material.icons.outlined.LocationSearching
 import androidx.compose.material.icons.outlined.Warning
@@ -138,25 +141,48 @@ private fun LocationBubble(message: Message) {
     val lng = message.lng ?: return
     val shape = bubbleShape(message.isSent)
 
+    val context = LocalContext.current
+
+    // No map tile here: Relay has no map of its own (fetching tiles would reveal the viewer's IP to a
+    // map server). "Open in Maps" hands the point to the user's own maps app, on a deliberate tap.
     Column(
         modifier = Modifier
             .widthIn(max = 260.dp)
             .clip(shape)
-            .background(Surface2),
+            .background(Surface2)
+            .clickable { openInMaps(context, lat, lng, message.pinLabel) },
     ) {
-        MapPreviewTile(
-            lat = lat,
-            lng = lng,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(140.dp),
-        )
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.LocationOn,
+                contentDescription = null,
+                tint = Accent,
+                modifier = Modifier.size(22.dp),
+            )
+            Text(
+                text = if (message.isSent) "You shared a location" else "Shared a location",
+                color = TextPrimary,
+                fontFamily = IbmPlexSans,
+                fontSize = 13.sp,
+            )
+        }
         Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)) {
             Text(
                 text = "${"%.5f".format(lat)}, ${"%.5f".format(lng)}",
                 color = TextSecondary,
                 fontFamily = IbmPlexMono,
                 fontSize = 11.sp,
+            )
+            Text(
+                text = "Tap to open in Maps",
+                color = Accent,
+                fontFamily = IbmPlexSans,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(top = 2.dp),
             )
             if (!message.pinLabel.isNullOrBlank()) {
                 Text(
@@ -175,6 +201,15 @@ private fun LocationBubble(message: Message) {
                 modifier = Modifier.align(Alignment.End),
             )
         }
+    }
+}
+
+private fun openInMaps(context: android.content.Context, lat: Double, lng: Double, label: String?) {
+    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, GeoLinks.toUri(lat, lng, label))
+    try {
+        context.startActivity(intent)
+    } catch (e: android.content.ActivityNotFoundException) {
+        android.widget.Toast.makeText(context, "No maps app installed", android.widget.Toast.LENGTH_SHORT).show()
     }
 }
 

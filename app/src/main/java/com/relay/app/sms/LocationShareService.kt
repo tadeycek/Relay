@@ -18,6 +18,7 @@ import com.relay.app.data.model.Contact
 import com.relay.app.data.model.DeliveryState
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
+import com.relay.app.data.model.PinExpiry
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.util.RelayPreferences
@@ -104,7 +105,10 @@ class LocationShareService : Service() {
         doNotify: Boolean,
         location: Location,
     ) {
-        val body = SmsMessageParser.formatLocation(location.latitude, location.longitude)
+        // Shared locations expire like the old map pins did (default from Settings), so a stale
+        // "where I was" does not sit in the chat forever; the receiver applies the same expiry.
+        val expiry = PinExpiry.fromPrefsKey(RelayPreferences(this).defaultPinExpiry)
+        val body = SmsMessageParser.formatLocation(location.latitude, location.longitude, expiry)
         val db = RelayDbHelper(this)
         val contactRepo = ContactRepository(db)
         val contact = contactRepo.getByIdSync(contactId) ?: Contact(id = contactId, name = contactName, phone = phone)
@@ -119,6 +123,7 @@ class LocationShareService : Service() {
                 lat = location.latitude,
                 lng = location.longitude,
                 isSent = true,
+                expiryAt = expiry.durationMs?.let { System.currentTimeMillis() + it },
                 msgId = handle.msgId,
                 deliveryState = if (contact.canUseInternetTransport) DeliveryState.QUEUED else DeliveryState.NONE,
             )
@@ -182,6 +187,19 @@ class LocationShareService : Service() {
     }
 
     companion object {
+        /** Shares the phone's current location with [contact] (needs location permission already granted). */
+        fun share(context: Context, contact: Contact) {
+            context.startService(
+                Intent(context, LocationShareService::class.java).apply {
+                    action = ACTION_SHARE
+                    putExtra(EXTRA_PHONE, contact.phone)
+                    putExtra(EXTRA_CONTACT_ID, contact.id)
+                    putExtra(EXTRA_CONTACT_NAME, contact.name)
+                    putExtra(EXTRA_NOTIFY, false) // the pin appears in the chat itself
+                }
+            )
+        }
+
         const val ACTION_SHARE = "com.relay.app.SHARE_LOCATION"
         const val ACTION_DECLINE = "com.relay.app.DECLINE_LOCATION"
         const val EXTRA_PHONE = "phone"

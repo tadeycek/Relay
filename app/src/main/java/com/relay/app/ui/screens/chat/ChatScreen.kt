@@ -31,6 +31,10 @@ import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.LocationSearching
+import androidx.compose.material.icons.outlined.MyLocation
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
+import com.relay.app.sms.LocationShareService
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.AlertDialog
@@ -105,6 +109,11 @@ fun ChatScreen(contactId: Long, navController: NavController) {
         }
     }
     val permState = rememberMultiplePermissionsState(mediaPermissions)
+
+    // Share-my-location: ask for location permission the first time, then share straight away.
+    val locationPermission = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION) { granted ->
+        if (granted) contact?.let { LocationShareService.share(context, it) }
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.GetContent()
@@ -204,6 +213,23 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                     }
                 } else null,
                 actions = {
+                    IconButton(onClick = {
+                        val c = contact
+                        if (c != null) {
+                            if (locationPermission.status.isGranted) {
+                                LocationShareService.share(context, c)
+                            } else {
+                                locationPermission.launchPermissionRequest()
+                            }
+                        }
+                    }) {
+                        Icon(
+                            imageVector = Icons.Outlined.MyLocation,
+                            contentDescription = "Share my location",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                     IconButton(onClick = { vm.sendLocationRequest(context) }) {
                         Icon(
                             imageVector = Icons.Outlined.LocationSearching,
