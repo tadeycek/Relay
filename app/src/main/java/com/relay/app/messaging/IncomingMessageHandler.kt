@@ -95,6 +95,9 @@ class IncomingMessageHandler(context: Context) {
 
             Classified.Ignore -> Unit
 
+            // Wired up together with the download path in the next commit.
+            is Classified.Media -> Unit
+
             is Classified.Pin -> {
                 contactRepo.markAsRelayUserSync(contact.id)
                 val expiryAt = kind.expiry.durationMs?.let { now + it }

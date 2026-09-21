@@ -1,6 +1,8 @@
 package com.relay.app.messaging
 
 import com.relay.app.data.model.PinExpiry
+import com.relay.app.media.MediaBody
+import com.relay.app.media.MediaRef
 import com.relay.app.util.SmsMessageParser
 
 /**
@@ -16,6 +18,9 @@ sealed class Classified {
     data class Pin(val lat: Double, val lng: Double, val expiry: PinExpiry, val label: String?) : Classified()
     data object Text : Classified()
 
+    /** A reference to an encrypted image/video on a media server; see [com.relay.app.media.MediaBody]. */
+    data class Media(val ref: MediaRef) : Classified()
+
     /** A control message that is malformed (e.g. a read receipt whose cursor is not a number): drop, never show as chat text. */
     data object Ignore : Classified()
 }
@@ -29,6 +34,12 @@ object IncomingClassifier {
     fun classify(body: String): Classified {
         if (SmsMessageParser.isPublicKeyMessage(body)) return Classified.PublicKey
         if (SmsMessageParser.isLocationRequest(body)) return Classified.LocationRequest
+        if (MediaBody.isMedia(body)) {
+            // A media message that fails validation (bad URL/hash/key/mime/size) is dropped, never
+            // shown as chat text and never fetched.
+            val ref = MediaBody.parse(body) ?: return Classified.Ignore
+            return Classified.Media(ref)
+        }
         if (SmsMessageParser.isReadReceipt(body)) {
             val ts = SmsMessageParser.parseReadReceipt(body) ?: return Classified.Ignore
             return Classified.ReadReceipt(ts)

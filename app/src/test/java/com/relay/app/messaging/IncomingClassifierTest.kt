@@ -1,6 +1,8 @@
 package com.relay.app.messaging
 
 import com.relay.app.data.model.PinExpiry
+import com.relay.app.media.MediaBody
+import com.relay.app.media.MediaRef
 import com.relay.app.util.SmsMessageParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -51,6 +53,22 @@ class IncomingClassifierTest {
     fun keyMessagesTakePrecedenceOverEverythingElse() {
         val sneaky = SmsMessageParser.formatPublicKey("AAAA", "x") + " TYPE:LOCATION_REQUEST"
         assertEquals(Classified.PublicKey, IncomingClassifier.classify(sneaky))
+    }
+
+    @Test
+    fun validMediaBodyIsClassifiedAsMedia() {
+        val ref = MediaRef(
+            url = "https://blossom.example/x", sha256Hex = "cd".repeat(32),
+            keyBase64 = java.util.Base64.getEncoder().encodeToString(ByteArray(32)),
+            mime = "video/mp4", size = 5_000, caption = "clip",
+        )
+        assertEquals(Classified.Media(ref), IncomingClassifier.classify(MediaBody.format(ref)))
+    }
+
+    @Test
+    fun invalidMediaBodyIsIgnoredNotShownOrFetched() {
+        assertEquals(Classified.Ignore, IncomingClassifier.classify("TYPE:MEDIA|URL:http://evil/x|SHA:zz|KEY:k|MIME:a/b|SIZE:1"))
+        assertEquals(Classified.Ignore, IncomingClassifier.classify("TYPE:MEDIA|garbage"))
     }
 
     @Test

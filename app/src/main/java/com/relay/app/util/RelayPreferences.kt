@@ -1,6 +1,7 @@
 package com.relay.app.util
 
 import android.content.Context
+import com.relay.app.media.DefaultBlossomServers
 import com.relay.app.transport.nostr.DefaultRelays
 
 class RelayPreferences(context: Context) {
@@ -95,6 +96,14 @@ class RelayPreferences(context: Context) {
             ?: DefaultRelays.CLEARNET
         set(v) { prefs.edit().putString(KEY_NOSTR_RELAYS, v.joinToString("\n")).apply() }
 
+    /** Blossom media servers tried in order for uploads (one URL per stored line). Falls back to defaults. */
+    var blossomServers: List<String>
+        get() = prefs.getString(KEY_BLOSSOM_SERVERS, null)
+            ?.lines()?.map { it.trim() }?.filter { it.startsWith("https://") }
+            ?.takeIf { it.isNotEmpty() }
+            ?: DefaultBlossomServers.LIST
+        set(v) { prefs.edit().putString(KEY_BLOSSOM_SERVERS, v.joinToString("\n")).apply() }
+
     /**
      * Keep a foreground service running so messages arrive while the app is closed. On by default
      * (without it there is no closed-app delivery); costs battery and shows a persistent notification.
@@ -104,6 +113,7 @@ class RelayPreferences(context: Context) {
         set(v) { prefs.edit().putBoolean(KEY_BACKGROUND_CONNECTION, v).apply() }
 
     companion object {
+        private const val KEY_BLOSSOM_SERVERS = "blossom_servers"
         private const val KEY_BACKGROUND_CONNECTION = "background_connection"
         private const val KEY_NOSTR_RELAYS = "nostr_relays"
         private const val PREFS_NAME = "relay_settings"
