@@ -5,6 +5,7 @@ import android.util.Base64
 import com.relay.app.crypto.RelayCrypto
 import com.relay.app.data.model.Contact
 import com.relay.app.data.repository.ContactRepository
+import com.relay.app.messaging.Outgoing
 import com.relay.app.util.SmsMessageParser
 
 /**
@@ -17,7 +18,25 @@ import com.relay.app.util.SmsMessageParser
  */
 object RelaySecureSend {
 
+    /** Outcome of handing a message to a transport. [msgId] is set for internet sends so the stored
+     *  message row can be matched to delivery-state updates; it is null for SMS. */
+    data class SendHandle(val ok: Boolean, val msgId: String? = null)
+
+    /**
+     * Sends [plainBody] to [contact]: over the internet transport (queued in the durable outbox, so
+     * `ok` means "accepted for delivery", not "delivered") when the contact has a Nostr address,
+     * otherwise over legacy SMS.
+     */
+    fun sendWithId(context: Context, contactRepo: ContactRepository, contact: Contact, plainBody: String): SendHandle {
+        if (contact.canUseInternetTransport) {
+            val id = Outgoing.enqueue(context, contact, plainBody)
+            return SendHandle(ok = id != null, msgId = id)
+        }
+        return SendHandle(ok = send(context, contactRepo, contact, plainBody))
+    }
+
     fun send(context: Context, contactRepo: ContactRepository, contact: Contact, plainBody: String): Boolean {
+        if (contact.canUseInternetTransport) return Outgoing.enqueue(context, contact, plainBody) != null
         maybeBootstrapKeyExchange(context, contactRepo, contact)
 
         val publicKey = contact.publicKey

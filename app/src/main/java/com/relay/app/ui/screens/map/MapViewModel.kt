@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
+import com.relay.app.data.model.DeliveryState
 import com.relay.app.data.model.Group
 import com.relay.app.data.model.MapStyle
 import com.relay.app.data.model.Message
@@ -18,6 +19,8 @@ import com.relay.app.data.repository.MessageRepository
 import com.relay.app.sms.RelaySecureSend
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -126,8 +129,8 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
                 expiry = pinExpiry,
                 label = pinLabel.ifBlank { null },
             )
-            val sent = RelaySecureSend.send(context, contactRepo, contact, body)
-            if (sent) {
+            val handle = withContext(Dispatchers.IO) { RelaySecureSend.sendWithId(context, contactRepo, contact, body) }
+            if (handle.ok) {
                 val expiryAt = pinExpiry.durationMs?.let { System.currentTimeMillis() + it }
                 messageRepo.insertMessage(Message(
                     contactId = contactId,
@@ -138,7 +141,8 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
                     isSent = true,
                     pinLabel = pinLabel.ifBlank { null },
                     expiryAt = expiryAt,
-                    msgId = System.currentTimeMillis().toString(),
+                    msgId = handle.msgId ?: System.currentTimeMillis().toString(),
+                    deliveryState = if (contact.canUseInternetTransport) DeliveryState.QUEUED else DeliveryState.NONE,
                 ))
                 val savedPins = messageRepo.getSavedPins()
                 _uiState.update {
@@ -166,8 +170,10 @@ class MapViewModel(app: Application) : AndroidViewModel(app) {
             val expiryAt = pinExpiry.durationMs?.let { System.currentTimeMillis() + it }
             val ts = System.currentTimeMillis()
 
-            for (member in group.members) {
-                RelaySecureSend.send(context, contactRepo, member, body)
+            withContext(Dispatchers.IO) {
+                for (member in group.members) {
+                    RelaySecureSend.send(context, contactRepo, member, body)
+                }
             }
             groupMessageRepo.insertMessage(
                 com.relay.app.data.model.GroupMessage(

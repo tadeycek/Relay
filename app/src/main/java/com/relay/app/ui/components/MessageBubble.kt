@@ -36,6 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.relay.app.crypto.RelayFileCrypto
+import androidx.compose.material.icons.outlined.ErrorOutline
+import androidx.compose.material.icons.outlined.Schedule
+import com.relay.app.data.model.DeliveryState
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.ui.theme.Accent
@@ -112,9 +115,15 @@ private fun TextBubble(message: Message) {
             )
             if (message.isSent) {
                 val isRead = message.readAt != null
+                val (icon, description) = when {
+                    isRead -> Icons.Filled.DoneAll to "Read"
+                    message.deliveryState == DeliveryState.QUEUED -> Icons.Outlined.Schedule to "Waiting to send"
+                    message.deliveryState == DeliveryState.FAILED -> Icons.Outlined.ErrorOutline to "Failed to send"
+                    else -> Icons.Filled.Done to "Sent"
+                }
                 Icon(
-                    imageVector = if (isRead) Icons.Filled.DoneAll else Icons.Filled.Done,
-                    contentDescription = null,
+                    imageVector = icon,
+                    contentDescription = description,
                     tint = if (isRead) OnAccent else OnAccent.copy(alpha = 0.5f),
                     modifier = Modifier.size(12.dp),
                 )

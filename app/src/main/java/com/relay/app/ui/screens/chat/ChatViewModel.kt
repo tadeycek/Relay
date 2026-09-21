@@ -13,10 +13,12 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
+import com.relay.app.data.model.DeliveryState
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
+import com.relay.app.messaging.ActiveChat
 import com.relay.app.mms.MediaCompressor
 import com.relay.app.mms.MmsSender
 import com.relay.app.sms.RelaySecureSend
@@ -64,6 +66,7 @@ class ChatViewModel(
     }
 
     fun registerSmsUpdates(context: Context) {
+        ActiveChat.contactId = contactId // suppress notifications for the chat that is on screen
         smsUpdateReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val incomingContactId = intent.getLongExtra("contact_id", -1L)
@@ -79,6 +82,7 @@ class ChatViewModel(
     }
 
     fun unregisterSmsUpdates(context: Context) {
+        if (ActiveChat.contactId == contactId) ActiveChat.contactId = -1L
         smsUpdateReceiver?.let { context.unregisterReceiver(it) }
         smsUpdateReceiver = null
     }
@@ -87,32 +91,42 @@ class ChatViewModel(
         val contact = _contact.value ?: return
         viewModelScope.launch {
             val ts = System.currentTimeMillis()
-            val sent = RelaySecureSend.send(context, contactRepo, contact, body)
-            if (!sent) _toastMessage.emit("Message failed to send")
+            val handle = withContext(Dispatchers.IO) { RelaySecureSend.sendWithId(context, contactRepo, contact, body) }
+            if (!handle.ok) _toastMessage.emit("Message failed to send")
             val msg = Message(
                 contactId = contactId,
                 body = body,
                 type = MessageType.TEXT,
                 isSent = true,
                 timestamp = ts,
-                msgId = ts.toString(),
+                msgId = handle.msgId ?: ts.toString(),
+                deliveryState = initialDeliveryState(contact, handle),
             )
             messageRepo.insertMessage(msg)
             _messages.value = messageRepo.getMessages(contactId)
         }
     }
 
+    /** Internet sends start out queued (the outbox worker flips them to sent/failed); SMS has no such state. */
+    private fun initialDeliveryState(contact: Contact, handle: RelaySecureSend.SendHandle): Int = when {
+        !contact.canUseInternetTransport -> DeliveryState.NONE
+        handle.ok -> DeliveryState.QUEUED
+        else -> DeliveryState.FAILED
+    }
+
     fun sendLocationRequest(context: Context) {
         val contact = _contact.value ?: return
         viewModelScope.launch {
             val body = SmsMessageParser.LOCATION_REQUEST_MSG
-            val sent = RelaySecureSend.send(context, contactRepo, contact, body)
-            if (!sent) _toastMessage.emit("Location request failed to send")
+            val handle = withContext(Dispatchers.IO) { RelaySecureSend.sendWithId(context, contactRepo, contact, body) }
+            if (!handle.ok) _toastMessage.emit("Location request failed to send")
             val msg = Message(
                 contactId = contactId,
                 body = body,
                 type = MessageType.LOCATION_REQUEST,
                 isSent = true,
+                msgId = handle.msgId,
+                deliveryState = initialDeliveryState(contact, handle),
             )
             messageRepo.insertMessage(msg)
             _messages.value = messageRepo.getMessages(contactId)
@@ -131,6 +145,12 @@ class ChatViewModel(
     fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context) {
         val contact = _contact.value ?: return
         val phone = contact.phone
+        if (contact.canUseInternetTransport) {
+            // Encrypted media upload arrives in a later phase; sending it as MMS to a synthetic
+            // placeholder "number" would go nowhere.
+            viewModelScope.launch { _toastMessage.emit("Photos and video over the internet aren't available yet") }
+            return
+        }
         viewModelScope.launch {
             if (!MmsSender.isNetworkAvailable(context)) {
                 _toastMessage.emit("Media requires a connection")

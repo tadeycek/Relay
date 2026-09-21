@@ -28,6 +28,7 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.repository.ContactRepository
+import com.relay.app.messaging.MessageNotifier
 import com.relay.app.ui.lock.AppLockScreen
 import com.relay.app.ui.lock.deviceSupportsAppLock
 import com.relay.app.ui.lock.promptAppUnlock
@@ -59,6 +60,7 @@ class MainActivity : FragmentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         pendingOpenContacts.value = intent?.getBooleanExtra("open_contacts", false) == true
+        handleOpenChatIntent(intent)
         handleSendToIntent(intent)
         setContent {
             RelayTheme {
@@ -106,7 +108,14 @@ class MainActivity : FragmentActivity() {
         if (intent.getBooleanExtra("open_contacts", false)) {
             pendingOpenContacts.value = true
         }
+        handleOpenChatIntent(intent)
         handleSendToIntent(intent)
+    }
+
+    /** Tap on a new-message notification (see MessageNotifier): jump straight to that chat. */
+    private fun handleOpenChatIntent(intent: Intent?) {
+        val id = intent?.getLongExtra(MessageNotifier.EXTRA_OPEN_CHAT, -1L) ?: -1L
+        if (id > 0) pendingChatContactId.value = id
     }
 
     /**

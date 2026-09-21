@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import android.preference.PreferenceManager
+import com.relay.app.messaging.MessagingRuntime
 import com.relay.app.sms.KeyRotationReceiver
 import com.relay.app.sms.PinExpiryReceiver
 import org.osmdroid.config.Configuration
@@ -25,6 +26,9 @@ class RelayApplication : Application() {
         }
         schedulePinExpiryAlarm()
         scheduleKeyRotationCheck()
+        // Connect the internet transport, receive messages and drain the outbox for as long as the
+        // process lives (a foreground service keeps it alive in the background; see Phase 4).
+        MessagingRuntime.ensureStarted(this)
     }
 
     private fun schedulePinExpiryAlarm() {

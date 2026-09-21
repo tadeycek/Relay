@@ -46,3 +46,18 @@ Use `rebuild/dev/build.sh <gradle args>`.
 - QR v3 carries no phone number: `RELAYQR:3|NAME|NPUB|KEY|SIGKEY|RELAYS`. Profile setup now needs only a name.
 - After scanning a v3 code, our `TYPE:PUBKEY` handshake is queued in the outbox (durable) for the transport to deliver.
 - **Device-unverified:** the migration on a real v9 database and the scanner flow end to end.
+
+## Phase 3: Messaging features
+
+- Built, 42 JVM unit tests total: `IncomingMessageHandler`, `OutboxWorker`, `MessagingRuntime`, `Outgoing`,
+  `InnerEnvelope`, notifiers, pure policies (`TimestampPolicy`, limiters, `DndWindow`, `IncomingClassifier`).
+- Sending: `RelaySecureSend.sendWithId` routes internet contacts to the durable outbox and legacy contacts to SMS.
+  Text, pins, location requests/declines, read receipts and group pin fan-out all go through it. Bubbles show
+  queued / sent / failed / read.
+- **DB is now v11** (a `seen_payloads` table was added after v10 was committed; no build with v10 was ever installed).
+- **Design choice:** control messages (location request, receipts, key announcements) leave no message row, so replay
+  protection needed its own persistent table. Without it, the 3-day relay replay window would re-trigger auto-share.
+- **Known gaps:** groups still fan out per member only for pins (unchanged behaviour); media is blocked for internet
+  contacts until Phase 5; the app still asks for SMS permissions on launch until Phase 8; POST_NOTIFICATIONS is not
+  yet requested at runtime on Android 13+ (notifications are skipped silently without it) - fixed in Phase 8.
+- **Device-unverified:** everything that touches a relay or the Keystore.

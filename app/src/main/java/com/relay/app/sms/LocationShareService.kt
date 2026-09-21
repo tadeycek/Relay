@@ -15,6 +15,7 @@ import android.os.Looper
 import androidx.core.app.NotificationCompat
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
+import com.relay.app.data.model.DeliveryState
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.data.repository.ContactRepository
@@ -107,7 +108,7 @@ class LocationShareService : Service() {
         val db = RelayDbHelper(this)
         val contactRepo = ContactRepository(db)
         val contact = contactRepo.getByIdSync(contactId) ?: Contact(id = contactId, name = contactName, phone = phone)
-        RelaySecureSend.send(this, contactRepo, contact, body)
+        val handle = RelaySecureSend.sendWithId(this, contactRepo, contact, body)
 
         val repo = MessageRepository(db)
         repo.insertMessageSync(
@@ -118,6 +119,8 @@ class LocationShareService : Service() {
                 lat = location.latitude,
                 lng = location.longitude,
                 isSent = true,
+                msgId = handle.msgId,
+                deliveryState = if (contact.canUseInternetTransport) DeliveryState.QUEUED else DeliveryState.NONE,
             )
         )
 
@@ -133,7 +136,7 @@ class LocationShareService : Service() {
         val db = RelayDbHelper(this)
         val contactRepo = ContactRepository(db)
         val contact = contactRepo.getByIdSync(contactId) ?: Contact(id = contactId, name = phone, phone = phone)
-        RelaySecureSend.send(this, contactRepo, contact, SmsMessageParser.LOCATION_DECLINED_MSG)
+        val handle = RelaySecureSend.sendWithId(this, contactRepo, contact, SmsMessageParser.LOCATION_DECLINED_MSG)
 
         val repo = MessageRepository(db)
         repo.insertMessageSync(
@@ -142,6 +145,8 @@ class LocationShareService : Service() {
                 body = SmsMessageParser.LOCATION_DECLINED_MSG,
                 type = MessageType.LOCATION_DECLINED,
                 isSent = true,
+                msgId = handle.msgId,
+                deliveryState = if (contact.canUseInternetTransport) DeliveryState.QUEUED else DeliveryState.NONE,
             )
         )
 
