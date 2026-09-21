@@ -176,3 +176,23 @@ Use `rebuild/dev/build.sh <gradle args>`.
 4. Packet-capture with Tor on to confirm nothing leaves except through Orbot (relays, Blossom, and note map tiles).
 5. Decide on a notification bridge only if step 2 shows the foreground service is unreliable.
 6. Run `/security-review` for a second opinion; add a license; sign a release with ABI splits.
+
+## UI redesign: bottom navigation (People / Messages / Account), no map
+
+Plan and decisions: `ui-navbar-plan.md`. **Change of plan during the build:** the user questioned the value of the map, so the
+map tab was replaced by **People** and the map was removed (option 2 of three offered): location sharing moved into chats.
+
+- Built and unit-tested: bottom-bar shell (Tab/route logic), `GeoLinks` (geo: URIs), `ConversationFormat` (previews, time labels,
+  ordering, request rules, badge text), unread schema **DB v13**. Total JVM unit tests now 107, 0 failures.
+- Removed: map screen, pin history, send-pin sheet, OSMDroid, map preferences, `ACCESS_BACKGROUND_LOCATION`. Consequence: replying
+  to a location request while the app is closed cannot read the location. Group pin sending is gone (no map to pick a point); group
+  chats send text only.
+- Added: Messages tab (conversation list, unread badges, delivery ticks, REQUESTS section for unverified senders), Account tab
+  (profile card, your Relay ID, QR entry, all settings), People tab (the contacts/groups screen), Share-my-location in chats.
+- **Verified on the phone (Android 16, arm64):** app installs and launches; Settings showed "Connected to your relays" (the relay
+  connection works on a real device); bottom bar and Account tab render correctly with inset handling. A crash opening Pin History
+  (private ViewModel, pre-existing) was found and fixed before the map was removed.
+- **Not yet verified visually:** the Messages and People tabs and any conversation content (the phone locked before those
+  screenshots), the v12 to v13 upgrade beyond a clean launch, and everything needing a second phone.
+- **Bugs found on the way:** group members were loaded without their Nostr key so group sends silently failed (fixed);
+  the Tor panel still described map tiles (fixed).

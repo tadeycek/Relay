@@ -1,8 +1,8 @@
 # Relay
 
-Relay is an Android messenger with map-based location sharing. Messages travel over the **internet** as end-to-end encrypted Nostr private messages (NIP-17) through public relays, so there is no server of our own, no accounts, no phone number, and no SMS/MMS permissions. Contacts are added by scanning each other's QR codes in person.
+Relay is an Android messenger with built-in location sharing. Messages travel over the **internet** as end-to-end encrypted Nostr private messages (NIP-17) through public relays, so there is no server of our own, no accounts, no phone number, and no SMS/MMS permissions. Contacts are added by scanning each other's QR codes in person.
 
-> **Status:** rebuilt from an SMS/MMS app (see `rebuild/`). It compiles, lints without errors, and has 92 passing JVM unit tests, but **it has not been run on a device or against live relays**. Treat everything that touches the network, the Keystore or Android background behaviour as unverified. See `rebuild/PROGRESS.md` for exactly what is and is not verified.
+> **Status:** rebuilt from an SMS/MMS app (see `rebuild/`). It compiles, lints without errors, and has 107 passing JVM unit tests. It **has been installed and launched on one Android 16 phone** (the relay connection shows as connected and the new navigation renders), but two-phone messaging, offline delivery, media and Tor are **unverified**. See `rebuild/PROGRESS.md` for exactly what is and is not verified.
 
 ## Features and how they work
 
@@ -18,8 +18,8 @@ Relay is an Android messenger with map-based location sharing. Messages travel o
 - Scanning a code trusts those keys immediately and marks the contact **verified (met in person)**. Contacts who only know your key and message you first appear as **unverified**: they get no automatic media download and can never trigger an automatic location share.
 - Old-style QR codes from the SMS version are rejected; contacts from that era stay visible with their history but must re-pair by QR.
 
-### Map, pins and location requests
-`MapScreen` (OSMDroid) is the home screen. Dropping a pin sends a `TYPE:LOCATION` body (label, expiry) to a contact or group. Location requests can be shared automatically only for **Trusted** contacts, or for **verified** contacts if auto-approve is on; otherwise you get a Share/Decline notification. Do-Not-Disturb hours and "who can request my location" apply.
+### Location sharing (no map)
+There is no map screen. In a chat, **Share my location** sends your current position (it expires after the time set in Settings) and **Request location** asks for theirs; a shared location appears as a card with coordinates and **Tap to open in Maps**, which hands it to your own maps app. Requests can be answered automatically only for **Trusted** contacts, or for **verified** contacts if auto-approve is on; otherwise you get a Share/Decline notification. Do-Not-Disturb hours and "who can request my location" apply. Replying while the app is closed cannot read the location (no background location permission).
 
 ### Photos and video
 Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. If an upload fails the user must retry. The default Blossom servers are **unverified**.
@@ -28,7 +28,7 @@ Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext
 Lightweight, local groups; sending fans out one message per member (NIP-17 discourages groups beyond ~10). There is no group membership authentication.
 
 ### Tor (optional)
-Settings → Privacy → "Hide my IP from relays (Tor)" routes relay and media connections through Orbot's SOCKS proxy. It **fails closed**: with Tor on and Orbot not running, nothing is sent. Map tiles are still fetched directly (documented in the app). Off by default. Embedded Tor is not built.
+Settings → Privacy → "Hide my IP from relays (Tor)" routes relay and media connections through Orbot's SOCKS proxy. It **fails closed**: with Tor on and Orbot not running, nothing is sent. Off by default. Embedded Tor is not built.
 
 ## Security architecture
 
@@ -42,7 +42,7 @@ Layers, from outside in:
 Threat-model notes: metadata (who talks to whom, when, message size) is partly visible to relays; a compromised phone defeats all of it; scanning the wrong QR code securely connects you to the wrong person. This is a hobby/friends project, not an audited secure messenger.
 
 ### Known gaps
-- **Never run on a device or against real relays.** Relay retention, foreground-service survival through Doze/OEM killers, battery cost, and real Tor behaviour are unmeasured.
+- **Only lightly device-tested.** It has been installed on one phone; two-phone messaging, relay retention, foreground-service survival through Doze/OEM killers, battery cost, media and real Tor behaviour are unmeasured.
 - Outgoing media is kept as a plaintext cache file (needed to display and to upload); only received media is encrypted at rest.
 - No chat-history export or backup: a phone swap loses history and identity (keys are Keystore-bound), and contacts must re-pair.
 - Media uploads are not retried automatically.
@@ -55,7 +55,7 @@ Threat-model notes: metadata (who talks to whom, when, message size) is partly v
 ## Tech stack
 - Kotlin, Jetpack Compose (Material 3), Android SDK 26+ (compile/target 36), JDK 17
 - `org.rust-nostr:nostr-sdk-kmp-android:0.44.8` (alpha-quality Kotlin bindings; wrapped behind `com.relay.app.transport`)
-- SQLCipher, Google Tink, WorkManager, OSMDroid, CameraX + ML Kit (QR), zxing
+- SQLCipher, Google Tink, WorkManager, CameraX + ML Kit (QR), zxing
 - Kotlin coroutines; no backend, no analytics
 
 ## Project structure (`app/src/main/java/com/relay/app`)
@@ -63,8 +63,8 @@ Threat-model notes: metadata (who talks to whom, when, message size) is partly v
 - `messaging/` — runtime (connect, receive, drain outbox), incoming handler, outbox worker, foreground service, poll worker, notifiers, policies
 - `media/` — encrypted media protocol, AES-GCM helper, Blossom client, send/receive
 - `crypto/` — Tink E2E layer and at-rest file crypto
-- `data/` — models, repositories, SQLCipher helper and schema (DB v12)
-- `ui/` — screens (map, chat, contacts, QR, settings), components, theme, navigation
+- `data/` — models, repositories, SQLCipher helper and schema (DB v13)
+- `ui/` — bottom-bar shell (People, Messages, Account), screens (messages, people/contacts, account, chat, QR, settings sections), components, theme, navigation
 - `sms/` — historical package name; now holds the outbox entry point (`RelaySecureSend`), QR pairing, location-share service, alarm receivers
 - `util/` — preferences, message-body protocol (`SmsMessageParser`, historical name), QR codec
 
