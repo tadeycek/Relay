@@ -17,7 +17,11 @@ import com.relay.app.data.model.MessageType
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.GroupMessageRepository
 import com.relay.app.data.repository.GroupRepository
+import com.relay.app.messaging.ActiveChat
+import com.relay.app.messaging.Broadcasts
 import com.relay.app.sms.RelaySecureSend
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.relay.app.util.SmsMessageParser
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -51,10 +55,20 @@ class GroupChatViewModel(
             val groups = groupRepo.getAllGroups()
             _group.value = groups.find { it.id == groupId }
             _messages.value = groupMessageRepo.getMessages(groupId)
+            markReadIfVisible()
         }
     }
 
+    /** While this group is on screen its messages count as seen (see ChatViewModel.markReadIfVisible). */
+    private suspend fun markReadIfVisible() {
+        if (ActiveChat.groupId != groupId) return
+        val changed = withContext(Dispatchers.IO) { groupMessageRepo.markGroupReadSync(groupId) }
+        if (changed > 0) Broadcasts.sendUnreadChanged(getApplication<Application>())
+    }
+
     fun registerUpdates(context: Context) {
+        ActiveChat.groupId = groupId
+        viewModelScope.launch { markReadIfVisible() }
         receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val incomingGroupId = intent.getLongExtra("group_id", -1L)
@@ -70,6 +84,7 @@ class GroupChatViewModel(
     }
 
     fun unregisterUpdates(context: Context) {
+        if (ActiveChat.groupId == groupId) ActiveChat.groupId = -1L
         receiver?.let { context.unregisterReceiver(it) }
         receiver = null
     }
@@ -78,8 +93,10 @@ class GroupChatViewModel(
         val members = _group.value?.members ?: return
         viewModelScope.launch {
             val ts = System.currentTimeMillis()
-            for (member in members) {
-                RelaySecureSend.send(context, contactRepo, member, body)
+            withContext(Dispatchers.IO) {
+                for (member in members) {
+                    RelaySecureSend.send(context, contactRepo, member, body)
+                }
             }
             groupMessageRepo.insertMessage(GroupMessage(
                 groupId = groupId,

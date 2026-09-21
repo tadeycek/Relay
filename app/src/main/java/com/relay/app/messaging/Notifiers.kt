@@ -58,6 +58,12 @@ object MessageNotifier {
         nm.notify(NOTIF_BASE + (contact.id % 1000).toInt(), notification)
     }
 
+    /** Removes the notification for a conversation once the user has opened it. */
+    fun cancel(context: Context, contactId: Long) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancel(NOTIF_BASE + (contactId % 1000).toInt())
+    }
+
     private fun ensureChannel(nm: NotificationManager) {
         if (nm.getNotificationChannel(CHANNEL_MESSAGES) != null) return
         nm.createNotificationChannel(

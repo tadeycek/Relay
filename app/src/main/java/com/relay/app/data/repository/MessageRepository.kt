@@ -47,10 +47,10 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
     }
 
     /** Clears the unread flag on everything received in this conversation (called when its chat is on screen). */
-    fun markConversationReadSync(contactId: Long) {
+    fun markConversationReadSync(contactId: Long): Int {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply { put(Messages.COL_UNREAD, 0) }
-        db.update(
+        return db.update(
             Messages.TABLE, values,
             "${Messages.COL_CONTACT_ID} = ? AND ${Messages.COL_UNREAD} = 1", arrayOf(contactId.toString()),
         )

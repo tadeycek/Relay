@@ -45,10 +45,10 @@ class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
     }
 
     /** Clears the unread flag on everything received in this group (called when its chat is on screen). */
-    fun markGroupReadSync(groupId: Long) {
+    fun markGroupReadSync(groupId: Long): Int {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply { put(GroupMessages.COL_UNREAD, 0) }
-        db.update(
+        return db.update(
             GroupMessages.TABLE, values,
             "${GroupMessages.COL_GROUP_ID} = ? AND ${GroupMessages.COL_UNREAD} = 1", arrayOf(groupId.toString()),
         )

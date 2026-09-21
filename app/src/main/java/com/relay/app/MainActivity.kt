@@ -19,7 +19,10 @@ import com.relay.app.messaging.MessageNotifier
 import com.relay.app.ui.lock.AppLockScreen
 import com.relay.app.ui.lock.deviceSupportsAppLock
 import com.relay.app.ui.lock.promptAppUnlock
+import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.relay.app.ui.navigation.RelayNavGraph
+import com.relay.app.ui.screens.messages.UnreadViewModel
 import com.relay.app.ui.navigation.Screen
 import com.relay.app.ui.navigation.Tab
 import com.relay.app.ui.navigation.navigateToTab
@@ -65,7 +68,9 @@ class MainActivity : FragmentActivity() {
                     NotificationPermissionRequest(prefs)
 
                     val navController = rememberNavController()
-                    RelayNavGraph(navController = navController)
+                    val unreadVm: UnreadViewModel = viewModel()
+                    val unreadTotal by unreadVm.total.collectAsState()
+                    RelayNavGraph(navController = navController, unreadMessages = unreadTotal)
 
                     val shouldOpenContacts by pendingOpenContacts
                     LaunchedEffect(shouldOpenContacts) {

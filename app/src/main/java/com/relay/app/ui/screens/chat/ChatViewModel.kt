@@ -20,6 +20,8 @@ import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.media.MediaSender
 import com.relay.app.messaging.ActiveChat
+import com.relay.app.messaging.Broadcasts
+import com.relay.app.messaging.MessageNotifier
 import com.relay.app.mms.MediaCompressor
 import com.relay.app.sms.RelaySecureSend
 import com.relay.app.util.RelayPreferences
@@ -62,11 +64,28 @@ class ChatViewModel(
         viewModelScope.launch {
             _contact.value = contactRepo.getById(contactId)
             _messages.value = messageRepo.getMessages(contactId)
+            markReadIfVisible()
+        }
+    }
+
+    /**
+     * While this chat is on screen everything in it counts as seen: clear the unread flags, drop its
+     * notification, and tell the list/badge. Broadcasts only when something actually changed, so this
+     * cannot feed back into itself.
+     */
+    private suspend fun markReadIfVisible() {
+        if (ActiveChat.contactId != contactId) return
+        val changed = withContext(Dispatchers.IO) { messageRepo.markConversationReadSync(contactId) }
+        if (changed > 0) {
+            val app = getApplication<Application>()
+            MessageNotifier.cancel(app, contactId)
+            Broadcasts.sendUnreadChanged(app)
         }
     }
 
     fun registerSmsUpdates(context: Context) {
         ActiveChat.contactId = contactId // suppress notifications for the chat that is on screen
+        viewModelScope.launch { markReadIfVisible() }
         smsUpdateReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val incomingContactId = intent.getLongExtra("contact_id", -1L)
