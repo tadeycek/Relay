@@ -60,3 +60,11 @@ These are recorded so the plan does not inherit mistakes:
 Phase 0 in [07-phases.md](07-phases.md): a throwaway spike with two phones exchanging one NIP-17 message through
 public relays, including the "recipient offline for a day" test. It answers the two biggest unknowns (relay retention
 and Android background behaviour) before any real code is rewritten.
+
+## Build status (added at the end of the rebuild)
+
+The plan was implemented on branch `feat/rebuild` in 18 commits (two per phase, phases 0 to 8). It compiles, lints
+without errors and has 92 passing JVM unit tests; it has **not** been run on a device. Read
+[PROGRESS.md](PROGRESS.md) for per-phase results, deviations from this plan, what is unverified, and the ordered next
+steps. Docs 01 to 09 describe the plan as written and were not rewritten after the build, so where they differ,
+PROGRESS.md wins.

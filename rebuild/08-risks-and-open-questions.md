@@ -50,3 +50,13 @@
 2. **Email transport, Delta Chat model** (03, option 8): no server of our own, push comes from the mail provider.
 3. **Data SMS** as an offline-only, text-only fallback (03, option 2).
 4. **Matrix or XMPP** public servers (03, option 9).
+
+## Status after the build (added at the end of the rebuild)
+
+Resolved by building: foreground service type/permission (confirmed in the SDK 36 `android.jar`); the Kotlin API of
+`nostr-sdk-kmp-android:0.44.8` covers everything used (NIP-17 wrap/unwrap, kind 10050, throwaway-key signing for
+Blossom auth, SOCKS proxy mode); `androidx.work` fits as the safety-net poller.
+
+Still open and now blocking a release, all needing a device or network: relay retention, foreground-service
+reliability and battery, real Blossom server behaviour, whether the SDK resolves DNS through the Tor proxy, and the
+`BOOT_COMPLETED` foreground-service start on Android 15+. See `PROGRESS.md` for the ordered next steps.

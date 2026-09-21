@@ -134,3 +134,45 @@ Use `rebuild/dev/build.sh <gradle args>`.
   the SDK's proxy mode is assumed to resolve DNS remotely (SOCKS5 with domain names) but this was not confirmed;
   the Orbot probe only proves the port is open, not that Tor finished bootstrapping.
 - No `.onion` relays are bundled (none could be verified); users can add their own once relay editing exists.
+
+## Phase 8: Remove SMS, release prep
+
+- Removed all SMS/MMS code, permissions, the default-SMS-app flow, add-by-phone, `PhoneNumberField` and
+  libphonenumber. Merged manifest checked with `aapt2 dump permissions`: **no SMS/MMS permissions remain**.
+- Contacts from the SMS era stay visible with history but cannot be messaged until re-paired by QR v3. Old QR codes
+  are rejected with a message. Notification permission (Android 13+) is requested once, non-blocking.
+- README and `plan.md` rewritten/marked superseded. The old README claimed the code had never been compiled; it now
+  has been (see below) but still has never run on a device.
+- Lint: 0 errors (the pre-existing CameraX opt-in error is suppressed with a justification; the telephony/camera
+  hardware-feature errors are gone with the SMS permissions and a camera `uses-feature required=false`).
+
+## Final verification (what was actually run)
+
+| Check | Result |
+|---|---|
+| `compileDebugKotlin`, `assembleDebug`, `assembleRelease` | Pass (debug 84 MB, release unsigned/unminified 76 MB, all four ABIs) |
+| `testDebugUnitTest` | 92 tests, 0 failures |
+| `lintDebug` | 0 errors, warnings only |
+| Merged manifest permissions | No SMS/MMS permissions |
+| On-device run, live relays, real Blossom server, Tor traffic capture, Doze/battery | **Not done** (no device or network test harness available) |
+
+## Deviations from the plan, in one place
+
+1. Payload is an envelope `{v,id,ts,body}` carrying the existing `TYPE:...` body strings, not typed JSON per kind.
+2. Media uses a private `TYPE:MEDIA|...` reference, not NIP-17 kind 15 file messages.
+3. Tor is Orbot-only (Phase 7a); embedded Tor (7b) not built.
+4. The DB went to v12 (not v10): `seen_payloads` (replay protection) and `qr_verified` (met-in-person trust) were added
+   during Phases 3 and 6 after design review. No build with an earlier schema was ever installed.
+5. No notification bridge (FCM/UnifiedPush); the plan's decision gate for it depends on device measurements.
+6. `SmsMessageParser` and the `sms/` package keep their historical names.
+
+## What to do next (in priority order)
+
+1. Run the Phase 0 lab on two phones (`RelayLabActivity`): relay retention over 1 h / 24 h / 72 h / 7 d. If public
+   relays do not retain messages, the plan's fallback options apply (own tiny relay, email transport).
+2. Install on two phones, pair by QR, and test: text, pin, location request, read receipt, photo, offline recipient,
+   airplane mode, reboot, overnight battery with the foreground service.
+3. Verify or replace the default relay and Blossom server lists; add a relay-list editor.
+4. Packet-capture with Tor on to confirm nothing leaves except through Orbot (relays, Blossom, and note map tiles).
+5. Decide on a notification bridge only if step 2 shows the foreground service is unreliable.
+6. Run `/security-review` for a second opinion; add a license; sign a release with ABI splits.

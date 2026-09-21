@@ -263,6 +263,10 @@ private fun MyCodeTab(
     }
 }
 
+// CameraX's ImageProxy.image is an experimental API; the analyzer below opts in explicitly. Lint does not
+// recognise Kotlin's @OptIn for this marker inside the AndroidView factory lambda, so it is suppressed here.
+@android.annotation.SuppressLint("UnsafeOptInUsageError")
+@OptIn(ExperimentalGetImage::class)
 @Composable
 private fun ScanTab(onConnected: (Long) -> Unit) {
     val context = LocalContext.current
