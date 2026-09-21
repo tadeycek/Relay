@@ -128,6 +128,50 @@ fun SettingsScreen(navController: NavController) {
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
+            SectionHeader("Privacy")
+
+            ToggleRow(
+                label = "Hide my IP from relays (Tor)",
+                checked = vm.torEnabled,
+                onCheckedChange = vm::updateTorEnabled,
+            )
+            if (vm.torEnabled) {
+                ActionRow(
+                    label = "Tor status",
+                    subtitle = when (vm.connectionStatus) {
+                        TransportStatus.ONLINE -> "Connected through Tor (Orbot)"
+                        TransportStatus.CONNECTING -> "Connecting through Tor..."
+                        TransportStatus.WAITING_FOR_TOR ->
+                            "Tor isn't running. Messages are waiting. Start Orbot to continue."
+                        else -> "Not connected"
+                    },
+                    actionLabel = "Orbot",
+                    enabled = true,
+                    onClick = vm::openOrbot,
+                )
+                ToggleRow(
+                    label = "If Tor is unavailable, connect directly",
+                    checked = vm.torFallbackToDirect,
+                    onCheckedChange = vm::updateTorFallbackToDirect,
+                )
+                Text(
+                    text = "Off keeps you private: nothing is sent until Tor is running. On sends " +
+                        "directly (revealing your IP address) whenever Tor is down.",
+                    color = TextSecondary,
+                    fontFamily = IbmPlexSans,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(bottom = 4.dp),
+                )
+            }
+            ActionRow(
+                label = "What does this do?",
+                subtitle = "Benefits, costs and limits of using Tor",
+                actionLabel = if (vm.torInfoExpanded) "Hide" else "Show",
+                enabled = true,
+                onClick = vm::toggleTorInfo,
+            )
+            if (vm.torInfoExpanded) TorExplanation()
+
             SectionHeader("General")
 
             val isDefaultSmsApp = remember { Telephony.Sms.getDefaultSmsPackage(context) == context.packageName }
@@ -248,6 +292,63 @@ private fun requestDefaultSmsApp(context: Context) {
             .putExtra(Telephony.Sms.Intents.EXTRA_PACKAGE_NAME, context.packageName)
     }
     intent?.let { context.startActivity(it) }
+}
+
+/**
+ * Plain-language pros and cons of the Tor option. Kept honest about what it does not cover
+ * (map tiles, the friend's side, timing analysis) so users do not over-trust it.
+ */
+@Composable
+private fun TorExplanation() {
+    @Composable
+    fun Block(title: String, items: List<String>) {
+        Text(
+            text = title,
+            color = TextPrimary,
+            fontFamily = IbmPlexSans,
+            fontSize = 13.sp,
+            modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+        )
+        items.forEach {
+            Text(
+                text = "• $it",
+                color = TextSecondary,
+                fontFamily = IbmPlexSans,
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                modifier = Modifier.padding(bottom = 2.dp),
+            )
+        }
+    }
+    Column(modifier = Modifier.fillMaxWidth().background(Surface1).padding(horizontal = 16.dp, vertical = 8.dp)) {
+        Block(
+            "What you gain",
+            listOf(
+                "Relays can't see your IP address or approximate location.",
+                "No single party sees both who you are and what you connect to.",
+                "Someone watching your network can't easily tell which relays you use.",
+            ),
+        )
+        Block(
+            "What you give up",
+            listOf(
+                "Messages are slower, and the first connection takes several seconds.",
+                "More battery and data use.",
+                "Some relays block Tor, so fewer relays may work.",
+                "It needs the Orbot app to be installed and running.",
+            ),
+        )
+        Block(
+            "What it does not cover",
+            listOf(
+                "Map tiles are still loaded directly, so the map server can see your IP address.",
+                "Your contact's IP is still visible to relays unless they use Tor too.",
+                "Your mobile carrier can see that you're using Tor.",
+                "It doesn't protect you if your phone is compromised, and it can't hide that a message " +
+                    "for your key exists.",
+            ),
+        )
+    }
 }
 
 @Composable

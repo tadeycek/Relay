@@ -117,3 +117,20 @@ Use `rebuild/dev/build.sh <gradle args>`.
   (validated wss:// only, max 5), which reveals our IP to those relays; a hostile QR could therefore point us at
   a relay of the attacker's choosing. Mitigated by the Tor option (Phase 7). Groups still have no membership
   authentication (a group is a local list; senders are matched by contact).
+
+## Phase 7: Tor option
+
+- Built and unit-tested: `RoutePolicy` (fail closed), onion-relay URL rules. Built, **device-unverified**: `TorControl`
+  (Orbot SOCKS probe), proxy mode in `NostrTransport`, Tor-aware media transfers, Settings UI.
+- **What is implemented:** Orbot-based Tor (Phase 7a in the plan). Embedded Tor (7b) was **not** built: which library to
+  embed (tor-android / Guardian Project / Arti) was never researched, and inventing a choice would have been a guess.
+- Settings: "Hide my IP from relays (Tor)" (off by default), live status, an Orbot shortcut, a "connect directly if Tor
+  is unavailable" switch (off by default = fail closed), and the pros/cons panel from `05-tor.md`, including what it does
+  not cover.
+- Fail closed everywhere the app makes a connection we control: relay connection (WAITING_FOR_TOR, nothing sent) and
+  media upload/download (refused with an explanatory message / placeholder).
+- **Known leaks / gaps (documented in the UI where user-visible):** OSMDroid map tiles are fetched directly;
+  nothing has been packet-captured, so the plan's Phase 7 exit criterion (no direct traffic) is **unproven**;
+  the SDK's proxy mode is assumed to resolve DNS remotely (SOCKS5 with domain names) but this was not confirmed;
+  the Orbot probe only proves the port is open, not that Tor finished bootstrapping.
+- No `.onion` relays are bundled (none could be verified); users can add their own once relay editing exists.

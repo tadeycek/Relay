@@ -31,8 +31,9 @@ object MediaSender {
         }
         if (plain.isEmpty() || plain.size > MediaBody.MAX_MEDIA_BYTES) return Result.Failed("File is too large")
 
+        val client = blossomClientFor(context) ?: return Result.Failed(TOR_UNAVAILABLE_MESSAGE)
         val encrypted = MediaCrypto.encrypt(plain)
-        val uploaded = BlossomClient().upload(
+        val uploaded = client.upload(
             RelayPreferences(context).blossomServers, encrypted.blob, encrypted.sha256Hex,
         ) ?: return Result.Failed("Upload failed - check your connection and try again")
 
@@ -70,9 +71,15 @@ object MediaReceiver {
             return
         }
 
+        val client = blossomClientFor(context)
+        if (client == null) {
+            store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media not downloaded: Tor is turned on but isn't running]", null)
+            return
+        }
+
         slots.acquireUninterruptibly()
         try {
-            val blob = BlossomClient().download(ref.url, ref.sha256Hex, ref.size + BLOB_OVERHEAD)
+            val blob = client.download(ref.url, ref.sha256Hex, ref.size + BLOB_OVERHEAD)
             val plain = blob?.let { MediaCrypto.decrypt(it, ref.keyBase64) }
             if (plain == null || plain.size.toLong() != ref.size) {
                 store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media couldn't be downloaded or verified]", null)

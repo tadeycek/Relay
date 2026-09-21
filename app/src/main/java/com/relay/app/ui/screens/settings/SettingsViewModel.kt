@@ -9,6 +9,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.relay.app.messaging.ConnectionService
 import com.relay.app.sms.KeyRotationReceiver
+import com.relay.app.transport.TorControl
 import com.relay.app.transport.TransportStatus
 import com.relay.app.transport.Transports
 import com.relay.app.util.RelayPreferences
@@ -64,6 +65,44 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     var connectionStatus by mutableStateOf(TransportStatus.STOPPED)
         private set
+
+    var torEnabled by mutableStateOf(prefs.torEnabled)
+        private set
+
+    var torFallbackToDirect by mutableStateOf(prefs.torFallbackToDirect)
+        private set
+
+    var torInfoExpanded by mutableStateOf(false)
+        private set
+
+    fun toggleTorInfo() {
+        torInfoExpanded = !torInfoExpanded
+    }
+
+    /** Switching Tor on or off changes how every connection is made, so reconnect straight away. */
+    fun updateTorEnabled(v: Boolean) {
+        prefs.torEnabled = v
+        torEnabled = v
+        reconnectNow()
+    }
+
+    fun updateTorFallbackToDirect(v: Boolean) {
+        prefs.torFallbackToDirect = v
+        torFallbackToDirect = v
+        reconnectNow()
+    }
+
+    /** Opens Orbot if installed, otherwise its store page, so the user can start or get it. */
+    fun openOrbot() {
+        val app = getApplication<Application>()
+        val launch = app.packageManager.getLaunchIntentForPackage(TorControl.ORBOT_PACKAGE)
+        val intent = launch ?: android.content.Intent(
+            android.content.Intent.ACTION_VIEW,
+            android.net.Uri.parse("https://play.google.com/store/apps/details?id=${TorControl.ORBOT_PACKAGE}"),
+        )
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { app.startActivity(intent) }
+    }
 
     init {
         viewModelScope.launch {
