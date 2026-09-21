@@ -4,7 +4,9 @@ import com.relay.app.data.conversation.ConversationFormat
 import com.relay.app.data.conversation.ConversationSummary
 import com.relay.app.data.conversation.ConversationSummary.Kind
 import com.relay.app.data.db.RelayDbHelper
+import com.relay.app.data.model.Contact
 import com.relay.app.data.model.ContactTrustLevel
+import com.relay.app.ui.glyph.GlyphGenerator
 import com.relay.app.data.model.MessageType
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -30,7 +32,8 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
             SELECT c._id, c.name, c.nostr_pubkey, c.qr_verified, c.trust_level,
                    m.type, m.body, m.timestamp, m.is_sent, m.delivery_state, m.read_at,
                    (SELECT COUNT(*) FROM messages u WHERE u.contact_id = c._id AND u.unread = 1),
-                   (SELECT COUNT(*) FROM messages r WHERE r.contact_id = c._id AND r.is_sent = 0)
+                   (SELECT COUNT(*) FROM messages r WHERE r.contact_id = c._id AND r.is_sent = 0),
+                   c.phone
             FROM contacts c
             INNER JOIN messages m ON m._id = (
                 SELECT _id FROM messages WHERE contact_id = c._id ORDER BY timestamp DESC, _id DESC LIMIT 1
@@ -61,6 +64,9 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
                             blocked = false,
                             hasReceivedMessage = c.getInt(12) > 0,
                         ),
+                        glyphSeed = seedFor(c.getString(2), c.getString(13), c.getString(1)),
+                        hasKey = !c.isNull(2),
+                        verified = c.getInt(3) == 1,
                     )
                 )
             }
@@ -68,7 +74,33 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
         }
     }
 
+    /** Internet-only contacts store a "nostr:..." placeholder in the phone column; that is not a real number. */
+    private fun seedFor(nostrPubkey: String?, phone: String?, name: String): String =
+        GlyphGenerator.seedFor(nostrPubkey, phone?.takeUnless { it.startsWith(Contact.NOSTR_PHONE_PREFIX) }, name)
+
+    /** Up to four member seeds per group, in one query. */
+    private fun memberSeedsByGroup(): Map<Long, List<String>> {
+        val db = dbHelper.readableDatabase
+        val cursor = db.rawQuery(
+            """
+            SELECT gm.group_id, c.nostr_pubkey, c.phone, c.name
+            FROM group_members gm INNER JOIN contacts c ON c._id = gm.contact_id
+            ORDER BY gm.group_id, c.name
+            """.trimIndent(),
+            null,
+        )
+        return cursor.use { c ->
+            val map = HashMap<Long, MutableList<String>>()
+            while (c.moveToNext()) {
+                val list = map.getOrPut(c.getLong(0)) { mutableListOf() }
+                if (list.size < 4) list.add(seedFor(c.getString(1), c.getString(2), c.getString(3)))
+            }
+            map
+        }
+    }
+
     private fun groupConversations(): List<ConversationSummary> {
+        val memberSeeds = memberSeedsByGroup()
         val db = dbHelper.readableDatabase
         val cursor = db.rawQuery(
             """
@@ -100,6 +132,8 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
                         lastReadAt = null,
                         unread = c.getInt(6),
                         memberCount = c.getInt(7),
+                        glyphSeed = c.getString(1),
+                        memberSeeds = memberSeeds[c.getLong(0)].orEmpty(),
                     )
                 )
             }

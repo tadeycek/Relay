@@ -22,6 +22,13 @@ data class ConversationSummary(
     /** Someone who knows our key and messaged us but was never scanned in person (contacts only). */
     val isRequest: Boolean = false,
     val memberCount: Int = 0,
+    /** Seed for this conversation's glyph (a contact's key, number or name); empty for groups. */
+    val glyphSeed: String = "",
+    /** Contact only: has a Nostr key, and was scanned in person. Together they decide how the glyph is drawn. */
+    val hasKey: Boolean = false,
+    val verified: Boolean = false,
+    /** Group only: seeds of up to four members, for the group's 2x2 glyph. */
+    val memberSeeds: List<String> = emptyList(),
 ) {
     enum class Kind { CONTACT, GROUP }
 
