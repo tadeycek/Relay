@@ -100,8 +100,8 @@ fun ContactsScreen(navController: NavController) {
     Scaffold(
         topBar = {
             RelayTopBar(
-                title = "Contacts",
-                onBack = { navController.popBackStack() },
+                // Top-level tab: no back arrow.
+                title = "People",
                 actions = {
                     IconButton(onClick = { navController.navigate(Screen.QrExchange.route) }) {
                         Icon(

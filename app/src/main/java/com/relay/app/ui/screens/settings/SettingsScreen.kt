@@ -1,19 +1,13 @@
 package com.relay.app.ui.screens.settings
 
-import android.app.role.RoleManager
-import android.content.Context
-import android.content.Intent
-import android.os.Build
-import android.provider.Telephony
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -21,7 +15,6 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Switch
@@ -35,15 +28,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavController
 import com.relay.app.data.model.PinExpiry
-import com.relay.app.ui.components.RelayTopBar
 import com.relay.app.ui.theme.Accent
-import com.relay.app.ui.theme.Background
 import com.relay.app.ui.theme.Border
 import com.relay.app.ui.theme.IbmPlexMono
 import com.relay.app.transport.TransportStatus
@@ -56,28 +44,14 @@ import com.relay.app.ui.theme.TextSecondary
 import com.relay.app.util.RelayPreferences
 import kotlin.math.roundToInt
 
+/**
+ * All the settings sections, emitted into the caller's Column. The Account tab shows them under the
+ * profile card, so this no longer owns a Scaffold or a scroll container of its own.
+ */
 @Composable
-fun SettingsScreen(navController: NavController) {
-    val vm: SettingsViewModel = viewModel()
-    val context = LocalContext.current
-
-    Scaffold(
-        topBar = {
-            RelayTopBar(
-                title = "Settings",
-                onBack = { navController.popBackStack() },
-            )
-        },
-        containerColor = Background,
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
+internal fun ColumnScope.SettingsSections(vm: SettingsViewModel) {
+    run {
+        run {
             SectionHeader("Location Requests")
 
             ToggleRow(
@@ -193,7 +167,7 @@ fun SettingsScreen(navController: NavController) {
             SectionHeader("Notifications")
 
             ToggleRow(
-                label = "Incoming pin notification",
+                label = "Shared location notification",
                 checked = vm.incomingPinNotification,
                 onCheckedChange = vm::updateIncomingPinNotification,
             )
@@ -257,7 +231,7 @@ private fun formatRotationDate(epochMillis: Long): String {
 
 /**
  * Plain-language pros and cons of the Tor option. Kept honest about what it does not cover
- * (map tiles, the friend's side, timing analysis) so users do not over-trust it.
+ * (a maps app opened from a shared location, the friend's side, timing analysis) so users do not over-trust it.
  */
 @Composable
 private fun TorExplanation() {
@@ -302,7 +276,7 @@ private fun TorExplanation() {
         Block(
             "What it does not cover",
             listOf(
-                "Map tiles are still loaded directly, so the map server can see your IP address.",
+                "\"Open in Maps\" hands a location to your maps app, which then connects on its own, outside Tor.",
                 "Your contact's IP is still visible to relays unless they use Tor too.",
                 "Your mobile carrier can see that you're using Tor.",
                 "It doesn't protect you if your phone is compromised, and it can't hide that a message " +
@@ -435,7 +409,7 @@ private fun DropdownRow(
                 onValueChange = {},
                 readOnly = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-                modifier = Modifier.menuAnchor(),
+                modifier = Modifier.menuAnchor().width(190.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedBorderColor = Accent,
                     unfocusedBorderColor = Border,
