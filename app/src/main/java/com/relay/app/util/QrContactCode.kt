@@ -1,5 +1,7 @@
 package com.relay.app.util
 
+import com.relay.app.transport.nostr.InboxRelays
+
 /**
  * Encoding for the QR contact-exchange code (Contacts -> QR icon). Never sent over any messaging
  * channel — used only for the in-person QR scan/display flow, which is what makes the key it carries
@@ -95,10 +97,13 @@ object QrContactCode {
         )
     }
 
-    /** Keeps only well-formed `wss://` URLs, bounded in count and length, without duplicates. */
+    /**
+     * Keeps only acceptable relay URLs (`wss://`, or `ws://` for `.onion` hosts; see
+     * [InboxRelays.isAcceptableRelay]), bounded in count and length, without duplicates.
+     */
     fun cleanRelayHints(hints: List<String>): List<String> = hints
         .map { sanitize(it).trim() }
-        .filter { it.startsWith("wss://") && it.length in 8..MAX_RELAY_LENGTH && !it.contains(',') && !it.contains(' ') }
+        .filter { it.length <= MAX_RELAY_LENGTH && InboxRelays.isAcceptableRelay(it) }
         .distinct()
         .take(MAX_RELAY_HINTS)
 }

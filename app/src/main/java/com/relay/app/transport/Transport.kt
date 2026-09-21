@@ -33,7 +33,12 @@ interface Transport {
     suspend fun send(recipientPubkeyHex: String, payload: RelayPayload, relayHints: List<String> = emptyList()): SendResult
 }
 
-enum class TransportStatus { STOPPED, CONNECTING, ONLINE, OFFLINE }
+enum class TransportStatus {
+    STOPPED, CONNECTING, ONLINE, OFFLINE,
+
+    /** Tor is required but not running; nothing is being sent or received until it is (fail closed). */
+    WAITING_FOR_TOR,
+}
 
 data class IncomingEnvelope(
     val senderPubkeyHex: String,

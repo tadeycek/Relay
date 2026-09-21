@@ -107,6 +107,7 @@ fun SettingsScreen(navController: NavController) {
                     TransportStatus.CONNECTING -> "Connecting..."
                     TransportStatus.OFFLINE -> "Offline - messages wait and will send when it reconnects"
                     TransportStatus.STOPPED -> "Stopped"
+                    TransportStatus.WAITING_FOR_TOR -> "Waiting for Tor - start Orbot, or turn Tor off"
                 },
                 actionLabel = "Reconnect",
                 enabled = true,

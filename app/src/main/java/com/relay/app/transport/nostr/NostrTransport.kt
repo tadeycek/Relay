@@ -6,6 +6,7 @@ import com.relay.app.transport.Backoff
 import com.relay.app.transport.IncomingEnvelope
 import com.relay.app.transport.PayloadCodec
 import com.relay.app.transport.RelayPayload
+import com.relay.app.transport.Route
 import com.relay.app.transport.SeenIds
 import com.relay.app.transport.SendResult
 import com.relay.app.transport.Transport
@@ -47,9 +48,6 @@ import rust.nostr.sdk.Timestamp
 import rust.nostr.sdk.UnwrappedGift
 import kotlin.time.Duration.Companion.seconds
 
-/** SOCKS5 proxy (e.g. Orbot at 127.0.0.1:9050) all relay connections are routed through. */
-data class ProxyConfig(val host: String, val port: Int)
-
 /**
  * NIP-17 private direct messages over public Nostr relays.
  *
@@ -68,7 +66,8 @@ data class ProxyConfig(val host: String, val port: Int)
 class NostrTransport(
     private val context: Context,
     private val relays: () -> List<String>,
-    private val proxy: () -> ProxyConfig? = { null },
+    /** Evaluated at every (re)connect: direct, via a SOCKS proxy (Tor), or blocked (Tor required but down). */
+    private val route: () -> Route = { Route.Direct },
     private val lastSeenStore: LastSeenStore = PrefsLastSeenStore(context),
 ) : Transport {
 
@@ -150,11 +149,19 @@ class NostrTransport(
     private suspend fun runConnectionLoop(gen: Int) {
         var failures = 0
         while (scope.isActive && gen == generation) {
+            // Fail closed: with Tor required but unavailable, make no connection at all (and so
+            // leak nothing) and check again shortly.
+            val currentRoute = route()
+            if (currentRoute is Route.Blocked) {
+                if (gen == generation) _status.value = TransportStatus.WAITING_FOR_TOR
+                delay(TOR_RETRY_MS)
+                continue
+            }
             try {
                 _status.value = TransportStatus.CONNECTING
                 val keys = NostrIdentity.keys(context)
                 val s = NostrSigner.keys(keys)
-                val c = buildClient(s)
+                val c = buildClient(s, currentRoute as? Route.Socks)
                 if (gen != generation) {
                     runCatching { c.disconnect() }
                     return
@@ -234,9 +241,9 @@ class NostrTransport(
         return found
     }
 
-    private fun buildClient(s: NostrSigner): Client {
+    private fun buildClient(s: NostrSigner, socks: Route.Socks?): Client {
         val opts = ClientOptions()
-        proxy()?.let { p ->
+        socks?.let { p ->
             opts.connection(
                 Connection()
                     .mode(ConnectionMode.Proxy(p.host, p.port.toUShort()))
@@ -307,6 +314,7 @@ class NostrTransport(
         private const val LOOKBACK_SECS = 3L * 24 * 60 * 60
         private val CONNECT_TIMEOUT = 10.seconds
         private val LOOKUP_TIMEOUT = 5.seconds
+        private const val TOR_RETRY_MS = 5_000L
         private const val POSITIVE_TTL_MS = 60L * 60 * 1000
         private const val NEGATIVE_TTL_MS = 5L * 60 * 1000
     }

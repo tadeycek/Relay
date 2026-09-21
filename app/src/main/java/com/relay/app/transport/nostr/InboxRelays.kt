@@ -33,9 +33,24 @@ object InboxRelays {
         return (hints + ourRelays).filter { isAcceptableRelay(it) }.distinct()
     }
 
-    /** Relay URLs come from other people (QR codes, published lists): only well-formed wss:// are used. */
-    fun isAcceptableRelay(url: String): Boolean =
-        url.startsWith("wss://") && url.length in 8..MAX_URL_LENGTH &&
-            url.none { it.isWhitespace() || it == ',' || it.isISOControl() } &&
-            !url.substring("wss://".length).substringBefore('/').contains('@')
+    /**
+     * Relay URLs come from other people (QR codes, published lists), so only well-formed ones are
+     * used: `wss://`, or plain `ws://` solely for `.onion` hosts (onion services are already
+     * end-to-end encrypted by Tor and normally have no TLS certificate; a plain ws:// clearnet
+     * relay would expose traffic and is refused).
+     */
+    fun isAcceptableRelay(url: String): Boolean {
+        val secure = url.startsWith("wss://")
+        val plain = url.startsWith("ws://")
+        if (!secure && !plain) return false
+        if (url.length !in 8..MAX_URL_LENGTH) return false
+        if (url.any { it.isWhitespace() || it == ',' || it.isISOControl() }) return false
+        val authority = url.substringAfter("://").substringBefore('/')
+        if (authority.isEmpty() || authority.contains('@')) return false
+        if (plain) {
+            val host = authority.substringBefore(':')
+            if (!host.endsWith(".onion")) return false
+        }
+        return true
+    }
 }

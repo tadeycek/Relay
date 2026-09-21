@@ -101,6 +101,7 @@ class ConnectionService : Service() {
             TransportStatus.CONNECTING -> "Connecting..."
             TransportStatus.OFFLINE -> "Offline - will retry"
             TransportStatus.STOPPED -> "Stopped"
+            TransportStatus.WAITING_FOR_TOR -> "Waiting for Tor (start Orbot)"
         }
 
         private fun buildNotification(context: Context, status: TransportStatus): Notification {

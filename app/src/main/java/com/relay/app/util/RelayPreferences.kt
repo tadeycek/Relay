@@ -96,6 +96,16 @@ class RelayPreferences(context: Context) {
             ?: DefaultRelays.CLEARNET
         set(v) { prefs.edit().putString(KEY_NOSTR_RELAYS, v.joinToString("\n")).apply() }
 
+    /** Route relay and media-server connections through Tor (Orbot). Off by default: slower and heavier on battery. */
+    var torEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TOR_ENABLED, false)
+        set(v) { prefs.edit().putBoolean(KEY_TOR_ENABLED, v).apply() }
+
+    /** If Tor is on but unreachable, connect directly instead of waiting. Off by default (fail closed). */
+    var torFallbackToDirect: Boolean
+        get() = prefs.getBoolean(KEY_TOR_FALLBACK, false)
+        set(v) { prefs.edit().putBoolean(KEY_TOR_FALLBACK, v).apply() }
+
     /** Blossom media servers tried in order for uploads (one URL per stored line). Falls back to defaults. */
     var blossomServers: List<String>
         get() = prefs.getString(KEY_BLOSSOM_SERVERS, null)
@@ -113,6 +123,8 @@ class RelayPreferences(context: Context) {
         set(v) { prefs.edit().putBoolean(KEY_BACKGROUND_CONNECTION, v).apply() }
 
     companion object {
+        private const val KEY_TOR_ENABLED = "tor_enabled"
+        private const val KEY_TOR_FALLBACK = "tor_fallback_direct"
         private const val KEY_BLOSSOM_SERVERS = "blossom_servers"
         private const val KEY_BACKGROUND_CONNECTION = "background_connection"
         private const val KEY_NOSTR_RELAYS = "nostr_relays"

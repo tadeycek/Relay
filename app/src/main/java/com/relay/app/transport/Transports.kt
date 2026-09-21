@@ -17,6 +17,7 @@ object Transports {
             val created = NostrTransport(
                 context = appContext,
                 relays = { RelayPreferences(appContext).nostrRelays },
+                route = { TorControl.route(appContext) },
             )
             instance = created
             return created

@@ -73,4 +73,13 @@ class InboxRelaysTest {
         assertFalse(InboxRelays.isAcceptableRelay("wss://a,b.example"))
         assertFalse(InboxRelays.isAcceptableRelay("wss://user@host.example/x"))
     }
+
+    @Test
+    fun plainWsIsOnlyAcceptedForOnionHosts() {
+        assertTrue(InboxRelays.isAcceptableRelay("ws://abcdefghijklmnop.onion"))
+        assertTrue(InboxRelays.isAcceptableRelay("ws://abcdefghijklmnop.onion:8080/path"))
+        assertFalse(InboxRelays.isAcceptableRelay("ws://relay.example"))
+        assertFalse(InboxRelays.isAcceptableRelay("ws://relay.example.onion.evil.com"))
+        assertFalse(InboxRelays.isAcceptableRelay("ws://user@abcdefghijklmnop.onion"))
+    }
 }
