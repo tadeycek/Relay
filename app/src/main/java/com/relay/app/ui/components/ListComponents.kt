@@ -139,6 +139,7 @@ fun ToggleRow(
         headline = headline,
         supporting = supporting,
         enabled = enabled,
+        maxSupportingLines = 8, // explanations must never be cut off
         onClick = { onCheckedChange(!checked) },
         modifier = modifier,
         trailing = {
