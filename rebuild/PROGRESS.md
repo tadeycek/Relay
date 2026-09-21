@@ -196,3 +196,17 @@ map tab was replaced by **People** and the map was removed (option 2 of three of
   screenshots), the v12 to v13 upgrade beyond a clean launch, and everything needing a second phone.
 - **Bugs found on the way:** group members were loaded without their Nostr key so group sends silently failed (fixed);
   the Tor panel still described map tiles (fixed).
+
+## UI redesign (rebuild/ui-redesign-plan.md)
+
+Built on `feat/rebuild`: semantic light/dark tokens with Bricolage Grotesque + IBM Plex Sans, key-derived
+glyph avatars (verified / not verified / self), a shared component library, and every screen moved onto it:
+Messages, chat and group chat (day separators, grouping, unread divider, pill composer), People with a
+contact sheet (trust control, key change, confirmed delete), Account as a short page with six sub-pages
+(numbered Orbot guide), and a "Meet in person" pairing screen with one reduced-motion-aware animation.
+Dropdowns are gone; no screen sets its own font family, size or colour.
+
+Not yet verified on a device: the phone was disconnected during the redesign, so the screens have compiled
+and the pure logic is unit-tested (contrast, glyphs, chat timeline, trust line), but nothing has been
+looked at on screen in either theme. Still to do there: screenshots in both themes, font scaling at 200%,
+TalkBack pass, and a README screenshot refresh.

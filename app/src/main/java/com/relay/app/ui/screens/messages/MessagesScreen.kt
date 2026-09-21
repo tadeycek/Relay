@@ -40,6 +40,7 @@ import com.relay.app.data.conversation.ConversationFormat
 import com.relay.app.data.conversation.ConversationSummary
 import com.relay.app.data.model.DeliveryState
 import com.relay.app.ui.components.ChipKind
+import com.relay.app.ui.components.DeliveryTick
 import com.relay.app.ui.components.EmptyState
 import com.relay.app.ui.components.Glyph
 import com.relay.app.ui.components.GroupGlyph
@@ -138,7 +139,7 @@ private fun ConversationRow(c: ConversationSummary, onClick: () -> Unit) {
             }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                 if (c.lastIsSent && c.hasMessages) {
-                    DeliveryTick(c)
+                    DeliveryTick(readAt = c.lastReadAt, deliveryState = c.lastDeliveryState)
                     Spacer(Modifier.width(RelaySpacing.xs))
                 }
                 Text(
@@ -195,15 +196,4 @@ private fun ConversationAvatar(c: ConversationSummary) {
         }
         Glyph(seed = c.glyphSeed.ifEmpty { c.name }, state = state, size = AvatarSize, description = "${c.name}, $trust")
     }
-}
-
-@Composable
-private fun DeliveryTick(c: ConversationSummary) {
-    val (icon, tint, desc) = when {
-        c.lastReadAt != null -> Triple(Icons.Filled.DoneAll, Verified, "Read")
-        c.lastDeliveryState == DeliveryState.QUEUED -> Triple(Icons.Outlined.Schedule, TextSecondary, "Waiting to send")
-        c.lastDeliveryState == DeliveryState.FAILED -> Triple(Icons.Outlined.ErrorOutline, com.relay.app.ui.theme.Danger, "Failed to send")
-        else -> Triple(Icons.Filled.Done, TextSecondary, "Sent")
-    }
-    Icon(imageVector = icon, contentDescription = desc, tint = tint, modifier = Modifier.size(14.dp))
 }

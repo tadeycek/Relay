@@ -13,7 +13,10 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import com.relay.app.ui.components.PrimaryButton
+import com.relay.app.ui.theme.RelaySpacing
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,19 +59,14 @@ fun AppLockScreen(onUnlockClick: () -> Unit) {
         modifier = Modifier
             .fillMaxSize()
             .background(Background)
-            .padding(24.dp),
+            .padding(RelaySpacing.xxl),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text("Relay is locked", color = TextPrimary, fontFamily = IbmPlexSans)
-        Spacer(Modifier.height(8.dp))
-        Text("Unlock to continue", color = TextSecondary, fontFamily = IbmPlexSans)
-        Spacer(Modifier.height(20.dp))
-        Button(
-            onClick = onUnlockClick,
-            colors = ButtonDefaults.buttonColors(containerColor = Accent),
-        ) {
-            Text("Unlock")
-        }
+        Text("Relay is locked", style = MaterialTheme.typography.headlineSmall, color = TextPrimary)
+        Spacer(Modifier.height(RelaySpacing.sm))
+        Text("Unlock to see your messages.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+        Spacer(Modifier.height(RelaySpacing.xl))
+        PrimaryButton("Unlock", onUnlockClick)
     }
 }
