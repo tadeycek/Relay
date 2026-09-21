@@ -46,12 +46,14 @@ import java.util.Locale
 
 private val pinHistoryDateFormat = SimpleDateFormat("dd MMM, HH:mm", Locale.getDefault())
 
-private data class PinHistoryItem(
+internal data class PinHistoryItem(
     val message: Message,
     val contactName: String,
 )
 
-private class PinHistoryViewModel(app: Application) : AndroidViewModel(app) {
+// Must not be private: the default ViewModel factory instantiates it reflectively and a private
+// class throws IllegalAccessException (this crashed the app when opening Pin History).
+internal class PinHistoryViewModel(app: Application) : AndroidViewModel(app) {
     private val db = RelayDbHelper(app)
     private val messageRepo = MessageRepository(db)
     private val contactRepo = ContactRepository(db)
