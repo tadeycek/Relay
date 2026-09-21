@@ -44,6 +44,7 @@ import rust.nostr.sdk.RelayMessage
 import rust.nostr.sdk.RelayUrl
 import rust.nostr.sdk.Timestamp
 import rust.nostr.sdk.UnwrappedGift
+import kotlin.time.Duration.Companion.seconds
 
 /** SOCKS5 proxy (e.g. Orbot at 127.0.0.1:9050) all relay connections are routed through. */
 data class ProxyConfig(val host: String, val port: Int)
@@ -83,16 +84,37 @@ class NostrTransport(
     override val status: StateFlow<TransportStatus> = _status.asStateFlow()
     override val incoming: Flow<IncomingEnvelope> = inbox.receiveAsFlow()
 
+    /**
+     * Incremented whenever the connection loop is started, stopped or restarted. A loop that finds
+     * its own generation is no longer current has been superseded and must not touch shared state
+     * (`client`, `signer`, status): the native notification call is not guaranteed to be
+     * cancellable, so an old loop can outlive the moment it was cancelled and would otherwise tear
+     * down its replacement's client.
+     */
+    @Volatile private var generation = 0
+
     override suspend fun start() = lifecycleLock.withLock {
         if (loopJob?.isActive == true) return@withLock
-        loopJob = scope.launch { runConnectionLoop() }
+        val gen = ++generation
+        loopJob = scope.launch { runConnectionLoop(gen) }
     }
 
     override suspend fun stop() = lifecycleLock.withLock {
-        loopJob?.cancelAndJoin()
+        generation++
+        loopJob?.cancel()
         loopJob = null
         teardownClient()
         _status.value = TransportStatus.STOPPED
+    }
+
+    /** Drops the current connection and starts a fresh one (network changed, user tapped Reconnect). */
+    override suspend fun reconnect() = lifecycleLock.withLock {
+        generation++
+        loopJob?.cancel()
+        teardownClient()
+        _status.value = TransportStatus.CONNECTING
+        val gen = generation
+        loopJob = scope.launch { runConnectionLoop(gen) }
     }
 
     override suspend fun send(
@@ -122,23 +144,32 @@ class NostrTransport(
         }
     }
 
-    private suspend fun runConnectionLoop() {
+    private suspend fun runConnectionLoop(gen: Int) {
         var failures = 0
-        while (scope.isActive) {
+        while (scope.isActive && gen == generation) {
             try {
                 _status.value = TransportStatus.CONNECTING
                 val keys = NostrIdentity.keys(context)
                 val s = NostrSigner.keys(keys)
                 val c = buildClient(s)
+                if (gen != generation) {
+                    runCatching { c.disconnect() }
+                    return
+                }
                 signer = s
                 client = c
 
                 relays().mapNotNull { runCatching { RelayUrl.parse(it) }.getOrNull() }
                     .forEach { runCatching { c.addRelay(it) } }
                 c.connect()
+                runCatching { c.waitForConnection(CONNECT_TIMEOUT) }
+
+                // connect() does not block, so "online" must mean at least one relay really is.
+                val reachable = c.relays().values.any { it.isConnected() }
+                check(reachable) { "no relay reachable" }
 
                 c.subscribe(subscriptionFilter(keys.publicKey()), null)
-                _status.value = TransportStatus.ONLINE
+                if (gen == generation) _status.value = TransportStatus.ONLINE
                 failures = 0
 
                 // Blocks until the notification stream ends or the client is torn down.
@@ -148,13 +179,15 @@ class NostrTransport(
                         onEvent(event)
                     }
                 })
-                _status.value = TransportStatus.OFFLINE
+                if (gen == generation) _status.value = TransportStatus.OFFLINE
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Log.w(TAG, "connection loop error: ${e.message}")
-                _status.value = TransportStatus.OFFLINE
+                if (gen == generation) _status.value = TransportStatus.OFFLINE
             }
+            // Superseded by stop()/reconnect(): that call already tore the client down and owns the state.
+            if (gen != generation) return
             teardownClient()
             failures++
             delay(Backoff.reconnectDelayMs(failures))
@@ -232,5 +265,6 @@ class NostrTransport(
         private val GIFT_WRAP_KIND: UShort = 1059u
         private val CHAT_MESSAGE_KIND: UShort = 14u
         private const val LOOKBACK_SECS = 3L * 24 * 60 * 60
+        private val CONNECT_TIMEOUT = 10.seconds
     }
 }

@@ -7,7 +7,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.relay.app.messaging.ConnectionService
 import com.relay.app.sms.KeyRotationReceiver
+import com.relay.app.transport.TransportStatus
+import com.relay.app.transport.Transports
 import com.relay.app.util.RelayPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -55,6 +58,28 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     var dndEndHour by mutableStateOf(prefs.dndEndHour)
         private set
+
+    var backgroundConnection by mutableStateOf(prefs.backgroundConnection)
+        private set
+
+    var connectionStatus by mutableStateOf(TransportStatus.STOPPED)
+        private set
+
+    init {
+        viewModelScope.launch {
+            Transports.get(app).status.collect { connectionStatus = it }
+        }
+    }
+
+    fun updateBackgroundConnection(v: Boolean) {
+        prefs.backgroundConnection = v
+        backgroundConnection = v
+        if (v) ConnectionService.start(getApplication()) else ConnectionService.stop(getApplication())
+    }
+
+    fun reconnectNow() {
+        viewModelScope.launch(Dispatchers.IO) { Transports.get(getApplication()).reconnect() }
+    }
 
     var rotatingKey by mutableStateOf(false)
         private set

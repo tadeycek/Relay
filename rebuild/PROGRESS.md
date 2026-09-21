@@ -61,3 +61,19 @@ Use `rebuild/dev/build.sh <gradle args>`.
   contacts until Phase 5; the app still asks for SMS permissions on launch until Phase 8; POST_NOTIFICATIONS is not
   yet requested at runtime on Android 13+ (notifications are skipped silently without it) - fixed in Phase 8.
 - **Device-unverified:** everything that touches a relay or the Keystore.
+
+## Phase 4: Background delivery
+
+- Built: `ConnectionService` (foreground service, type `remoteMessaging`), `BootReceiver`, `PollWorker` (WorkManager
+  every 15 min as a safety net), network-loss watcher that forces a fresh connection, Settings "Connection" section
+  (status, Reconnect, background toggle with an honest battery note).
+- **Verified against the SDK 36 `android.jar`:** `FOREGROUND_SERVICE_REMOTE_MESSAGING` and
+  `ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING` exist, resolving that open item from `08-...md`.
+- **Transport hardening:** the connection loop now uses a generation counter so a superseded loop (the native
+  notification call may not be cancellable) can never tear down its replacement's client; "online" now means at least
+  one relay actually connected (`connect()` does not block); added `Transport.reconnect()`.
+- **Still unverified, and the biggest remaining risk:** whether the foreground service survives Doze and OEM task
+  killers overnight, and its real battery cost. Whether a foreground service may be started from `BOOT_COMPLETED` for
+  this type on Android 15+ is also unconfirmed (the start is wrapped in try/catch).
+- **Not built:** a notification bridge (FCM/UnifiedPush). Decision gate from the plan stands: build it only if the
+  foreground service proves unreliable in device testing.

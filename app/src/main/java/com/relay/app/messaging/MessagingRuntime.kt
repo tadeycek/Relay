@@ -1,6 +1,8 @@
 package com.relay.app.messaging
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.Network
 import android.util.Log
 import com.relay.app.data.repository.OutboxRepository
 import com.relay.app.data.repository.SeenPayloadRepository
@@ -18,8 +20,8 @@ import kotlinx.coroutines.withTimeoutOrNull
 /**
  * Process-wide engine: keeps the transport connected, feeds incoming messages to the
  * [IncomingMessageHandler], and drains the outbox whenever there is something due and the transport
- * is online. Started once from the Application (and kept alive in the background by the
- * foreground service added in the next phase). All entry points are idempotent.
+ * is online. Started once from the Application (and kept alive in the background by
+ * [ConnectionService]). All entry points are idempotent.
  */
 object MessagingRuntime {
 
@@ -68,6 +70,8 @@ object MessagingRuntime {
             transport.status.collect { if (it == TransportStatus.ONLINE) kick() }
         }
 
+        watchNetwork(appContext, transport)
+
         scope.launch {
             val worker = OutboxWorker(appContext, transport)
             val outbox = OutboxRepository(MessagingDb.get(appContext))
@@ -89,4 +93,28 @@ object MessagingRuntime {
         }
     }
 
+    /**
+     * After the default network is lost and a (possibly different) one appears, existing relay
+     * sockets are dead but may not notice for a long time, so force a fresh connection. The initial
+     * "available" callback at registration is ignored (nothing was lost yet).
+     */
+    private fun watchNetwork(context: Context, transport: Transport) {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        var lost = false
+        try {
+            cm.registerDefaultNetworkCallback(object : ConnectivityManager.NetworkCallback() {
+                override fun onLost(network: Network) {
+                    lost = true
+                }
+
+                override fun onAvailable(network: Network) {
+                    if (!lost) return
+                    lost = false
+                    scope.launch { transport.reconnect() }
+                }
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "network watcher unavailable: ${e.message}")
+        }
+    }
 }

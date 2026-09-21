@@ -46,6 +46,7 @@ import com.relay.app.ui.theme.Accent
 import com.relay.app.ui.theme.Background
 import com.relay.app.ui.theme.Border
 import com.relay.app.ui.theme.IbmPlexMono
+import com.relay.app.transport.TransportStatus
 import com.relay.app.ui.theme.IbmPlexSans
 import com.relay.app.ui.theme.OnAccent
 import com.relay.app.ui.theme.Surface1
@@ -95,6 +96,35 @@ fun SettingsScreen(navController: NavController) {
                 selected = vm.locationRequestFrom,
                 options = listOf(RelayPreferences.FROM_ALL to "All contacts", RelayPreferences.FROM_NOBODY to "Nobody"),
                 onSelect = vm::updateLocationRequestFrom,
+            )
+
+            SectionHeader("Connection")
+
+            ActionRow(
+                label = "Relay connection",
+                subtitle = when (vm.connectionStatus) {
+                    TransportStatus.ONLINE -> "Connected to your relays"
+                    TransportStatus.CONNECTING -> "Connecting..."
+                    TransportStatus.OFFLINE -> "Offline - messages wait and will send when it reconnects"
+                    TransportStatus.STOPPED -> "Stopped"
+                },
+                actionLabel = "Reconnect",
+                enabled = true,
+                onClick = vm::reconnectNow,
+            )
+            ToggleRow(
+                label = "Stay connected in the background",
+                checked = vm.backgroundConnection,
+                onCheckedChange = vm::updateBackgroundConnection,
+            )
+            Text(
+                text = "Needed to receive messages while the app is closed. Uses some battery and shows a " +
+                    "small persistent notification. When off, messages arrive when you open the app or " +
+                    "within about 15 minutes.",
+                color = TextSecondary,
+                fontFamily = IbmPlexSans,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 8.dp),
             )
 
             SectionHeader("General")

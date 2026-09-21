@@ -23,6 +23,9 @@ interface Transport {
 
     suspend fun stop()
 
+    /** Drops the current connection and establishes a fresh one (e.g. after a network change). */
+    suspend fun reconnect()
+
     /**
      * Publishes [payload] to [recipientPubkeyHex]. [relayHints] are extra relays to try besides the
      * configured defaults (e.g. the contact's inbox relays learned at pairing).

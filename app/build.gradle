@@ -73,6 +73,9 @@ dependencies {
     implementation 'androidx.camera:camera-view:1.4.2'
     implementation 'com.google.mlkit:barcode-scanning:17.3.0'
 
+    // Periodic safety-net poll for when the foreground service is off or was killed.
+    implementation 'androidx.work:work-runtime-ktx:2.9.1'
+
     // Internet transport: Nostr (NIP-17 private DMs / NIP-44 / NIP-59 gift wrap) via rust-nostr's
     // Kotlin bindings. Alpha-quality upstream; pinned and wrapped behind com.relay.app.transport.
     implementation 'org.rust-nostr:nostr-sdk-kmp-android:0.44.8'
