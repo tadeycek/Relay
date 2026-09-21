@@ -40,8 +40,31 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             msg.expiryAt?.let { put(Messages.COL_EXPIRY_AT, it) }
             msg.msgId?.let { put(Messages.COL_MSG_ID, it) }
             put(Messages.COL_SENDER_VERIFIED, if (msg.senderVerified) 1 else 0)
+            put(Messages.COL_DELIVERY_STATE, msg.deliveryState)
         }
         return db.insert(Messages.TABLE, null, values)
+    }
+
+    /** True if a message with this payload id is already stored for [contactId] (idempotent receive). */
+    fun hasMsgIdSync(contactId: Long, msgId: String): Boolean {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            Messages.TABLE, arrayOf(Messages.COL_ID),
+            "${Messages.COL_CONTACT_ID} = ? AND ${Messages.COL_MSG_ID} = ?",
+            arrayOf(contactId.toString(), msgId),
+            null, null, null, "1",
+        )
+        return cursor.use { it.moveToFirst() }
+    }
+
+    /** Updates outgoing delivery progress for the message carrying payload id [msgId]. */
+    fun setDeliveryStateSync(msgId: String, state: Int) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Messages.COL_DELIVERY_STATE, state) }
+        db.update(
+            Messages.TABLE, values,
+            "${Messages.COL_MSG_ID} = ? AND ${Messages.COL_IS_SENT} = 1", arrayOf(msgId),
+        )
     }
 
     fun hasMediaUri(uri: String): Boolean {
@@ -113,6 +136,7 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
         val msgIdIdx = getColumnIndex(Messages.COL_MSG_ID)
         val readAtIdx = getColumnIndex(Messages.COL_READ_AT)
         val senderVerifiedIdx = getColumnIndex(Messages.COL_SENDER_VERIFIED)
+        val deliveryStateIdx = getColumnIndex(Messages.COL_DELIVERY_STATE)
         return Message(
             id = getLong(getColumnIndexOrThrow(Messages.COL_ID)),
             contactId = getLong(getColumnIndexOrThrow(Messages.COL_CONTACT_ID)),
@@ -130,6 +154,7 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             senderVerified = if (senderVerifiedIdx >= 0 && !isNull(senderVerifiedIdx)) {
                 getInt(senderVerifiedIdx) == 1
             } else true,
+            deliveryState = if (deliveryStateIdx >= 0 && !isNull(deliveryStateIdx)) getInt(deliveryStateIdx) else 0,
         )
     }
 }

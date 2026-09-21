@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 9
+    const val DB_VERSION = 10
 
     object Contacts {
         const val TABLE = "contacts"
@@ -15,6 +15,8 @@ object DatabaseContract {
         const val COL_SENT_PUBKEY = "sent_pubkey"
         const val COL_PENDING_PUBLIC_KEY = "pending_public_key"
         const val COL_SIGNING_PUBLIC_KEY = "signing_public_key"
+        const val COL_NOSTR_PUBKEY = "nostr_pubkey"
+        const val COL_RELAY_HINTS = "relay_hints"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -26,8 +28,19 @@ object DatabaseContract {
                 $COL_PUBLIC_KEY TEXT,
                 $COL_SENT_PUBKEY INTEGER NOT NULL DEFAULT 0,
                 $COL_PENDING_PUBLIC_KEY TEXT,
-                $COL_SIGNING_PUBLIC_KEY TEXT
+                $COL_SIGNING_PUBLIC_KEY TEXT,
+                $COL_NOSTR_PUBKEY TEXT,
+                $COL_RELAY_HINTS TEXT
             )
+        """
+
+        const val ADD_NOSTR_PUBKEY = "ALTER TABLE $TABLE ADD COLUMN $COL_NOSTR_PUBKEY TEXT"
+        const val ADD_RELAY_HINTS = "ALTER TABLE $TABLE ADD COLUMN $COL_RELAY_HINTS TEXT"
+
+        /** One contact per Nostr key. Partial so the many legacy rows with NULL do not collide. */
+        const val INDEX_NOSTR_PUBKEY = """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_nostr_pubkey
+            ON $TABLE($COL_NOSTR_PUBKEY) WHERE $COL_NOSTR_PUBKEY IS NOT NULL
         """
 
         const val ADD_HAS_RELAY = "ALTER TABLE $TABLE ADD COLUMN $COL_HAS_RELAY INTEGER NOT NULL DEFAULT 0"
@@ -54,6 +67,7 @@ object DatabaseContract {
         const val COL_MSG_ID = "msg_id"
         const val COL_READ_AT = "read_at"
         const val COL_SENDER_VERIFIED = "sender_verified"
+        const val COL_DELIVERY_STATE = "delivery_state"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -71,13 +85,21 @@ object DatabaseContract {
                 $COL_EXPIRY_AT   INTEGER,
                 $COL_MSG_ID      TEXT,
                 $COL_READ_AT     INTEGER,
-                $COL_SENDER_VERIFIED INTEGER NOT NULL DEFAULT 1
+                $COL_SENDER_VERIFIED INTEGER NOT NULL DEFAULT 1,
+                $COL_DELIVERY_STATE INTEGER NOT NULL DEFAULT 0
             )
         """
 
         const val INDEX_CONTACT = """
             CREATE INDEX idx_messages_contact ON $TABLE($COL_CONTACT_ID, $COL_TIMESTAMP DESC)
         """
+
+        /** Non-unique on purpose: legacy rows may already hold duplicate ids, and a unique index would fail the migration. */
+        const val INDEX_MSG_ID = """
+            CREATE INDEX IF NOT EXISTS idx_messages_msg_id ON $TABLE($COL_CONTACT_ID, $COL_MSG_ID)
+        """
+
+        const val ADD_DELIVERY_STATE = "ALTER TABLE $TABLE ADD COLUMN $COL_DELIVERY_STATE INTEGER NOT NULL DEFAULT 0"
 
         const val ADD_MEDIA_URI = "ALTER TABLE $TABLE ADD COLUMN $COL_MEDIA_URI TEXT"
         const val ADD_PIN_LABEL = "ALTER TABLE $TABLE ADD COLUMN $COL_PIN_LABEL TEXT"
@@ -111,6 +133,38 @@ object DatabaseContract {
                 $COL_CONTACT_ID INTEGER NOT NULL REFERENCES ${Contacts.TABLE}(${Contacts.COL_ID}) ON DELETE CASCADE,
                 PRIMARY KEY ($COL_GROUP_ID, $COL_CONTACT_ID)
             )
+        """
+    }
+
+    /** Outgoing messages waiting to be (re)published by the transport. See transport/outbox. */
+    object Outbox {
+        const val TABLE = "outbox"
+        const val COL_ID = "_id"
+        const val COL_CONTACT_ID = "contact_id"
+        const val COL_RECIPIENT = "recipient_pubkey"
+        const val COL_PAYLOAD_ID = "payload_id"
+        const val COL_PAYLOAD_JSON = "payload_json"
+        const val COL_CREATED_AT = "created_at"
+        const val COL_ATTEMPTS = "attempts"
+        const val COL_NEXT_ATTEMPT_AT = "next_attempt_at"
+        const val COL_STATE = "state"
+
+        const val CREATE = """
+            CREATE TABLE IF NOT EXISTS $TABLE (
+                $COL_ID              INTEGER PRIMARY KEY AUTOINCREMENT,
+                $COL_CONTACT_ID      INTEGER NOT NULL REFERENCES ${Contacts.TABLE}(${Contacts.COL_ID}) ON DELETE CASCADE,
+                $COL_RECIPIENT       TEXT    NOT NULL,
+                $COL_PAYLOAD_ID      TEXT    NOT NULL,
+                $COL_PAYLOAD_JSON    TEXT    NOT NULL,
+                $COL_CREATED_AT      INTEGER NOT NULL,
+                $COL_ATTEMPTS        INTEGER NOT NULL DEFAULT 0,
+                $COL_NEXT_ATTEMPT_AT INTEGER NOT NULL,
+                $COL_STATE           INTEGER NOT NULL DEFAULT 0
+            )
+        """
+
+        const val INDEX_DUE = """
+            CREATE INDEX IF NOT EXISTS idx_outbox_due ON $TABLE($COL_STATE, $COL_NEXT_ATTEMPT_AT)
         """
     }
 

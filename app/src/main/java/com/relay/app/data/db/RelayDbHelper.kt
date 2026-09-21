@@ -37,6 +37,10 @@ class RelayDbHelper(context: Context) :
         db.execSQL(DatabaseContract.GroupMembers.CREATE)
         db.execSQL(DatabaseContract.GroupMessages.CREATE)
         db.execSQL(DatabaseContract.GroupMessages.INDEX_GROUP)
+        db.execSQL(DatabaseContract.Contacts.INDEX_NOSTR_PUBKEY)
+        db.execSQL(DatabaseContract.Messages.INDEX_MSG_ID)
+        db.execSQL(DatabaseContract.Outbox.CREATE)
+        db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -71,6 +75,18 @@ class RelayDbHelper(context: Context) :
         }
         if (oldVersion < 9) {
             db.execSQL(DatabaseContract.Messages.ADD_SENDER_VERIFIED)
+        }
+        if (oldVersion < 10) {
+            // Internet transport. Purely additive (no table rebuild): dropping/recreating contacts
+            // would cascade-delete every message, so the NOT NULL UNIQUE phone column stays and
+            // internet-only contacts get a synthetic placeholder there (see Contact.hasPhone).
+            db.execSQL(DatabaseContract.Contacts.ADD_NOSTR_PUBKEY)
+            db.execSQL(DatabaseContract.Contacts.ADD_RELAY_HINTS)
+            db.execSQL(DatabaseContract.Contacts.INDEX_NOSTR_PUBKEY)
+            db.execSQL(DatabaseContract.Messages.ADD_DELIVERY_STATE)
+            db.execSQL(DatabaseContract.Messages.INDEX_MSG_ID)
+            db.execSQL(DatabaseContract.Outbox.CREATE)
+            db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
         }
     }
 
