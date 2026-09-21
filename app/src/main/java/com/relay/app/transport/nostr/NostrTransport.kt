@@ -42,6 +42,7 @@ import rust.nostr.sdk.NostrSigner
 import rust.nostr.sdk.PublicKey
 import rust.nostr.sdk.RelayMessage
 import rust.nostr.sdk.RelayUrl
+import rust.nostr.sdk.Tag
 import rust.nostr.sdk.Timestamp
 import rust.nostr.sdk.UnwrappedGift
 import kotlin.time.Duration.Companion.seconds
@@ -130,7 +131,9 @@ class NostrTransport(
             return SendResult.Failed("Invalid recipient key", retryable = false)
         }
         return try {
-            val targets = (relays() + relayHints).distinct()
+            // NIP-17: publish to the recipient's own inbox relays when they have published a list.
+            val published = inboxRelaysFor(c, receiver, recipientPubkeyHex)
+            val targets = InboxRelays.resolveTargets(published, relayHints, relays())
             val urls = targets.mapNotNull { runCatching { RelayUrl.parse(it) }.getOrNull() }
             if (urls.isEmpty()) return SendResult.Failed("No usable relays configured", retryable = false)
             urls.forEach { runCatching { c.addRelay(it); c.connectRelay(it) } }
@@ -171,6 +174,9 @@ class NostrTransport(
                 c.subscribe(subscriptionFilter(keys.publicKey()), null)
                 if (gen == generation) _status.value = TransportStatus.ONLINE
                 failures = 0
+                // Best effort: tell others where to reach us (NIP-17 kind 10050).
+                runCatching { publishInboxList(c, keys) }
+                    .onFailure { Log.d(TAG, "inbox relay list not published: ${it.message}") }
 
                 // Blocks until the notification stream ends or the client is torn down.
                 c.handleNotifications(object : HandleNotification {
@@ -192,6 +198,40 @@ class NostrTransport(
             failures++
             delay(Backoff.reconnectDelayMs(failures))
         }
+    }
+
+    /** Publishes our kind 10050 list (replaceable) so senders know which relays to use for us. */
+    private suspend fun publishInboxList(c: Client, keys: Keys) {
+        val tags = InboxRelays.toTags(relays()).map { Tag.parse(it) }
+        if (tags.isEmpty()) return
+        val event = EventBuilder(Kind(InboxRelays.KIND.toUShort()), "").tags(tags).signWithKeys(keys)
+        c.sendEvent(event)
+    }
+
+    private class CachedList(val relays: List<String>?, val fetchedAt: Long)
+    private val inboxCache = java.util.concurrent.ConcurrentHashMap<String, CachedList>()
+
+    /**
+     * The recipient's published inbox relays, cached (an hour when found, five minutes when they
+     * have none, so a contact without a list does not cost a lookup per message).
+     */
+    private suspend fun inboxRelaysFor(c: Client, receiver: PublicKey, hex: String): List<String>? {
+        val now = System.currentTimeMillis()
+        inboxCache[hex]?.let { cached ->
+            val ttl = if (cached.relays == null) NEGATIVE_TTL_MS else POSITIVE_TTL_MS
+            if (now - cached.fetchedAt < ttl) return cached.relays
+        }
+        val found = try {
+            val urls = relays().mapNotNull { runCatching { RelayUrl.parse(it) }.getOrNull() }
+            val filter = Filter().kind(Kind(InboxRelays.KIND.toUShort())).author(receiver).limit(1u)
+            val event = c.fetchEventsFrom(urls, filter, LOOKUP_TIMEOUT).toVec().maxByOrNull { it.createdAt().asSecs() }
+            event?.let { InboxRelays.parseRelayTags(it.tags().toVec().map { t -> t.asVec() }) }
+                ?.takeIf { it.isNotEmpty() }
+        } catch (e: Exception) {
+            null
+        }
+        inboxCache[hex] = CachedList(found, now)
+        return found
     }
 
     private fun buildClient(s: NostrSigner): Client {
@@ -266,5 +306,8 @@ class NostrTransport(
         private val CHAT_MESSAGE_KIND: UShort = 14u
         private const val LOOKBACK_SECS = 3L * 24 * 60 * 60
         private val CONNECT_TIMEOUT = 10.seconds
+        private val LOOKUP_TIMEOUT = 5.seconds
+        private const val POSITIVE_TTL_MS = 60L * 60 * 1000
+        private const val NEGATIVE_TTL_MS = 5L * 60 * 1000
     }
 }

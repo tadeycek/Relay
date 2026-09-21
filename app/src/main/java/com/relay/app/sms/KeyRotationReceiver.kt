@@ -6,6 +6,7 @@ import android.content.Intent
 import com.relay.app.crypto.RelayCrypto
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.repository.ContactRepository
+import com.relay.app.messaging.Outgoing
 import com.relay.app.util.RelayPreferences
 import com.relay.app.util.SmsMessageParser
 import kotlinx.coroutines.CoroutineScope
@@ -67,7 +68,14 @@ class KeyRotationReceiver : BroadcastReceiver() {
                 rotationSignatureBase64 = result.signatureBase64,
             )
             for (contact in paired) {
-                SmsSender.sendSms(context, contact.phone, wireBody)
+                if (contact.canUseInternetTransport) {
+                    // Not sealed with the (about to be replaced) inner key: the rotation announcement
+                    // carries its own signature from the long-term signing key, and the Nostr seal
+                    // already authenticates the sender. Queued durably, so an offline contact gets it later.
+                    Outgoing.enqueue(context, contact, wireBody, seal = false)
+                } else {
+                    SmsSender.sendSms(context, contact.phone, wireBody)
+                }
             }
             return true
         }

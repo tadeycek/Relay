@@ -42,6 +42,8 @@ data class Contact(
     val subtitle: String
         get() = when {
             hasPhone -> phone
+            nostrPubkey != null && publicKey == null ->
+                "Relay ID ${nostrPubkey.take(8)}…${nostrPubkey.takeLast(4)} · unverified"
             nostrPubkey != null -> "Relay ID ${nostrPubkey.take(8)}…${nostrPubkey.takeLast(4)}"
             else -> ""
         }
