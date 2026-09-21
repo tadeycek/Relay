@@ -18,6 +18,7 @@ import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
+import com.relay.app.media.MediaSender
 import com.relay.app.messaging.ActiveChat
 import com.relay.app.mms.MediaCompressor
 import com.relay.app.mms.MmsSender
@@ -142,13 +143,53 @@ class ChatViewModel(
         }
     }
 
+    /** Compress, encrypt, upload to a media server, then queue the reference like any other message. */
+    private fun sendMediaOverInternet(uri: Uri, mimeType: String, caption: String, contact: Contact, context: Context) {
+        viewModelScope.launch {
+            _toastMessage.emit("Sending...")
+            val outcome = withContext(Dispatchers.IO) {
+                val prepared = if (mimeType.startsWith("image")) {
+                    MediaCompressor.compressImage(context, uri, INTERNET_IMAGE_MAX_BYTES, INTERNET_IMAGE_MAX_DIM)
+                } else {
+                    MediaCompressor.prepareVideo(context, uri, INTERNET_VIDEO_MAX_BYTES, INTERNET_VIDEO_MAX_MS)
+                }
+                when (prepared) {
+                    is MediaCompressor.Result.TooLarge -> Pair(null, prepared.message)
+                    is MediaCompressor.Result.Error -> Pair(null, "Failed to process media")
+                    is MediaCompressor.Result.Success -> when (
+                        val sent = MediaSender.send(context, contact, prepared.file, prepared.mimeType, caption)
+                    ) {
+                        is MediaSender.Result.Failed -> Pair(null, sent.reason)
+                        is MediaSender.Result.Sent -> Pair(Triple(sent.msgId, prepared.file, prepared.mimeType), null)
+                    }
+                }
+            }
+            val (ok, error) = outcome
+            if (ok == null) {
+                _toastMessage.emit(error ?: "Failed to send")
+                return@launch
+            }
+            val (msgId, file, mime) = ok
+            messageRepo.insertMessage(
+                Message(
+                    contactId = contactId,
+                    body = caption,
+                    type = if (mime.startsWith("image")) MessageType.IMAGE else MessageType.VIDEO,
+                    isSent = true,
+                    mediaUri = file.absolutePath,
+                    msgId = msgId,
+                    deliveryState = DeliveryState.QUEUED,
+                )
+            )
+            _messages.value = messageRepo.getMessages(contactId)
+        }
+    }
+
     fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context) {
         val contact = _contact.value ?: return
         val phone = contact.phone
         if (contact.canUseInternetTransport) {
-            // Encrypted media upload arrives in a later phase; sending it as MMS to a synthetic
-            // placeholder "number" would go nowhere.
-            viewModelScope.launch { _toastMessage.emit("Photos and video over the internet aren't available yet") }
+            sendMediaOverInternet(uri, mimeType, textBody, contact, context)
             return
         }
         viewModelScope.launch {
@@ -199,6 +240,13 @@ class ChatViewModel(
         }
     }
 }
+
+// Internet sends are no longer bound by carrier MMS caps, but stay modest: the file is encrypted and
+// uploaded in one piece, and there is no transcoding, so video is only size/length checked.
+private const val INTERNET_IMAGE_MAX_BYTES = 3L * 1024 * 1024
+private const val INTERNET_IMAGE_MAX_DIM = 2048
+private const val INTERNET_VIDEO_MAX_BYTES = 12L * 1024 * 1024
+private const val INTERNET_VIDEO_MAX_MS = 60_000L
 
 class ChatViewModelFactory(
     private val contactId: Long,

@@ -14,6 +14,7 @@ import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.GroupMessageRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.data.repository.SeenPayloadRepository
+import com.relay.app.media.MediaReceiver
 import com.relay.app.sms.LocationShareService
 import com.relay.app.transport.IncomingEnvelope
 import com.relay.app.util.RelayPreferences
@@ -95,8 +96,13 @@ class IncomingMessageHandler(context: Context) {
 
             Classified.Ignore -> Unit
 
-            // Wired up together with the download path in the next commit.
-            is Classified.Media -> Unit
+            is Classified.Media -> {
+                contactRepo.markAsRelayUserSync(contact.id)
+                // Downloading can take a while: do it off the receive loop so other messages keep flowing.
+                val ref = kind.ref
+                val sender = contact
+                MessagingRuntime.launchIo { MediaReceiver.receive(appContext, sender, payload.id, ref, sentAt) }
+            }
 
             is Classified.Pin -> {
                 contactRepo.markAsRelayUserSync(contact.id)

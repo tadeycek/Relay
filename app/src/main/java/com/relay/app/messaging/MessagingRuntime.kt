@@ -38,6 +38,17 @@ object MessagingRuntime {
         kicks.trySend(Unit)
     }
 
+    /** Runs [block] on the runtime's IO scope, e.g. a media download that must not stall the receive loop. */
+    fun launchIo(block: suspend () -> Unit) {
+        scope.launch {
+            try {
+                block()
+            } catch (e: Exception) {
+                Log.e(TAG, "background task failed", e)
+            }
+        }
+    }
+
     fun ensureStarted(context: Context) {
         if (started) return
         synchronized(this) {

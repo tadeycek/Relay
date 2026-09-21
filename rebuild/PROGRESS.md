@@ -77,3 +77,20 @@ Use `rebuild/dev/build.sh <gradle args>`.
   this type on Android 15+ is also unconfirmed (the start is wrapped in try/catch).
 - **Not built:** a notification bridge (FCM/UnifiedPush). Decision gate from the plan stands: build it only if the
   foreground service proves unreliable in device testing.
+
+## Phase 5: Media
+
+- Built and unit-tested: `MediaBody` (strict reference codec), `MediaCrypto` (AES-256-GCM, tamper/wrong-key/truncation
+  cases), `BlossomClient.download` (hash check, size cap incl. streamed bodies, bounded redirects, error status;
+  tested against a local raw-socket server), classifier support.
+- Built, **device/server-unverified:** `BlossomClient.upload` (BUD-02 `PUT /upload` with a per-upload throwaway
+  kind 24242 auth event), `MediaSender`/`MediaReceiver`, chat wiring.
+- **Deviation from `04-architecture.md`:** the reference travels as a `TYPE:MEDIA|...` body inside the existing
+  envelope, not as a NIP-17 kind 15 file message. Kind 15 would tie us to other clients' conventions we could not
+  verify; the private format is easy to migrate later via the payload `v` field.
+- **Privacy decisions:** media is only auto-downloaded from contacts we hold a key for (a sender-chosen URL would
+  otherwise reveal our IP); a separate throwaway key signs each upload so servers cannot link uploads to an identity;
+  received files are stored encrypted at rest and never at a path derived from sender input.
+- **Limits:** if an upload fails the user must retry (uploads are not in the durable outbox; only the small reference
+  message is); no resumable/chunked upload; no transcoding (video is only size/length checked: 12 MB / 60 s, images
+  3 MB / 2048 px). Default Blossom servers are **unverified** (limits, auth, payment, retention unknown).
