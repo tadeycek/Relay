@@ -17,8 +17,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import com.relay.app.nfc.NfcPairing
 import com.relay.app.pairing.PairingCoordinator
 import com.relay.app.pairing.PairingEvent
 import kotlinx.coroutines.delay
@@ -170,6 +172,13 @@ private fun MyCodeTab(
     val context = LocalContext.current
     var name by remember { mutableStateOf(prefs.myName) }
     var profileSet by remember { mutableStateOf(prefs.myName.isNotBlank()) }
+    val nfc = remember { NfcPairing.availability(context) }
+    // While this screen is open the phone answers taps with its code; when it closes, it stops.
+    DisposableEffect(Unit) {
+        val activity = NfcPairing.activityOf(context)
+        if (activity != null) NfcPairing.startServing(activity)
+        onDispose { activity?.let { NfcPairing.stopServing(it) } }
+    }
     val pending by produceState<Contact?>(null, pendingContactId) {
         value = pendingContactId?.let { ContactRepository(RelayDbHelper(context)).getById(it) }
     }
@@ -221,17 +230,16 @@ private fun MyCodeTab(
                     val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return@withContext null
                     val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
                     val myNostr = runCatching { NostrIdentity.publicKeyHex(context) }.getOrNull() ?: return@withContext null
-                    encodeQrBitmap(
-                        QrContactCode.encode(
-                            name = prefs.myName,
-                            nostrPubkeyHex = myNostr,
-                            publicKeyBase64 = myKey,
-                            signingPublicKeyBase64 = mySigningKey,
-                            relayHints = prefs.nostrRelays.take(3),
-                            pairNonce = nonce,
-                        ),
-                        800,
+                    val code = QrContactCode.encode(
+                        name = prefs.myName,
+                        nostrPubkeyHex = myNostr,
+                        publicKeyBase64 = myKey,
+                        signingPublicKeyBase64 = mySigningKey,
+                        relayHints = prefs.nostrRelays.take(3),
+                        pairNonce = nonce,
                     )
+                    NfcPairing.payload = code // the same code, served to a phone that is held against this one
+                    encodeQrBitmap(code, 800)
                 }
                 if (bmp == null) qrFailed = true else qrBitmap = bmp
             }
@@ -250,6 +258,13 @@ private fun MyCodeTab(
                             .padding(RelaySpacing.md),
                     )
                     Text(prefs.myName, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                    when (nfc) {
+                        NfcPairing.Availability.ON ->
+                            Text("Or hold the back of your phone against theirs.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                        NfcPairing.Availability.OFF ->
+                            Text("Turn on NFC in your phone's settings to tap phones together.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                        NfcPairing.Availability.NONE -> Unit
+                    }
                     SecondaryButton("Change name", { profileSet = false })
                 }
                 qrFailed -> Text("Couldn't make your code. Go back and try again.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)

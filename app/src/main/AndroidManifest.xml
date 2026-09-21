@@ -18,6 +18,8 @@
 
     <!-- QR pairing (camera) and sending photos/video. -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Tap two phones together to exchange contact codes (reader mode and host card emulation). -->
+    <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
@@ -30,6 +32,9 @@
 
     <!-- Not every device has a camera; pairing then just isn't offered. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <!-- NFC is a convenience on top of the QR code, never required. -->
+    <uses-feature android:name="android.hardware.nfc" android:required="false" />
+    <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
 
     <!-- Lets Settings tell whether Orbot (the Tor app) is installed, for the Tor setup guide. -->
     <queries>
@@ -56,6 +61,19 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Acts as an NFC tag holding the contact code, only while the "Show my code" screen is open. -->
+        <service
+            android:name=".nfc.PairingCardService"
+            android:exported="true"
+            android:permission="android.permission.BIND_NFC_SERVICE">
+            <intent-filter>
+                <action android:name="android.nfc.cardemulation.action.HOST_APDU_SERVICE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.nfc.cardemulation.host_apdu_service"
+                android:resource="@xml/pairing_apdu_service" />
+        </service>
 
         <service
             android:name=".sms.LocationShareService"

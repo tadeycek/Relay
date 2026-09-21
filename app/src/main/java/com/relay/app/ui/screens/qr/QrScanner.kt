@@ -16,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import com.relay.app.nfc.NfcPairing
 import com.relay.app.pairing.PairingCoordinator
 import com.relay.app.pairing.PendingPairing
 import com.relay.app.ui.components.SecondaryButton
@@ -131,6 +132,21 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
         }
     }
 
+    // Holding two phones together reads the same code the camera would, so it takes the same path.
+    val nfc = remember { NfcPairing.availability(context) }
+    DisposableEffect(Unit) {
+        val activity = NfcPairing.activityOf(context)
+        if (activity != null) {
+            NfcPairing.startReading(activity) { raw ->
+                if (!scanned) {
+                    val decoded = QrContactCode.decode(raw)
+                    if (decoded != null) onDecoded(decoded) else errorMsg = "That is not a Relay code."
+                }
+            }
+        }
+        onDispose { activity?.let { NfcPairing.stopReading(it) } }
+    }
+
     if (!hasCameraPermission) {
         EmptyState(
             title = "Relay needs your camera",
@@ -189,6 +205,21 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
                 previewView
             },
         )
+
+        if (nfc == NfcPairing.Availability.ON) {
+            Text(
+                "Or hold the back of your phone against theirs",
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(RelaySpacing.lg)
+                    // Over the camera preview: dark whatever the theme.
+                    .clip(RelayShapeTokens.control)
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = RelaySpacing.lg, vertical = RelaySpacing.sm),
+            )
+        }
 
         DisposableEffect(Unit) {
             onDispose {
