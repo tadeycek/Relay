@@ -12,6 +12,8 @@ import com.relay.app.sms.KeyRotationReceiver
 import com.relay.app.transport.TorControl
 import com.relay.app.transport.TransportStatus
 import com.relay.app.transport.Transports
+import com.relay.app.ui.theme.ThemeController
+import com.relay.app.ui.theme.ThemeMode
 import com.relay.app.util.RelayPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -157,8 +159,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         locationRequestFrom = v
     }
 
+    /** Persists the choice and re-themes the running app at once (ThemeController is Compose state). */
     fun updateTheme(v: String) {
-        prefs.theme = v
+        ThemeController.set(getApplication(), ThemeMode.fromPrefs(v))
         theme = v
     }
 

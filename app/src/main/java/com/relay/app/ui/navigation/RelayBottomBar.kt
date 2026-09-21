@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.PersonOutline
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -23,8 +24,7 @@ import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import com.relay.app.ui.theme.Accent
-import com.relay.app.ui.theme.Border
-import com.relay.app.ui.theme.IbmPlexMono
+import com.relay.app.ui.theme.Surface3
 import com.relay.app.ui.theme.Surface1
 import com.relay.app.ui.theme.TextSecondary
 
@@ -35,9 +35,9 @@ enum class Tab(
     val selectedIcon: ImageVector,
     val unselectedIcon: ImageVector,
 ) {
-    PEOPLE(Screen.People.route, "PEOPLE", Icons.Filled.People, Icons.Outlined.People),
-    MESSAGES(Screen.Messages.route, "MESSAGES", Icons.Filled.ChatBubble, Icons.Outlined.ChatBubbleOutline),
-    ACCOUNT(Screen.Account.route, "ACCOUNT", Icons.Filled.Person, Icons.Outlined.PersonOutline);
+    PEOPLE(Screen.People.route, "People", Icons.Filled.People, Icons.Outlined.People),
+    MESSAGES(Screen.Messages.route, "Messages", Icons.Filled.ChatBubble, Icons.Outlined.ChatBubbleOutline),
+    ACCOUNT(Screen.Account.route, "Account", Icons.Filled.Person, Icons.Outlined.PersonOutline);
 
     companion object {
         /** The tab that owns [route], or null for detail screens (chat, QR, contacts...), where the bar is hidden. */
@@ -86,8 +86,7 @@ fun RelayBottomBar(
                             Badge(containerColor = Accent) {
                                 Text(
                                     text = if (unreadMessages > 99) "99+" else unreadMessages.toString(),
-                                    fontFamily = IbmPlexMono,
-                                    fontSize = 10.sp,
+                                    style = MaterialTheme.typography.labelSmall,
                                 )
                             }
                         }) { icon() }
@@ -95,13 +94,13 @@ fun RelayBottomBar(
                         icon()
                     }
                 },
-                label = { Text(tab.label, fontFamily = IbmPlexMono, fontSize = 10.sp, letterSpacing = 0.5.sp) },
+                label = { Text(tab.label, style = MaterialTheme.typography.labelMedium) },
                 colors = NavigationBarItemDefaults.colors(
                     selectedIconColor = Accent,
                     selectedTextColor = Accent,
                     unselectedIconColor = TextSecondary,
                     unselectedTextColor = TextSecondary,
-                    indicatorColor = Border,
+                    indicatorColor = Surface3,
                 ),
             )
         }

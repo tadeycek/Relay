@@ -27,6 +27,7 @@ import com.relay.app.ui.navigation.Screen
 import com.relay.app.ui.navigation.Tab
 import com.relay.app.ui.navigation.navigateToTab
 import com.relay.app.ui.theme.RelayTheme
+import com.relay.app.ui.theme.ThemeController
 import com.relay.app.util.RelayPreferences
 
 class MainActivity : FragmentActivity() {
@@ -48,6 +49,8 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Load the saved Dark / Light / System choice before the first frame so there is no flash.
+        ThemeController.load(applicationContext)
         pendingOpenContacts.value = intent?.getBooleanExtra("open_contacts", false) == true
         handleOpenChatIntent(intent)
         setContent {
