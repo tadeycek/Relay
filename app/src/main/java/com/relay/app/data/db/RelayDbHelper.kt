@@ -41,6 +41,7 @@ class RelayDbHelper(context: Context) :
         db.execSQL(DatabaseContract.Messages.INDEX_MSG_ID)
         db.execSQL(DatabaseContract.Outbox.CREATE)
         db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
+        db.execSQL(DatabaseContract.SeenPayloads.CREATE)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -87,6 +88,9 @@ class RelayDbHelper(context: Context) :
             db.execSQL(DatabaseContract.Messages.INDEX_MSG_ID)
             db.execSQL(DatabaseContract.Outbox.CREATE)
             db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
+        }
+        if (oldVersion < 11) {
+            db.execSQL(DatabaseContract.SeenPayloads.CREATE)
         }
     }
 

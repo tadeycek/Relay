@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 10
+    const val DB_VERSION = 11
 
     object Contacts {
         const val TABLE = "contacts"
@@ -165,6 +165,25 @@ object DatabaseContract {
 
         const val INDEX_DUE = """
             CREATE INDEX IF NOT EXISTS idx_outbox_due ON $TABLE($COL_STATE, $COL_NEXT_ATTEMPT_AT)
+        """
+    }
+
+    /**
+     * Ids of payloads already processed, including control messages (location requests, receipts,
+     * key announcements) that leave no message row. The transport re-fetches a multi-day window on
+     * every start (NIP-17 timestamp fuzzing), so without a persistent record a replayed
+     * location request could re-trigger an auto-share.
+     */
+    object SeenPayloads {
+        const val TABLE = "seen_payloads"
+        const val COL_PAYLOAD_ID = "payload_id"
+        const val COL_SEEN_AT = "seen_at"
+
+        const val CREATE = """
+            CREATE TABLE IF NOT EXISTS $TABLE (
+                $COL_PAYLOAD_ID TEXT PRIMARY KEY,
+                $COL_SEEN_AT    INTEGER NOT NULL
+            )
         """
     }
 
