@@ -18,6 +18,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import com.relay.app.pairing.PairingCoordinator
+import com.relay.app.pairing.PairingEvent
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -67,6 +71,18 @@ fun QrExchangeScreen(navController: NavController) {
     val prefs = remember { RelayPreferences(context) }
     var selectedTab by remember { mutableStateOf(QrTab.SCAN) }
     var pendingContactId by remember { mutableStateOf<Long?>(null) }
+    // True when the other person also said yes, so both sides are already verified.
+    var mutual by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        PairingCoordinator.events.collect { event ->
+            if (event is PairingEvent.Verified) {
+                pendingContactId = event.contactId
+                mutual = true
+                selectedTab = QrTab.MY_CODE
+            }
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().background(Background)) {
         RelayTopBar(title = "Meet in person", onBack = { navController.popBackStack() })
@@ -80,13 +96,16 @@ fun QrExchangeScreen(navController: NavController) {
         when (selectedTab) {
             QrTab.SCAN -> ScanTab(
                 onConnected = { contactId ->
+                    // The one-sided flow (an older code without a pairing field).
                     pendingContactId = contactId
+                    mutual = false
                     selectedTab = QrTab.MY_CODE
                 },
             )
             QrTab.MY_CODE -> MyCodeTab(
                 prefs = prefs,
                 pendingContactId = pendingContactId,
+                mutual = mutual,
                 onProceedToChat = { contactId ->
                     navController.navigate(Screen.Chat.routeFor(contactId)) {
                         popUpTo(Screen.QrExchange.route) { inclusive = true }
@@ -102,7 +121,7 @@ fun QrExchangeScreen(navController: NavController) {
  * frame goes from dashed to solid. With animations switched off in system settings it just appears.
  */
 @Composable
-private fun PairedPanel(contact: Contact, onProceedToChat: () -> Unit) {
+private fun PairedPanel(contact: Contact, mutual: Boolean, onProceedToChat: () -> Unit) {
     val context = LocalContext.current
     val reduceMotion = remember {
         android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
@@ -126,9 +145,14 @@ private fun PairedPanel(contact: Contact, onProceedToChat: () -> Unit) {
             size = 88.dp,
             modifier = Modifier.scale(0.85f + 0.15f * progress.value).alpha(0.3f + 0.7f * progress.value),
         )
-        Text("You scanned ${contact.name}", style = MaterialTheme.typography.titleMedium, color = TextPrimary)
         Text(
-            "Now let them scan your code below, so they can add you too.",
+            if (mutual) "You and ${contact.name} are verified" else "You scanned ${contact.name}",
+            style = MaterialTheme.typography.titleMedium,
+            color = TextPrimary,
+        )
+        Text(
+            if (mutual) "You both said yes, so each of you knows you are talking to the right person."
+            else "Now let them scan your code below, so they can add you too.",
             style = MaterialTheme.typography.bodyMedium,
             color = TextSecondary,
         )
@@ -140,6 +164,7 @@ private fun PairedPanel(contact: Contact, onProceedToChat: () -> Unit) {
 private fun MyCodeTab(
     prefs: RelayPreferences,
     pendingContactId: Long? = null,
+    mutual: Boolean = false,
     onProceedToChat: (Long) -> Unit = {},
 ) {
     val context = LocalContext.current
@@ -157,7 +182,7 @@ private fun MyCodeTab(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(RelaySpacing.lg),
     ) {
-        pending?.let { PairedPanel(it, onProceedToChat = { onProceedToChat(it.id) }) }
+        pending?.let { PairedPanel(it, mutual, onProceedToChat = { onProceedToChat(it.id) }) }
 
         if (!profileSet) {
             Text(
@@ -181,9 +206,17 @@ private fun MyCodeTab(
             // stall here would freeze at the worst moment). null bitmap after done = failure.
             var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
             var qrFailed by remember { mutableStateOf(false) }
-            LaunchedEffect(prefs.myName) {
+            val nonce by PairingCoordinator.shownNonce.collectAsState()
+            // An unused code rotates, so a code someone photographed earlier stops working.
+            LaunchedEffect(Unit) {
+                PairingCoordinator.refreshShownNonce() // the app may have been open longer than a code lives
+                while (true) {
+                    delay(60_000)
+                    PairingCoordinator.refreshShownNonce()
+                }
+            }
+            LaunchedEffect(prefs.myName, nonce) {
                 qrFailed = false
-                qrBitmap = null
                 val bmp = withContext(Dispatchers.Default) {
                     val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return@withContext null
                     val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
@@ -195,6 +228,7 @@ private fun MyCodeTab(
                             publicKeyBase64 = myKey,
                             signingPublicKeyBase64 = mySigningKey,
                             relayHints = prefs.nostrRelays.take(3),
+                            pairNonce = nonce,
                         ),
                         800,
                     )

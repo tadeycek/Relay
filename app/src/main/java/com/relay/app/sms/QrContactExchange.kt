@@ -36,6 +36,11 @@ object QrContactExchange {
         context: Context,
         contactRepo: ContactRepository,
         scanned: QrContactCode.ScannedContact,
+        /**
+         * False when our keys have already reached them another way (a mutual pairing request carries them),
+         * so the usual key handshake message is not sent as well.
+         */
+        sendHandshake: Boolean = true,
     ): Contact {
         val nostrPubkeyHex = requireNotNull(scanned.nostrPubkeyHex) { "Old-style QR code cannot be paired" }
         val contact = contactRepo.findOrCreateByNostrSync(nostrPubkeyHex, scanned.name, scanned.relayHints)
@@ -54,7 +59,9 @@ object QrContactExchange {
         contactRepo.markQrVerifiedSync(contact.id) // met in person: the strongest trust signal we have
         scanned.signingPublicKeyBase64?.let { contactRepo.setSigningPublicKeyIfAbsentSync(contact.id, it) }
 
-        if (!contactRepo.hasSentPubkeySync(contact.id)) {
+        if (!sendHandshake) {
+            contactRepo.markSentPubkeySync(contact.id)
+        } else if (!contactRepo.hasSentPubkeySync(contact.id)) {
             val myKey = RelayCrypto.myPublicKeyBase64(context)
             if (myKey != null) {
                 val body = SmsMessageParser.formatPublicKey(

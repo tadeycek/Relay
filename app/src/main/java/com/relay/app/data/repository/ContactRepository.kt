@@ -124,6 +124,20 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
     }
 
+    /**
+     * Deletes the contact only if no message was ever exchanged with it, so removing a half-finished
+     * pairing can never take a real conversation with it. Returns whether it was deleted.
+     */
+    fun deleteIfUnusedSync(contactId: Long): Boolean {
+        val db = dbHelper.writableDatabase
+        val used = db.rawQuery(
+            "SELECT 1 FROM ${com.relay.app.data.db.DatabaseContract.Messages.TABLE} WHERE ${com.relay.app.data.db.DatabaseContract.Messages.COL_CONTACT_ID} = ? LIMIT 1",
+            arrayOf(contactId.toString()),
+        ).use { it.moveToFirst() }
+        if (used) return false
+        return db.delete(Contacts.TABLE, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString())) > 0
+    }
+
     fun findByNostrPubkeySync(pubkeyHex: String): Contact? {
         val db = dbHelper.readableDatabase
         val cursor = db.query(

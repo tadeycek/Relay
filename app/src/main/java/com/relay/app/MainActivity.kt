@@ -21,7 +21,9 @@ import com.relay.app.ui.lock.deviceSupportsAppLock
 import com.relay.app.ui.lock.promptAppUnlock
 import androidx.compose.runtime.collectAsState
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.relay.app.pairing.PairingCoordinator
 import com.relay.app.ui.navigation.RelayNavGraph
+import com.relay.app.ui.screens.qr.PairingRequestHost
 import com.relay.app.ui.screens.messages.UnreadViewModel
 import com.relay.app.ui.navigation.Screen
 import com.relay.app.ui.navigation.Tab
@@ -51,6 +53,7 @@ class MainActivity : FragmentActivity() {
         enableEdgeToEdge()
         // Load the saved Dark / Light / System choice before the first frame so there is no flash.
         ThemeController.load(applicationContext)
+        PairingCoordinator.restore(applicationContext)
         pendingOpenContacts.value = intent?.getBooleanExtra("open_contacts", false) == true
         handleOpenChatIntent(intent)
         setContent {
@@ -74,6 +77,7 @@ class MainActivity : FragmentActivity() {
                     val unreadVm: UnreadViewModel = viewModel()
                     val unreadTotal by unreadVm.total.collectAsState()
                     RelayNavGraph(navController = navController, unreadMessages = unreadTotal)
+                    PairingRequestHost()
 
                     val shouldOpenContacts by pendingOpenContacts
                     LaunchedEffect(shouldOpenContacts) {

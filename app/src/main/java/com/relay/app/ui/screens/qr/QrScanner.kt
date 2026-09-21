@@ -15,6 +15,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import com.relay.app.pairing.PairingCoordinator
+import com.relay.app.pairing.PendingPairing
+import com.relay.app.ui.components.SecondaryButton
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -96,6 +100,19 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
 
     fun confirmAdd(value: QrContactCode.ScannedContact) {
         pendingScan = null
+        if (value.pairNonce != null) {
+            // Mutual pairing: send the request and wait for their yes. Nothing is trusted until then.
+            coroutineScope.launch(Dispatchers.IO) {
+                val started = PairingCoordinator.startOutgoing(context, value)
+                withContext(Dispatchers.Main) {
+                    if (!started) {
+                        scanned = false
+                        errorMsg = "Couldn't start. Try again."
+                    }
+                }
+            }
+            return
+        }
         connecting = true
         coroutineScope.launch(Dispatchers.IO) {
             val result = runCatching {
@@ -181,6 +198,14 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
             }
         }
 
+        val waiting by PairingCoordinator.outgoing.collectAsState()
+        waiting?.let { pending ->
+            WaitingForThem(pending) {
+                PairingCoordinator.cancelOutgoing(context)
+                scanned = false
+            }
+        }
+
         if (connecting) {
             Box(
                 // A scrim over the camera preview: dark whatever the theme.
@@ -219,7 +244,11 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
         }
         ConfirmDialog(
             title = "Add ${scan.name}?",
-            message = "$idLine\n\n$actionLine",
+            message = if (scan.pairNonce != null) {
+                "$idLine\n\nThey will be asked to add you back. You are both verified once you both say yes."
+            } else {
+                "$idLine\n\n$actionLine"
+            },
             confirmLabel = "Add ${scan.name}",
             onConfirm = { confirmAdd(scan) },
             onDismiss = { pendingScan = null; scanned = false },
@@ -246,3 +275,37 @@ private class QrAnalyzer(
             .addOnCompleteListener { imageProxy.close() }
     }
 }
+
+/** Shown over the camera while the other person decides. It counts down so nobody wonders how long to wait. */
+@Composable
+private fun WaitingForThem(pending: PendingPairing, onCancel: () -> Unit) {
+    var secondsLeft by remember(pending.nonce) { mutableStateOf(secondsUntil(pending.deadlineMs)) }
+    LaunchedEffect(pending.nonce) {
+        while (secondsLeft > 0) {
+            delay(1000)
+            secondsLeft = secondsUntil(pending.deadlineMs)
+        }
+    }
+    Box(
+        // A scrim over the camera preview: dark whatever the theme.
+        modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.8f)).padding(RelaySpacing.xxl),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.foundation.layout.Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(RelaySpacing.md),
+        ) {
+            Text("Waiting for ${pending.name}", style = MaterialTheme.typography.titleLarge, color = Color.White)
+            Text(
+                "Their phone is asking them to add you back. You are both verified once they say yes.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.8f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            )
+            Text("%d:%02d".format(secondsLeft / 60, secondsLeft % 60), style = MaterialTheme.typography.titleMedium, color = Color.White)
+            SecondaryButton("Cancel", onCancel)
+        }
+    }
+}
+
+private fun secondsUntil(deadlineMs: Long): Int = ((deadlineMs - System.currentTimeMillis()) / 1000).toInt().coerceAtLeast(0)

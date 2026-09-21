@@ -15,6 +15,8 @@ import com.relay.app.data.repository.GroupMessageRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.data.repository.SeenPayloadRepository
 import com.relay.app.media.MediaReceiver
+import com.relay.app.pairing.PairingCoordinator
+import com.relay.app.pairing.PairingMessages
 import com.relay.app.sms.LocationShareService
 import com.relay.app.transport.IncomingEnvelope
 import com.relay.app.util.RelayPreferences
@@ -53,6 +55,13 @@ class IncomingMessageHandler(context: Context) {
         var contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
 
         if (!seenRepo.markIfNewSync(payload.id, now)) return
+
+        // Pairing messages are plain control messages. They are handled before an unknown sender would be
+        // admitted as a contact: a request with a code we never showed must leave no trace at all.
+        PairingMessages.parse(payload.body)?.let { pairing ->
+            PairingCoordinator.onMessage(appContext, envelope.senderPubkeyHex, pairing, payload.ts, now)
+            return
+        }
 
         if (contact == null) {
             if (!unknownSenders.tryAcquire(now)) {
