@@ -1,6 +1,7 @@
 package com.relay.app.ui.screens.chat
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
@@ -75,6 +76,8 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     }
 
     Scaffold(
+        // See ChatScreen: the top bar and composer already apply their own system-bar insets.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             GroupChatTopBar(
                 name = group?.name.orEmpty(),

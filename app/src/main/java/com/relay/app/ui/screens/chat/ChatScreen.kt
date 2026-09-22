@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
@@ -190,6 +191,11 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     }
 
     Scaffold(
+        // The top bar and composer already handle the status/navigation-bar insets themselves
+        // (statusBarsPadding / navigationBarsPadding), so the Scaffold must not reserve that space a
+        // second time — on a phone with a tall 3-button navigation bar that doubling showed up as a
+        // large empty gap above the composer.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             ChatTopBar(
                 contact = contact,
