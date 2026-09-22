@@ -12,6 +12,7 @@ import android.location.LocationManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
@@ -54,13 +55,11 @@ class LocationShareService : Service() {
         startId: Int,
     ) {
         val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .filter { runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
 
-        val lastKnown = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-            .mapNotNull { provider ->
-                runCatching {
-                    if (lm.isProviderEnabled(provider)) lm.getLastKnownLocation(provider) else null
-                }.getOrNull()
-            }
+        val lastKnown = providers
+            .mapNotNull { provider -> runCatching { lm.getLastKnownLocation(provider) }.getOrNull() }
             .maxByOrNull { it.time }
 
         if (lastKnown != null && System.currentTimeMillis() - lastKnown.time < 300_000L) {
@@ -69,33 +68,59 @@ class LocationShareService : Service() {
             return
         }
 
+        if (providers.isEmpty()) {
+            // Nothing to even try: say so instead of silently doing nothing for 15 seconds.
+            fail("Turn on location in your phone's settings to share it")
+            stopSelf(startId)
+            return
+        }
+
         val handler = Handler(Looper.getMainLooper())
+        var settled = false
 
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                lm.removeUpdates(this)
+                if (settled) return
+                settled = true
+                providers.forEach { runCatching { lm.removeUpdates(this) } }
+                handler.removeCallbacksAndMessages(null)
                 sendLocationSms(phone, contactId, contactName, doNotify, location)
                 stopSelf(startId)
             }
         }
 
         val timeoutRunnable = Runnable {
-            lm.removeUpdates(listener)
+            if (settled) return@Runnable
+            settled = true
+            providers.forEach { runCatching { lm.removeUpdates(listener) } }
             if (lastKnown != null) {
                 sendLocationSms(phone, contactId, contactName, doNotify, lastKnown)
+            } else {
+                fail("Couldn't get your location. Try again with a clearer view of the sky or a network signal")
             }
             stopSelf(startId)
         }
 
-        try {
-            @Suppress("DEPRECATION")
-            lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, listener, Looper.getMainLooper())
-            handler.postDelayed(timeoutRunnable, 8_000L)
-        } catch (e: SecurityException) {
-            handler.removeCallbacks(timeoutRunnable)
-            if (lastKnown != null) sendLocationSms(phone, contactId, contactName, doNotify, lastKnown)
-            stopSelf(startId)
+        // Ask every enabled provider at once; whichever answers first wins. GPS alone can take much
+        // longer than a person will wait, especially indoors, and network location often beats it there.
+        val requested = providers.count { provider ->
+            runCatching {
+                @Suppress("DEPRECATION")
+                lm.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+                true
+            }.getOrDefault(false)
         }
+        if (requested == 0) {
+            if (lastKnown != null) sendLocationSms(phone, contactId, contactName, doNotify, lastKnown)
+            else fail("Couldn't get your location. Check Relay has location permission")
+            stopSelf(startId)
+            return
+        }
+        handler.postDelayed(timeoutRunnable, 15_000L)
+    }
+
+    private fun fail(message: String) {
+        Handler(Looper.getMainLooper()).post { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
     }
 
     private fun sendLocationSms(
