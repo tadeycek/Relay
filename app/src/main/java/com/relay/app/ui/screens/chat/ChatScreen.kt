@@ -38,7 +38,9 @@ import androidx.compose.material.icons.outlined.MyLocation
 import androidx.compose.material.icons.outlined.VideoLibrary
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -54,6 +56,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,6 +67,7 @@ import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.rememberPermissionState
 import com.relay.app.sms.LocationShareService
+import com.relay.app.ui.components.ConfirmDialog
 import com.relay.app.ui.components.EmptyState
 import com.relay.app.ui.components.ListRow
 import com.relay.app.ui.components.RelayBottomSheet
@@ -98,6 +102,9 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     var pendingMimeType by remember { mutableStateOf("") }
     var showAttachSheet by remember { mutableStateOf(false) }
     var cameraFileUri by remember { mutableStateOf<Uri?>(null) }
+    // Both fire something the other person sees; confirming first means a stray tap never sends it.
+    var confirmShareLocation by remember { mutableStateOf(false) }
+    var confirmRequestLocation by remember { mutableStateOf(false) }
 
     val mediaPermissions = remember {
         buildList {
@@ -190,6 +197,33 @@ fun ChatScreen(contactId: Long, navController: NavController) {
         )
     }
 
+    if (confirmShareLocation) {
+        ConfirmDialog(
+            title = "Share your location with ${contact?.name ?: "them"}?",
+            message = "They will see where you are right now. Sharing stops after it expires, per your location settings.",
+            confirmLabel = "Share location",
+            onConfirm = {
+                confirmShareLocation = false
+                val c = contact
+                if (c != null) {
+                    if (locationPermission.status.isGranted) LocationShareService.share(context, c)
+                    else locationPermission.launchPermissionRequest()
+                }
+            },
+            onDismiss = { confirmShareLocation = false },
+        )
+    }
+
+    if (confirmRequestLocation) {
+        ConfirmDialog(
+            title = "Ask ${contact?.name ?: "them"} for their location?",
+            message = "They will be asked to share where they are, and can decline.",
+            confirmLabel = "Ask",
+            onConfirm = { confirmRequestLocation = false; vm.sendLocationRequest(context) },
+            onDismiss = { confirmRequestLocation = false },
+        )
+    }
+
     Scaffold(
         // The top bar and composer already handle the status/navigation-bar insets themselves
         // (statusBarsPadding / navigationBarsPadding), so the Scaffold must not reserve that space a
@@ -201,17 +235,13 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 contact = contact,
                 onBack = { navController.popBackStack() },
                 actions = {
-                    IconButton(onClick = {
-                        val c = contact
-                        if (c != null) {
-                            if (locationPermission.status.isGranted) LocationShareService.share(context, c)
-                            else locationPermission.launchPermissionRequest()
+                    if (contact?.isDeleted != true) {
+                        IconButton(onClick = { confirmShareLocation = true }) {
+                            Icon(Icons.Outlined.MyLocation, contentDescription = "Share my location", tint = TextSecondary)
                         }
-                    }) {
-                        Icon(Icons.Outlined.MyLocation, contentDescription = "Share my location", tint = TextSecondary)
-                    }
-                    IconButton(onClick = { vm.sendLocationRequest(context) }) {
-                        Icon(Icons.Outlined.LocationSearching, contentDescription = "Ask for their location", tint = TextSecondary)
+                        IconButton(onClick = { confirmRequestLocation = true }) {
+                            Icon(Icons.Outlined.LocationSearching, contentDescription = "Ask for their location", tint = TextSecondary)
+                        }
                     }
                 },
             )
@@ -235,25 +265,39 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 }
             }
 
-            Composer(
-                value = inputText,
-                onValueChange = { inputText = it },
-                pendingMediaUri = pendingMediaUri,
-                onClearMedia = { pendingMediaUri = null; pendingMimeType = "" },
-                onAttach = { showAttachSheet = true },
-                onSend = {
-                    val uri = pendingMediaUri
-                    if (uri != null) {
-                        vm.sendMedia(uri, pendingMimeType, inputText.trim(), context)
-                        pendingMediaUri = null
-                        pendingMimeType = ""
-                        inputText = ""
-                    } else if (inputText.isNotBlank()) {
-                        vm.sendText(inputText.trim(), context)
-                        inputText = ""
-                    }
-                },
-            )
+            if (contact?.isDeleted == true) {
+                Text(
+                    "You deleted this contact. You can't send new messages here.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = TextSecondary,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Surface1)
+                        .navigationBarsPadding()
+                        .padding(RelaySpacing.lg),
+                )
+            } else {
+                Composer(
+                    value = inputText,
+                    onValueChange = { inputText = it },
+                    pendingMediaUri = pendingMediaUri,
+                    onClearMedia = { pendingMediaUri = null; pendingMimeType = "" },
+                    onAttach = { showAttachSheet = true },
+                    onSend = {
+                        val uri = pendingMediaUri
+                        if (uri != null) {
+                            vm.sendMedia(uri, pendingMimeType, inputText.trim(), context)
+                            pendingMediaUri = null
+                            pendingMimeType = ""
+                            inputText = ""
+                        } else if (inputText.isNotBlank()) {
+                            vm.sendText(inputText.trim(), context)
+                            inputText = ""
+                        }
+                    },
+                )
+            }
         }
     }
 }

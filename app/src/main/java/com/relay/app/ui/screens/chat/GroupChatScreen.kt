@@ -58,6 +58,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val group by vm.group.collectAsState()
     val messages by vm.messages.collectAsState()
     var inputText by remember { mutableStateOf("") }
+    var confirmRequestLocation by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val listState = rememberLazyListState()
 
@@ -85,7 +86,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 memberCount = group?.members?.size ?: 0,
                 onBack = { navController.popBackStack() },
                 actions = {
-                    IconButton(onClick = { vm.sendLocationRequest(context) }) {
+                    IconButton(onClick = { confirmRequestLocation = true }) {
                         Icon(
                             imageVector = Icons.Outlined.LocationSearching,
                             contentDescription = "Ask the group for their location",
@@ -120,5 +121,15 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 },
             )
         }
+    }
+
+    if (confirmRequestLocation) {
+        com.relay.app.ui.components.ConfirmDialog(
+            title = "Ask ${group?.name.orEmpty()} for their location?",
+            message = "Every member is asked to share where they are, and each can decline.",
+            confirmLabel = "Ask",
+            onConfirm = { confirmRequestLocation = false; vm.sendLocationRequest(context) },
+            onDismiss = { confirmRequestLocation = false },
+        )
     }
 }
