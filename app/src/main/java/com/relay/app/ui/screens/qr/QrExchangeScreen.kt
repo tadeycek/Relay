@@ -259,8 +259,15 @@ private fun MyCodeTab(
                     )
                     Text(prefs.myName, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
                     when (nfc) {
-                        NfcPairing.Availability.ON ->
+                        NfcPairing.Availability.ON -> Column {
                             Text("Or hold the back of your phone against theirs.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                            Text(
+                                "Sharing this way doesn't work on every phone. If nothing happens, the code above always works.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                                modifier = Modifier.padding(top = RelaySpacing.xs),
+                            )
+                        }
                         NfcPairing.Availability.OFF ->
                             Text("Turn on NFC in your phone's settings to tap phones together.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
                         NfcPairing.Availability.NONE -> Unit
