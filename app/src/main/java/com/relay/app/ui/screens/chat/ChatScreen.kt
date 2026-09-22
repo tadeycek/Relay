@@ -66,6 +66,7 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.rememberPermissionState
+import com.relay.app.p2p.PresenceState
 import com.relay.app.sms.LocationShareService
 import com.relay.app.ui.components.ConfirmDialog
 import com.relay.app.ui.components.EmptyState
@@ -278,12 +279,29 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                         .padding(RelaySpacing.lg),
                 )
             } else {
+                // Photos/videos go phone-to-phone, never through a server, so they only send while the
+                // other person is reachable right now -- see PresenceCoordinator.
+                val presence by vm.peerPresence.collectAsState()
+                val presenceCaption = when (presence) {
+                    PresenceState.Checking -> "Checking if they're online…"
+                    PresenceState.Offline -> "They're not online right now, so photos and videos can't be sent."
+                    PresenceState.TorBlocksThis -> "Photos and videos are off while Tor is on."
+                    PresenceState.Unknown, is PresenceState.Online -> null
+                }
+                if (presenceCaption != null) {
+                    Text(
+                        presenceCaption,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = TextSecondary,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.xs),
+                    )
+                }
                 Composer(
                     value = inputText,
                     onValueChange = { inputText = it },
                     pendingMediaUri = pendingMediaUri,
                     onClearMedia = { pendingMediaUri = null; pendingMimeType = "" },
-                    onAttach = { showAttachSheet = true },
+                    onAttach = if (presence is PresenceState.Online) { { showAttachSheet = true } } else null,
                     onSend = {
                         val uri = pendingMediaUri
                         if (uri != null) {

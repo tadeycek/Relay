@@ -33,6 +33,10 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
+import com.relay.app.p2p.PresenceCoordinator
+import com.relay.app.p2p.PresenceState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -53,6 +57,9 @@ class ChatViewModel(
 
     private val _toastMessage = MutableSharedFlow<String>()
     val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
+
+    /** Whether this contact is reachable right now for a direct photo/video transfer; see PresenceCoordinator. */
+    val peerPresence: StateFlow<PresenceState> get() = PresenceCoordinator.stateOf(contactId)
 
     private var smsUpdateReceiver: BroadcastReceiver? = null
 
@@ -99,6 +106,13 @@ class ChatViewModel(
     fun registerSmsUpdates(context: Context) {
         ActiveChat.contactId = contactId // suppress notifications for the chat that is on screen
         viewModelScope.launch { markReadIfVisible() }
+        // Checked once per chat visit, not continuously -- see PresenceCoordinator's class doc. Contact
+        // may not have loaded yet (loadData() is async); wait for the first non-null value rather than
+        // racing it.
+        viewModelScope.launch {
+            val c = _contact.value ?: _contact.filterNotNull().first()
+            if (c.qrVerified && c.canUseInternetTransport) PresenceCoordinator.ping(context, c)
+        }
         smsUpdateReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val incomingContactId = intent.getLongExtra("contact_id", -1L)
