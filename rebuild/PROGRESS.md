@@ -218,3 +218,20 @@ are verified only if both say yes within about 3 minutes. It uses a one-time cod
 question only reaches someone who really saw the screen. Details, limits and what is untested are in
 `ideas.md` ("Mutual in-person verification"). Pure rules and the NFC Type 4 tag protocol are unit-tested;
 the flow between two real phones has not been run, because only one phone was available.
+
+## Direct phone-to-phone photo/video transfer
+
+After three public Blossom media servers all proved unusable (they either reject encrypted uploads
+outright or genuinely try to decode them, which ciphertext can never survive — see `ideas.md`), photos and
+videos now go straight from one phone to the other, no server involved. An on-demand "are you there?"
+check (not a standing presence broadcast) gates the attach button; the decryption key travels over the
+normal end-to-end encrypted message channel, never alongside the ciphertext it opens; both the offer and
+the transfer socket are authenticated by a single-use nonce. Same-Wi-Fi transfers are the reliable case; a
+best-effort UPnP router mapping is tried for reachability across different networks, with no guaranteed
+fallback when that fails (no TURN relay — that would just be another server). Disabled entirely whenever
+Tor is on, by design, rather than carving an exception into the app's fail-closed privacy guarantee. Full
+detail, guarantees and known limits are documented in `ideas.md`.
+
+Pure logic (presence timing, wire framing, offer parsing) is unit-tested. The live network code — UPnP,
+the actual socket transfer, the presence round trip between two real phones — has not yet been run on a
+device.
