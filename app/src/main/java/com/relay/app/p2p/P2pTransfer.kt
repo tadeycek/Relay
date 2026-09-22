@@ -18,6 +18,7 @@ import com.relay.app.messaging.Outgoing
 import java.io.File
 import java.net.InetSocketAddress
 import java.net.Socket
+import java.util.concurrent.Semaphore
 
 /** Sending side of a direct phone-to-phone transfer: no media server touches any of this. */
 object P2pSender {
@@ -83,6 +84,14 @@ object P2pListener {
     private const val TAG = "P2pListener"
     private const val MAX_CIPHERTEXT_BYTES = 50L * 1024 * 1024 + 64
 
+    /**
+     * Bounds concurrent connection handling — a socket, unlike an offer, needs no proof of anything to
+     * open, so anyone who can reach this port at all could otherwise hold open many connections at once
+     * (each with its own 30 s read timeout) for very little cost to them. Mirrors MediaReceiver's own
+     * `Semaphore(2)` for the same class of concern on the download side.
+     */
+    private val slots = Semaphore(3)
+
     @Volatile private var started = false
 
     @Synchronized
@@ -115,6 +124,19 @@ object P2pListener {
     }
 
     private fun handleConnection(context: Context, socket: Socket) {
+        if (!slots.tryAcquire()) {
+            runCatching { socket.close() }
+            Log.i(TAG, "dropped a connection: already handling the maximum at once")
+            return
+        }
+        try {
+            handleConnectionLocked(context, socket)
+        } finally {
+            slots.release()
+        }
+    }
+
+    private fun handleConnectionLocked(context: Context, socket: Socket) {
         socket.use {
             socket.soTimeout = 30_000
             val header = P2pWire.readHeader(socket.getInputStream())

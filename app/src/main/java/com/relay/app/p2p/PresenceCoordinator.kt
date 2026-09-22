@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import com.relay.app.data.model.Contact
 import com.relay.app.data.repository.ContactRepository
+import com.relay.app.messaging.CooldownLimiter
 import com.relay.app.messaging.MessagingDb
 import com.relay.app.messaging.MessagingRuntime
 import com.relay.app.transport.PayloadCodec
@@ -66,6 +67,14 @@ object PresenceCoordinator {
     /** nonce -> the metadata (including the decryption key) for an offer whose socket hasn't arrived yet. */
     private val pendingOffers = HashMap<String, PendingOffer>()
 
+    /**
+     * A verified contact is trusted, but a compromised or misbehaving one flooding Pings should not be
+     * able to grow [pongedNonces] without bound or repeatedly force this phone through UPnP discovery
+     * (a few seconds of network I/O each time) — one reply per contact per window is plenty for the
+     * check's actual purpose.
+     */
+    private val pingCooldown = CooldownLimiter(2_000L)
+
     private fun flowFor(contactId: Long): MutableStateFlow<PresenceState> =
         synchronized(states) { states.getOrPut(contactId) { MutableStateFlow(PresenceState.Unknown) } }
 
@@ -124,6 +133,7 @@ object PresenceCoordinator {
         // fetching a media URL: a stranger who merely knows our key must not learn our reachable address.
         val contact = ContactRepository(MessagingDb.get(appContext)).findByNostrPubkeySync(senderPubkeyHex)
         if (contact == null || !contact.qrVerified) return
+        if (!pingCooldown.allow(contact.id, System.currentTimeMillis())) return
 
         synchronized(pongedNonces) {
             prunePonged()
