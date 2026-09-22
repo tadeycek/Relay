@@ -15,6 +15,8 @@ import com.relay.app.data.repository.GroupMessageRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.data.repository.SeenPayloadRepository
 import com.relay.app.media.MediaReceiver
+import com.relay.app.p2p.PresenceCoordinator
+import com.relay.app.p2p.PresenceMessages
 import com.relay.app.pairing.PairingCoordinator
 import com.relay.app.pairing.PairingMessages
 import com.relay.app.sms.LocationShareService
@@ -60,6 +62,15 @@ class IncomingMessageHandler(context: Context) {
         // admitted as a contact: a request with a code we never showed must leave no trace at all.
         PairingMessages.parse(payload.body)?.let { pairing ->
             PairingCoordinator.onMessage(appContext, envelope.senderPubkeyHex, pairing, payload.ts, now)
+            return
+        }
+
+        // Presence check ("are you online, how do I reach you"): a blocked contact gets no reply, so
+        // blocking someone also stops them learning whether this phone is reachable right now.
+        PresenceMessages.parse(payload.body)?.let { presence ->
+            if (contact?.trustLevel != ContactTrustLevel.BLOCKED) {
+                PresenceCoordinator.onMessage(appContext, envelope.senderPubkeyHex, presence)
+            }
             return
         }
 
