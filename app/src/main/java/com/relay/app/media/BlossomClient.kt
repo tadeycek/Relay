@@ -1,6 +1,7 @@
 package com.relay.app.media
 
 import android.util.Base64
+import android.util.Log
 import org.json.JSONException
 import org.json.JSONObject
 import rust.nostr.sdk.EventBuilder
@@ -32,15 +33,28 @@ class BlossomClient(
 
     data class Uploaded(val url: String, val sha256Hex: String)
 
+    /**
+     * Why the most recent [upload] failed, for logs only — never shown verbatim to the person sending
+     * the photo, since a server's own wording is not written for them. Cleared at the start of each call.
+     */
+    @Volatile
+    var lastUploadError: String? = null
+        private set
+
     /** Tries each server in order and returns the first success, or null if all refuse or fail. */
     fun upload(servers: List<String>, blob: ByteArray, sha256Hex: String): Uploaded? {
-        for (server in servers) {
-            val base = server.trimEnd('/')
-            if (!base.startsWith("https://")) continue
+        lastUploadError = null
+        val https = servers.map { it.trimEnd('/') }.filter { it.startsWith("https://") }
+        if (https.isEmpty()) {
+            lastUploadError = "no https media server is configured"
+            return null
+        }
+        for (base in https) {
             try {
                 upload(base, blob, sha256Hex)?.let { return it }
             } catch (e: IOException) {
-                // network/server problem: try the next server
+                lastUploadError = "$base: ${e.javaClass.simpleName} ${e.message}"
+                Log.w(TAG, "upload to $base failed", e)
             }
         }
         return null
@@ -57,13 +71,30 @@ class BlossomClient(
         }
         try {
             conn.outputStream.use { it.write(blob) }
-            if (conn.responseCode !in 200..299) return null
+            val code = conn.responseCode
+            if (code !in 200..299) {
+                val reason = conn.getHeaderField("X-Reason")
+                    ?: runCatching { conn.errorStream?.readBytes()?.toString(Charsets.UTF_8) }.getOrNull()
+                lastUploadError = "$base: HTTP $code${reason?.let { " - $it" } ?: ""}"
+                Log.w(TAG, "upload rejected: $lastUploadError")
+                return null
+            }
             val body = conn.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
-            val json = try { JSONObject(body) } catch (e: JSONException) { return null }
+            val json = try { JSONObject(body) } catch (e: JSONException) {
+                lastUploadError = "$base: response was not JSON: ${body.take(200)}"
+                return null
+            }
             val reportedSha = json.optString("sha256", sha256Hex).lowercase()
-            if (reportedSha != sha256Hex) return null
+            if (reportedSha != sha256Hex) {
+                lastUploadError = "$base: server echoed a different hash"
+                return null
+            }
             val url = json.optString("url").takeIf { it.isNotEmpty() } ?: "$base/$sha256Hex"
-            return if (MediaBody.isAcceptableUrl(url)) Uploaded(url, sha256Hex) else null
+            if (!MediaBody.isAcceptableUrl(url)) {
+                lastUploadError = "$base: returned an unacceptable url ($url)"
+                return null
+            }
+            return Uploaded(url, sha256Hex)
         } finally {
             conn.disconnect()
         }
@@ -136,6 +167,7 @@ class BlossomClient(
     }
 
     private companion object {
+        const val TAG = "BlossomClient"
         const val MAX_REDIRECTS = 3
     }
 }

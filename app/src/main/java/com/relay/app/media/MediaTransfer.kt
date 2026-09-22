@@ -3,6 +3,7 @@ package com.relay.app.media
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+
 import com.relay.app.crypto.RelayFileCrypto
 import com.relay.app.data.model.Contact
 import com.relay.app.data.model.Message
@@ -17,6 +18,8 @@ import java.util.concurrent.Semaphore
 
 /** Sending side: encrypt, upload, then queue the reference as a normal message. Blocking; call off the main thread. */
 object MediaSender {
+
+    private const val TAG = "MediaSender"
 
     sealed class Result {
         data class Sent(val msgId: String) : Result()
@@ -33,9 +36,14 @@ object MediaSender {
 
         val client = blossomClientFor(context) ?: return Result.Failed(TOR_UNAVAILABLE_MESSAGE)
         val encrypted = MediaCrypto.encrypt(plain)
-        val uploaded = client.upload(
-            RelayPreferences(context).blossomServers, encrypted.blob, encrypted.sha256Hex,
-        ) ?: return Result.Failed("Upload failed - check your connection and try again")
+        val servers = RelayPreferences(context).blossomServers
+        val uploaded = client.upload(servers, encrypted.blob, encrypted.sha256Hex)
+        if (uploaded == null) {
+            // The friendly message can't explain a server's own error text, but logcat can: pull it
+            // when a report says uploads are failing.
+            Log.w(TAG, "upload failed to all of $servers: ${client.lastUploadError}")
+            return Result.Failed("Upload failed - check your connection and try again")
+        }
 
         val ref = MediaRef(
             url = uploaded.url,
