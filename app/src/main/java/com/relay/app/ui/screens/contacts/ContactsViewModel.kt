@@ -121,6 +121,7 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             withContext(Dispatchers.IO) { repo.setNameSync(contactId, trimmed) }
             _contacts.value = repo.getAllContacts()
+            notifyConversationsChanged(contactId)
         }
     }
 
