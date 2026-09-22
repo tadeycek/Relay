@@ -184,15 +184,27 @@ object PresenceCoordinator {
             if (pong.candidates.isEmpty()) PresenceState.Offline else PresenceState.Online(pong.candidates, pong.nonce)
     }
 
-    /** This phone's own LAN addresses, offered as reachable candidates. Loopback and link-local excluded. */
-    private fun localCandidates(port: Int = P2P_PORT): List<String> = runCatching {
-        Collections.list(NetworkInterface.getNetworkInterfaces())
-            .filter { it.isUp && !it.isLoopback }
-            .flatMap { Collections.list(it.inetAddresses) }
-            .filterIsInstance<Inet4Address>()
-            .filterNot { it.isLoopbackAddress || it.isLinkLocalAddress }
-            .map { "${it.hostAddress}:$port" }
-    }.getOrElse { emptyList() }
+    /**
+     * This phone's reachable addresses, offered as candidates: its own LAN address(es) first (the
+     * reliable case — same-network transfers never depend on the next part), then a best-effort UPnP
+     * router mapping so a transfer can sometimes still connect from a different network. UPnP is tried
+     * against the first LAN address only and quietly skipped if there is none or it fails — see
+     * [UpnpPortMapper]'s class doc for why that is expected, not a bug.
+     */
+    private fun localCandidates(port: Int = P2P_PORT): List<String> {
+        val lan = runCatching {
+            Collections.list(NetworkInterface.getNetworkInterfaces())
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { Collections.list(it.inetAddresses) }
+                .filterIsInstance<Inet4Address>()
+                .filterNot { it.isLoopbackAddress || it.isLinkLocalAddress }
+                .map { it.hostAddress!! }
+        }.getOrElse { emptyList() }
+
+        val external = lan.firstOrNull()?.let { runCatching { UpnpPortMapper.requestMapping(port, it) }.getOrNull() }
+
+        return (lan.map { "$it:$port" } + listOfNotNull(external)).distinct()
+    }
 
     /** The fixed port the receive listener binds on this phone's LAN address (see P2pTransfer). */
     const val P2P_PORT = 41_200
