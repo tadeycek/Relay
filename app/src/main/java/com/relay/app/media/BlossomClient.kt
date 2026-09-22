@@ -23,6 +23,9 @@ import java.net.URL
  * download is checked against the expected SHA-256 before anything is decrypted, so a malicious or
  * compromised server can only make a download fail, never substitute content.
  *
+ * A server learns the coarse media category ("image" vs. "video") from the upload's Content-Type,
+ * plus its size and timing — never the actual pixels or audio, which stay encrypted throughout.
+ *
  * All methods are blocking; call them off the main thread. Pass a [proxy] (SOCKS) to route through Tor.
  */
 class BlossomClient(
@@ -41,8 +44,17 @@ class BlossomClient(
     var lastUploadError: String? = null
         private set
 
-    /** Tries each server in order and returns the first success, or null if all refuse or fail. */
-    fun upload(servers: List<String>, blob: ByteArray, sha256Hex: String): Uploaded? {
+    /**
+     * Tries each server in order and returns the first success, or null if all refuse or fail.
+     *
+     * [contentType] is the *original* media's MIME type (e.g. "image/jpeg"), sent as the encrypted
+     * blob's Content-Type. The bytes are still fully encrypted and private either way; this only tells
+     * the server the coarse category (roughly: a photo vs. a video), which it already learns from the
+     * size and timing of the upload. Several public Blossom servers, including both defaults here,
+     * allowlist known media types and reject a plain "application/octet-stream" outright — so without
+     * this, uploads to those servers fail every time with no way to opt back in.
+     */
+    fun upload(servers: List<String>, blob: ByteArray, sha256Hex: String, contentType: String): Uploaded? {
         lastUploadError = null
         val https = servers.map { it.trimEnd('/') }.filter { it.startsWith("https://") }
         if (https.isEmpty()) {
@@ -51,7 +63,7 @@ class BlossomClient(
         }
         for (base in https) {
             try {
-                upload(base, blob, sha256Hex)?.let { return it }
+                upload(base, blob, sha256Hex, contentType)?.let { return it }
             } catch (e: IOException) {
                 lastUploadError = "$base: ${e.javaClass.simpleName} ${e.message}"
                 Log.w(TAG, "upload to $base failed", e)
@@ -60,12 +72,12 @@ class BlossomClient(
         return null
     }
 
-    private fun upload(base: String, blob: ByteArray, sha256Hex: String): Uploaded? {
+    private fun upload(base: String, blob: ByteArray, sha256Hex: String, contentType: String): Uploaded? {
         val conn = open("$base/upload").apply {
             requestMethod = "PUT"
             doOutput = true
             setFixedLengthStreamingMode(blob.size)
-            setRequestProperty("Content-Type", "application/octet-stream")
+            setRequestProperty("Content-Type", contentType.ifBlank { "application/octet-stream" })
             setRequestProperty("X-SHA-256", sha256Hex)
             setRequestProperty("Authorization", authHeader(sha256Hex))
         }

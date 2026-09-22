@@ -37,7 +37,7 @@ object MediaSender {
         val client = blossomClientFor(context) ?: return Result.Failed(TOR_UNAVAILABLE_MESSAGE)
         val encrypted = MediaCrypto.encrypt(plain)
         val servers = RelayPreferences(context).blossomServers
-        val uploaded = client.upload(servers, encrypted.blob, encrypted.sha256Hex)
+        val uploaded = client.upload(servers, encrypted.blob, encrypted.sha256Hex, mime)
         if (uploaded == null) {
             // The friendly message can't explain a server's own error text, but logcat can: pull it
             // when a report says uploads are failing.
