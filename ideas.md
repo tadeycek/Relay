@@ -91,7 +91,17 @@ removed again.
 - Not done: a notification when the recipient's app is in the background (the question shows on whatever
   screen the app is on), and an explicit "No" message (a "No" just lets the first person's wait run out or be
   cancelled).
-- Untested end to end between two phones.
+- Tested end to end between two real phones (a Xiaomi/Redmi running MIUI, MediaTek MT6877, and a Nothing
+  Phone). The pairing logic, the mutual-verification flow and the reader-mode/QR path all work.
+- **Known device-dependent limitation:** on the Xiaomi phone, `dumpsys nfc` reports `Default route: secure
+  element` — its NFC controller routes card-emulation traffic through the hardware secure element by
+  default, and MediaTek/MIUI's HCE stack has a known history of weak support for non-payment ("other"
+  category) host-based card emulation, which is what tap-to-pair uses (it is not a payment app, so it
+  cannot register under the "payment" AID category to get priority routing without misusing that category).
+  Result: that phone can *read* a tap fine (reader mode does not touch this routing), but cannot reliably
+  *emit* its own code as a tag for another phone to read. The Nothing Phone's NFC stack does not have this
+  problem and can do both. This looks like a hardware/OS limitation of that specific phone, not a Relay bug;
+  QR stays the reliable fallback either way.
 
 ## "Remove me" message on delete (not built)
 
