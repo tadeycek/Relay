@@ -129,6 +129,7 @@ fun ContactsScreen(navController: NavController) {
         ContactSheet(
             contact = contact,
             onMessage = { contactSheetId = null; navController.navigate(Screen.Chat.routeFor(contact.id)) },
+            onRename = { vm.renameContact(contact.id, it) },
             onTrustLevel = { vm.updateTrustLevel(contact.id, it) },
             onAcceptKey = { vm.acceptKeyChange(contact.id) },
             onRejectKey = { vm.rejectKeyChange(contact.id) },

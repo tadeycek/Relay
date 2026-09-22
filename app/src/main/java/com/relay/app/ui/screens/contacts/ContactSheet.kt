@@ -5,6 +5,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -49,6 +54,7 @@ internal fun trustExplanation(level: ContactTrustLevel): String = when (level) {
 fun ContactSheet(
     contact: Contact,
     onMessage: () -> Unit,
+    onRename: (String) -> Unit,
     onTrustLevel: (ContactTrustLevel) -> Unit,
     onAcceptKey: () -> Unit,
     onRejectKey: () -> Unit,
@@ -57,6 +63,7 @@ fun ContactSheet(
     onDismiss: () -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
+    var renaming by remember { mutableStateOf(false) }
     val trust = trustLineFor(hasKey = contact.nostrPubkey != null, verifiedInPerson = contact.qrVerified)
     val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = IbmPlexMono)
 
@@ -64,7 +71,17 @@ fun ContactSheet(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(RelaySpacing.md)) {
             ContactGlyph(contact, size = 56.dp)
             Column(modifier = Modifier.weight(1f)) {
-                Text(contact.name, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(RelaySpacing.sm)) {
+                    Text(contact.name, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+                    IconButton(onClick = { renaming = true }, modifier = Modifier.size(28.dp)) {
+                        Icon(
+                            Icons.Outlined.Edit,
+                            contentDescription = "Change their name",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                }
                 StatusChip(
                     text = if (trust.verified) "Verified in person" else "Not verified",
                     kind = if (trust.verified) ChipKind.VERIFIED else ChipKind.NEUTRAL,
@@ -107,6 +124,31 @@ fun ContactSheet(
                 SecondaryButton(if (contact.nostrPubkey == null) "Scan their code" else "Verify in person", onVerify, Modifier.fillMaxWidth())
             }
             DangerButton("Delete contact", { confirmDelete = true }, Modifier.fillMaxWidth())
+        }
+    }
+
+    if (renaming) {
+        var draft by remember(contact.id) { mutableStateOf(contact.name) }
+        RelayBottomSheet(onDismiss = { renaming = false }) {
+            Text("Change their name", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+            Text(
+                "This only changes what you see; it does not tell them or rename them anywhere else.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+                modifier = Modifier.padding(top = RelaySpacing.xs),
+            )
+            com.relay.app.ui.components.RelayTextField(
+                value = draft,
+                onValueChange = { draft = it },
+                label = "Name",
+                modifier = Modifier.fillMaxWidth().padding(top = RelaySpacing.lg),
+            )
+            PrimaryButton(
+                "Save name",
+                { onRename(draft); renaming = false },
+                Modifier.fillMaxWidth().padding(top = RelaySpacing.lg),
+                enabled = draft.isNotBlank(),
+            )
         }
     }
 

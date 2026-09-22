@@ -14,10 +14,12 @@ import com.relay.app.data.model.ContactTrustLevel
 import com.relay.app.data.model.Group
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.GroupRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ContactsViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -87,6 +89,19 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             groupRepo.deleteGroup(id)
             _groups.value = groupRepo.getAllGroups()
+        }
+    }
+
+    /**
+     * A name you set yourself always wins: a name the other side announces later only ever replaces
+     * the auto-generated placeholder ("Contact 1a2b3c4d…"), never something you chose.
+     */
+    fun renameContact(contactId: Long, name: String) {
+        val trimmed = name.trim().take(30)
+        if (trimmed.isBlank()) return
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { repo.setNameSync(contactId, trimmed) }
+            _contacts.value = repo.getAllContacts()
         }
     }
 
