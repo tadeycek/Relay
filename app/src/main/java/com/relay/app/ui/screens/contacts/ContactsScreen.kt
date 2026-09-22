@@ -14,14 +14,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
@@ -50,17 +48,11 @@ private val TextInset = RelaySpacing.gutter + AvatarSize + RelaySpacing.md
 @Composable
 fun ContactsScreen(navController: NavController) {
     val vm: ContactsViewModel = viewModel()
-    val context = LocalContext.current
     val contacts by vm.contacts.collectAsState()
     val groups by vm.groups.collectAsState()
     var showNewGroup by remember { mutableStateOf(false) }
     var contactSheetId by remember { mutableStateOf<Long?>(null) }
     var manageGroupId by remember { mutableStateOf<Long?>(null) }
-
-    DisposableEffect(Unit) {
-        vm.registerUpdates(context)
-        onDispose { vm.unregisterUpdates(context) }
-    }
 
     fun pair() = navController.navigate(Screen.QrExchange.route)
 
@@ -134,7 +126,8 @@ fun ContactsScreen(navController: NavController) {
             onAcceptKey = { vm.acceptKeyChange(contact.id) },
             onRejectKey = { vm.rejectKeyChange(contact.id) },
             onVerify = { contactSheetId = null; pair() },
-            onDelete = { vm.deleteContact(contact.id); contactSheetId = null },
+            onDeleteKeepChat = { vm.softDeleteContact(contact.id); contactSheetId = null },
+            onDeleteWithChat = { vm.deleteContact(contact.id); contactSheetId = null },
             onDismiss = { contactSheetId = null },
         )
     }

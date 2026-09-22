@@ -33,34 +33,27 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
     val groups: StateFlow<List<Group>> = _groups.asStateFlow()
 
-    private var updateReceiver: BroadcastReceiver? = null
+    private val updateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) = loadAll()
+    }
 
     init {
         loadAll()
-    }
-
-    /**
-     * Without this, pairing, key rotation, and key-change review state (contact.publicKey,
-     * signingPublicKey, pendingPublicKey) only ever refreshed after an explicit user action in
-     * this screen — SmsReceiver mutates that state from a background broadcast, so without
-     * listening for it the lock icon and the key-change dialog silently never appeared until the
-     * app was killed and reopened, even though the security notification fired correctly.
-     */
-    fun registerUpdates(context: Context) {
-        updateReceiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) = loadAll()
-        }
+        // Registered on the application, not the composable: pairing, key rotation and key-change
+        // review state can all change while the People tab is not the one on screen (e.g. mid-pairing
+        // on the QR screen). A receiver tied to the composable's own lifecycle would miss that broadcast
+        // and never catch up, since nothing else forces a reload once the screen is visible again.
         ContextCompat.registerReceiver(
-            context,
+            app,
             updateReceiver,
             IntentFilter("com.relay.app.NEW_MESSAGE"),
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
     }
 
-    fun unregisterUpdates(context: Context) {
-        updateReceiver?.let { context.unregisterReceiver(it) }
-        updateReceiver = null
+    override fun onCleared() {
+        runCatching { getApplication<Application>().unregisterReceiver(updateReceiver) }
+        super.onCleared()
     }
 
     private fun loadAll() {
@@ -70,11 +63,37 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Removes the contact and, through the database's foreign key, their whole message history. */
     fun deleteContact(id: Long) {
         viewModelScope.launch {
             repo.deleteContact(id)
             _contacts.value = repo.getAllContacts()
+            notifyConversationsChanged(id)
         }
+    }
+
+    /** Removes the contact from People but keeps their chat in Messages, marked as a deleted contact. */
+    fun softDeleteContact(id: Long) {
+        viewModelScope.launch {
+            repo.softDeleteContact(id)
+            _contacts.value = repo.getAllContacts()
+            notifyConversationsChanged(id)
+        }
+    }
+
+    /**
+     * The Messages tab's own ViewModel listens for this at the application level (see
+     * MessagesViewModel), so without it a deleted contact's chat keeps showing there, stale, until
+     * something unrelated happens to trigger a reload.
+     */
+    private fun notifyConversationsChanged(contactId: Long) {
+        val app = getApplication<Application>()
+        app.sendBroadcast(
+            android.content.Intent(com.relay.app.messaging.Broadcasts.NEW_MESSAGE).apply {
+                putExtra("contact_id", contactId)
+                setPackage(app.packageName)
+            }
+        )
     }
 
     fun createGroup(name: String, memberIds: List<Long>) {
