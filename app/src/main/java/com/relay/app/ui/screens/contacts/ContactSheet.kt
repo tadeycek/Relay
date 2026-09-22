@@ -84,6 +84,15 @@ fun ContactSheet(
                         )
                     }
                 }
+                // Only shown once it differs from the current name — no point repeating the same text twice.
+                val original = contact.originalName
+                if (!original.isNullOrBlank() && original != contact.name) {
+                    Text(
+                        "Originally $original",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = TextSecondary,
+                    )
+                }
                 StatusChip(
                     text = if (trust.verified) "Verified in person" else "Not verified",
                     kind = if (trust.verified) ChipKind.VERIFIED else ChipKind.NEUTRAL,

@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 14
+    const val DB_VERSION = 15
 
     object Contacts {
         const val TABLE = "contacts"
@@ -25,6 +25,12 @@ object DatabaseContract {
          * chat history stays in Messages, labelled as a deleted contact.
          */
         const val COL_DELETED_AT = "deleted_at"
+        /**
+         * The name this contact was first added under (from their QR/NFC code, or the first name they
+         * announced) — set once and never changed again, so a later rename in [COL_NAME] never loses it.
+         * Null for a contact added before this column existed.
+         */
+        const val COL_ORIGINAL_NAME = "original_name"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -40,7 +46,8 @@ object DatabaseContract {
                 $COL_NOSTR_PUBKEY TEXT,
                 $COL_RELAY_HINTS TEXT,
                 $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0,
-                $COL_DELETED_AT INTEGER
+                $COL_DELETED_AT INTEGER,
+                $COL_ORIGINAL_NAME TEXT
             )
         """
 
@@ -48,6 +55,7 @@ object DatabaseContract {
         const val ADD_RELAY_HINTS = "ALTER TABLE $TABLE ADD COLUMN $COL_RELAY_HINTS TEXT"
         const val ADD_QR_VERIFIED = "ALTER TABLE $TABLE ADD COLUMN $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0"
         const val ADD_DELETED_AT = "ALTER TABLE $TABLE ADD COLUMN $COL_DELETED_AT INTEGER"
+        const val ADD_ORIGINAL_NAME = "ALTER TABLE $TABLE ADD COLUMN $COL_ORIGINAL_NAME TEXT"
 
         /** One contact per Nostr key. Partial so the many legacy rows with NULL do not collide. */
         const val INDEX_NOSTR_PUBKEY = """

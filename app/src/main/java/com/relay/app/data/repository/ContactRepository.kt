@@ -184,6 +184,7 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
             put(Contacts.COL_NAME, name)
+            put(Contacts.COL_ORIGINAL_NAME, name)
             put(Contacts.COL_PHONE, Contact.placeholderPhoneFor(key))
             put(Contacts.COL_NOSTR_PUBKEY, key)
             put(Contacts.COL_HAS_RELAY, 1)
@@ -191,7 +192,7 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         }
         db.insertWithOnConflict(Contacts.TABLE, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
         return findByNostrPubkeySync(key)
-            ?: Contact(name = name, phone = Contact.placeholderPhoneFor(key), hasRelay = true, nostrPubkey = key)
+            ?: Contact(name = name, phone = Contact.placeholderPhoneFor(key), hasRelay = true, nostrPubkey = key, originalName = name)
     }
 
     /** Attaches a Nostr address to an existing (legacy phone) contact, e.g. after re-pairing by QR v3. */
@@ -250,6 +251,9 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         },
         deletedAt = getColumnIndex(Contacts.COL_DELETED_AT).let { idx ->
             if (idx >= 0 && !isNull(idx)) getLong(idx) else null
+        },
+        originalName = getColumnIndex(Contacts.COL_ORIGINAL_NAME).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getString(idx) else null
         },
     )
 }

@@ -112,6 +112,15 @@ class RelayDbHelper(context: Context) :
             // reference it, are unaffected; only a real delete cascades and removes them.
             db.execSQL(DatabaseContract.Contacts.ADD_DELETED_AT)
         }
+        if (oldVersion < 15) {
+            // Keeps the name a contact was first added under even after a local rename. For a contact
+            // that already existed, the best available answer is whatever name it currently has.
+            db.execSQL(DatabaseContract.Contacts.ADD_ORIGINAL_NAME)
+            db.execSQL(
+                "UPDATE ${DatabaseContract.Contacts.TABLE} SET ${DatabaseContract.Contacts.COL_ORIGINAL_NAME} = " +
+                    "${DatabaseContract.Contacts.COL_NAME} WHERE ${DatabaseContract.Contacts.COL_ORIGINAL_NAME} IS NULL"
+            )
+        }
     }
 
     override fun onConfigure(db: SQLiteDatabase) {

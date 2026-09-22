@@ -43,6 +43,8 @@ data class Contact(
      * be messaged. Null means an ordinary, active contact.
      */
     val deletedAt: Long? = null,
+    /** The name this contact was first added under; null only for a contact added before this existed. */
+    val originalName: String? = null,
 ) {
     val isDeleted: Boolean get() = deletedAt != null
 
