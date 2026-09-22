@@ -3,6 +3,8 @@ package com.relay.app.p2p
 import android.content.Context
 import android.util.Log
 import com.relay.app.data.model.Contact
+import com.relay.app.data.repository.ContactRepository
+import com.relay.app.messaging.MessagingDb
 import com.relay.app.messaging.MessagingRuntime
 import com.relay.app.transport.PayloadCodec
 import com.relay.app.transport.RelayPayload
@@ -21,7 +23,9 @@ import java.util.Collections
 sealed class PresenceState {
     data object Unknown : PresenceState()
     data object Checking : PresenceState()
-    data class Online(val candidates: List<String>) : PresenceState()
+
+    /** [nonce] must accompany the eventual transfer offer — see [P2pOfferMessages]. */
+    data class Online(val candidates: List<String>, val nonce: String) : PresenceState()
     data object Offline : PresenceState()
 
     /** P2P is never attempted through Tor (see the class doc); the UI explains this instead of checking. */
@@ -48,6 +52,19 @@ object PresenceCoordinator {
     private val states = HashMap<Long, MutableStateFlow<PresenceState>>()
     /** nonce -> who we expect a Pong from, so a Pong is trusted only from the peer we actually pinged. */
     private val pendingNonces = HashMap<String, Pending>()
+
+    /**
+     * nonce -> (contact who pinged us, expiry) for a Ping we already answered. An offer is only kept
+     * (see [onOffer]) if it names a nonce found here — the nonce only ever reached that contact through
+     * the Nostr-authenticated ping/pong exchange, so this is that contact's proof they were really the
+     * one who was pinged, exactly the role [com.relay.app.pairing.PairingSessions.consume] plays for
+     * pairing.
+     */
+    private val pongedNonces = HashMap<String, Pair<Long, Long>>() // nonce -> (contactId, expiresAtMs)
+
+    private data class PendingOffer(val contactId: Long, val offer: P2pOfferMessages.Offer, val expiresAtMs: Long)
+    /** nonce -> the metadata (including the decryption key) for an offer whose socket hasn't arrived yet. */
+    private val pendingOffers = HashMap<String, PendingOffer>()
 
     private fun flowFor(contactId: Long): MutableStateFlow<PresenceState> =
         synchronized(states) { states.getOrPut(contactId) { MutableStateFlow(PresenceState.Unknown) } }
@@ -102,11 +119,55 @@ object PresenceCoordinator {
         // A Ping received while Tor is on still gets no reply: replying would itself confirm we're
         // reachable and, if answered honestly with real addresses, defeats the point of Tor being on.
         if (TorControl.route(appContext) != Route.Direct) return
+
+        // Only reply to a contact verified in person, same rule MediaReceiver already enforces before
+        // fetching a media URL: a stranger who merely knows our key must not learn our reachable address.
+        val contact = ContactRepository(MessagingDb.get(appContext)).findByNostrPubkeySync(senderPubkeyHex)
+        if (contact == null || !contact.qrVerified) return
+
+        synchronized(pongedNonces) {
+            prunePonged()
+            pongedNonces[ping.nonce] = contact.id to (System.currentTimeMillis() + PresenceRules.PONGED_TTL_MS)
+        }
         MessagingRuntime.launchIo {
             val body = PresenceMessages.formatPong(ping.nonce, localCandidates())
             val payload = RelayPayload(id = PayloadCodec.newId(), ts = System.currentTimeMillis(), body = body)
             runCatching { Transports.get(appContext).send(senderPubkeyHex, payload) }
         }
+    }
+
+    private fun prunePonged() {
+        val now = System.currentTimeMillis()
+        pongedNonces.entries.removeAll { it.value.second < now }
+    }
+
+    /**
+     * A P2P_OFFER arrived over the normal encrypted message channel: the sender is about to open a
+     * transfer socket carrying this nonce. Only kept if this phone actually answered a Ping with that
+     * exact nonce for that same contact -- an offer alone, without a matching ponged nonce, is dropped.
+     */
+    @Synchronized
+    fun onOffer(senderContactId: Long, offer: P2pOfferMessages.Offer) {
+        val expected = synchronized(pongedNonces) { pongedNonces[offer.nonce] }
+        if (expected == null || expected.first != senderContactId) {
+            Log.i(TAG, "ignored a P2P offer with no matching presence check")
+            return
+        }
+        synchronized(pendingOffers) {
+            prunePendingOffers()
+            pendingOffers[offer.nonce] = PendingOffer(senderContactId, offer, System.currentTimeMillis() + PresenceRules.PONGED_TTL_MS)
+        }
+    }
+
+    /** Single-use: the P2P listener calls this once it has read the socket's nonce header. */
+    fun consumeOffer(nonce: String): Pair<Long, P2pOfferMessages.Offer>? = synchronized(pendingOffers) {
+        prunePendingOffers()
+        pendingOffers.remove(nonce)?.let { it.contactId to it.offer }
+    }
+
+    private fun prunePendingOffers() {
+        val now = System.currentTimeMillis()
+        pendingOffers.entries.removeAll { it.value.expiresAtMs < now }
     }
 
     @Synchronized
@@ -120,7 +181,7 @@ object PresenceCoordinator {
         }
         synchronized(pendingNonces) { pendingNonces.remove(pong.nonce) }
         flowFor(pending.contactId).value =
-            if (pong.candidates.isEmpty()) PresenceState.Offline else PresenceState.Online(pong.candidates)
+            if (pong.candidates.isEmpty()) PresenceState.Offline else PresenceState.Online(pong.candidates, pong.nonce)
     }
 
     /** This phone's own LAN addresses, offered as reachable candidates. Loopback and link-local excluded. */

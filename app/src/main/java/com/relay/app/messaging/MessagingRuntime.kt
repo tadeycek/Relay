@@ -83,6 +83,8 @@ object MessagingRuntime {
 
         watchNetwork(appContext, transport)
 
+        com.relay.app.p2p.P2pListener.ensureListening(appContext)
+
         scope.launch {
             val worker = OutboxWorker(appContext, transport)
             val outbox = OutboxRepository(MessagingDb.get(appContext))

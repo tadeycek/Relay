@@ -15,6 +15,13 @@ object PresenceRules {
     /** How long to wait for a Pong before giving up and treating the contact as offline. */
     const val TIMEOUT_MS = 8_000L
 
+    /**
+     * How long a phone that answered a Ping still honours it — separate from [TIMEOUT_MS], which only
+     * governs how long the *pinger* waits for a reply. Someone who sees "online" needs time to pick a
+     * photo and hit send, not just the few seconds a liveness check itself takes.
+     */
+    const val PONGED_TTL_MS = 5 * 60_000L
+
     fun isExpired(deadlineMs: Long, nowMs: Long): Boolean = nowMs > deadlineMs
 }
 

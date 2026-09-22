@@ -15,6 +15,7 @@ import com.relay.app.data.repository.GroupMessageRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.data.repository.SeenPayloadRepository
 import com.relay.app.media.MediaReceiver
+import com.relay.app.p2p.P2pOfferMessages
 import com.relay.app.p2p.PresenceCoordinator
 import com.relay.app.p2p.PresenceMessages
 import com.relay.app.pairing.PairingCoordinator
@@ -74,6 +75,7 @@ class IncomingMessageHandler(context: Context) {
             return
         }
 
+
         if (contact == null) {
             if (!unknownSenders.tryAcquire(now)) {
                 Log.w(TAG, "unknown-sender flood limit hit; dropping")
@@ -96,6 +98,14 @@ class IncomingMessageHandler(context: Context) {
                 return
             }
             body = opened
+        }
+
+        // The metadata (and decryption key) for a direct transfer whose socket connection is about to
+        // arrive separately -- see P2pOfferMessages. Sealed like MediaRef's key already is, so this check
+        // runs on the decrypted body, unlike pairing/presence which deliberately stay unsealed.
+        P2pOfferMessages.parse(body)?.let { offer ->
+            PresenceCoordinator.onOffer(contact.id, offer)
+            return
         }
 
         val sentAt = TimestampPolicy.resolve(payload.ts, now)
