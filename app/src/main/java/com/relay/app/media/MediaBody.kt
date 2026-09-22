@@ -9,8 +9,9 @@ import java.util.Base64
  * Images and video are far too big for a Nostr event, so the file is encrypted with a fresh random
  * key, the *ciphertext* is uploaded to a media server, and only this small reference travels in the
  * (already end-to-end encrypted) message. The server therefore never sees the plaintext or the key.
- * [sha256Hex] is the hash of the ciphertext blob, which is also its address on the server and lets
- * the receiver detect a tampered or swapped download before decrypting.
+ * [sha256Hex] is the hash of what is actually stored on the server — the ciphertext wrapped in a
+ * structurally valid JPEG (see [MediaContainer]), not the raw ciphertext itself — which is also its
+ * address on the server and lets the receiver detect a tampered or swapped download before decrypting.
  */
 data class MediaRef(
     val url: String,
