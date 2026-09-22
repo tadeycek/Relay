@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import com.relay.app.p2p.P2pSender
 import com.relay.app.p2p.PresenceCoordinator
 import com.relay.app.p2p.PresenceState
 import kotlinx.coroutines.launch
@@ -230,10 +231,65 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * Compresses, encrypts, and sends straight to the other phone -- no media server ever sees any of it.
+     * Only possible while [peerPresence] says they're reachable right now; see PresenceCoordinator.
+     */
+    private fun sendMediaP2p(uri: Uri, mimeType: String, caption: String, contact: Contact, presence: PresenceState.Online, context: Context) {
+        viewModelScope.launch {
+            _toastMessage.emit("Sending...")
+            val outcome = withContext(Dispatchers.IO) {
+                val prepared = if (mimeType.startsWith("image")) {
+                    MediaCompressor.compressImage(context, uri, INTERNET_IMAGE_MAX_BYTES, INTERNET_IMAGE_MAX_DIM)
+                } else {
+                    MediaCompressor.prepareVideo(context, uri, INTERNET_VIDEO_MAX_BYTES, INTERNET_VIDEO_MAX_MS)
+                }
+                when (prepared) {
+                    is MediaCompressor.Result.TooLarge -> Pair(null, prepared.message)
+                    is MediaCompressor.Result.Error -> Pair(null, "Failed to process media")
+                    is MediaCompressor.Result.Success -> {
+                        val plain = prepared.file.readBytes()
+                        when (
+                            val sent = P2pSender.send(context, contact, presence.candidates, presence.nonce, plain, prepared.mimeType, caption)
+                        ) {
+                            is P2pSender.Result.Failed -> Pair(null, sent.reason)
+                            is P2pSender.Result.Sent -> Pair(Triple(sent.msgId, prepared.file, prepared.mimeType), null)
+                        }
+                    }
+                }
+            }
+            val (ok, error) = outcome
+            if (ok == null) {
+                _toastMessage.emit(error ?: "Failed to send")
+                return@launch
+            }
+            val (msgId, file, mime) = ok
+            messageRepo.insertMessage(
+                Message(
+                    contactId = contactId,
+                    body = caption,
+                    type = if (mime.startsWith("image")) MessageType.IMAGE else MessageType.VIDEO,
+                    isSent = true,
+                    mediaUri = file.absolutePath,
+                    msgId = msgId,
+                    // Sent directly, not through the durable outbox -- there is no server-side delivery
+                    // state to show, so this looks the same as an already-delivered message.
+                    deliveryState = DeliveryState.NONE,
+                )
+            )
+            _messages.value = messageRepo.getMessages(contactId)
+        }
+    }
+
     fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context) {
         val contact = _contact.value ?: return
         if (!contact.canUseInternetTransport) {
             viewModelScope.launch { _toastMessage.emit("Scan this contact's QR code to message them") }
+            return
+        }
+        val presence = peerPresence.value
+        if (presence is PresenceState.Online) {
+            sendMediaP2p(uri, mimeType, textBody, contact, presence, context)
             return
         }
         sendMediaOverInternet(uri, mimeType, textBody, contact, context)
