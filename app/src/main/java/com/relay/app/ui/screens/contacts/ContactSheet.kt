@@ -59,10 +59,12 @@ fun ContactSheet(
     onAcceptKey: () -> Unit,
     onRejectKey: () -> Unit,
     onVerify: () -> Unit,
-    onDelete: () -> Unit,
+    onDeleteKeepChat: () -> Unit,
+    onDeleteWithChat: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
+    var confirmDeleteChatToo by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     val trust = trustLineFor(hasKey = contact.nostrPubkey != null, verifiedInPerson = contact.qrVerified)
     val mono = MaterialTheme.typography.bodySmall.copy(fontFamily = IbmPlexMono)
@@ -153,13 +155,42 @@ fun ContactSheet(
     }
 
     if (confirmDelete) {
+        RelayBottomSheet(onDismiss = { confirmDelete = false }) {
+            Text("Delete ${contact.name}?", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+            Text(
+                "You will no longer be able to message them. What should happen to your chat with them?",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextSecondary,
+                modifier = Modifier.padding(top = RelaySpacing.xs),
+            )
+            Column(modifier = Modifier.padding(top = RelaySpacing.lg), verticalArrangement = Arrangement.spacedBy(RelaySpacing.sm)) {
+                SecondaryButton(
+                    "Keep the chat",
+                    { confirmDelete = false; onDeleteKeepChat() },
+                    Modifier.fillMaxWidth(),
+                )
+                Text(
+                    "The conversation stays in Messages, marked as a deleted contact.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextSecondary,
+                )
+                DangerButton(
+                    "Delete the chat too",
+                    { confirmDelete = false; confirmDeleteChatToo = true },
+                    Modifier.fillMaxWidth(),
+                )
+            }
+        }
+    }
+
+    if (confirmDeleteChatToo) {
         ConfirmDialog(
-            title = "Delete ${contact.name}?",
-            message = "Their conversation stays on this phone until you clear it, but you will no longer be able to message them.",
-            confirmLabel = "Delete contact",
+            title = "Delete the chat too?",
+            message = "Every message in this conversation is removed from this phone. This cannot be undone.",
+            confirmLabel = "Delete everything",
             destructive = true,
-            onConfirm = { confirmDelete = false; onDelete() },
-            onDismiss = { confirmDelete = false },
+            onConfirm = { confirmDeleteChatToo = false; onDeleteWithChat() },
+            onDismiss = { confirmDeleteChatToo = false },
         )
     }
 }

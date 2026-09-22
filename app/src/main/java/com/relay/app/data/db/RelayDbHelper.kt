@@ -107,6 +107,11 @@ class RelayDbHelper(context: Context) :
             db.execSQL(DatabaseContract.Messages.INDEX_UNREAD)
             db.execSQL(DatabaseContract.GroupMessages.INDEX_UNREAD)
         }
+        if (oldVersion < 14) {
+            // "Delete, keep the chat": the contact row survives (soft-deleted) so its messages, which
+            // reference it, are unaffected; only a real delete cascades and removes them.
+            db.execSQL(DatabaseContract.Contacts.ADD_DELETED_AT)
+        }
     }
 
     override fun onConfigure(db: SQLiteDatabase) {

@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 13
+    const val DB_VERSION = 14
 
     object Contacts {
         const val TABLE = "contacts"
@@ -18,6 +18,13 @@ object DatabaseContract {
         const val COL_NOSTR_PUBKEY = "nostr_pubkey"
         const val COL_RELAY_HINTS = "relay_hints"
         const val COL_QR_VERIFIED = "qr_verified"
+        /**
+         * Set instead of deleting the row when the user chooses to keep the conversation: the contact
+         * disappears from People and can no longer be messaged (its key is cleared so a future message
+         * from the same person starts a fresh contact instead of silently reviving this one), but the
+         * chat history stays in Messages, labelled as a deleted contact.
+         */
+        const val COL_DELETED_AT = "deleted_at"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -32,13 +39,15 @@ object DatabaseContract {
                 $COL_SIGNING_PUBLIC_KEY TEXT,
                 $COL_NOSTR_PUBKEY TEXT,
                 $COL_RELAY_HINTS TEXT,
-                $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0
+                $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0,
+                $COL_DELETED_AT INTEGER
             )
         """
 
         const val ADD_NOSTR_PUBKEY = "ALTER TABLE $TABLE ADD COLUMN $COL_NOSTR_PUBKEY TEXT"
         const val ADD_RELAY_HINTS = "ALTER TABLE $TABLE ADD COLUMN $COL_RELAY_HINTS TEXT"
         const val ADD_QR_VERIFIED = "ALTER TABLE $TABLE ADD COLUMN $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0"
+        const val ADD_DELETED_AT = "ALTER TABLE $TABLE ADD COLUMN $COL_DELETED_AT INTEGER"
 
         /** One contact per Nostr key. Partial so the many legacy rows with NULL do not collide. */
         const val INDEX_NOSTR_PUBKEY = """

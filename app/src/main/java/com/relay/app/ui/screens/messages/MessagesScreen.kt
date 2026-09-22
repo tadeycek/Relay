@@ -135,7 +135,8 @@ private fun ConversationRow(c: ConversationSummary, onClick: () -> Unit) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f, fill = false),
                 )
-                if (c.isRequest) StatusChip("Not verified", ChipKind.NEUTRAL)
+                if (c.contactDeleted) StatusChip("Deleted", ChipKind.NEUTRAL)
+                else if (c.isRequest) StatusChip("Not verified", ChipKind.NEUTRAL)
             }
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
                 if (c.lastIsSent && c.hasMessages) {

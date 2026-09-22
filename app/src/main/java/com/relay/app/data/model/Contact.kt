@@ -37,9 +37,17 @@ data class Contact(
      * location sharing (see LocationRequestPolicy / MediaReceiver).
      */
     val qrVerified: Boolean = false,
+    /**
+     * Set when the person chose "Delete, but keep this chat" instead of a full delete: the row and its
+     * messages remain (for the chat history) but the contact is hidden from People and can no longer
+     * be messaged. Null means an ordinary, active contact.
+     */
+    val deletedAt: Long? = null,
 ) {
-    /** True when [phone] is a real number rather than the placeholder used for internet-only contacts. */
-    val hasPhone: Boolean get() = !phone.startsWith(NOSTR_PHONE_PREFIX)
+    val isDeleted: Boolean get() = deletedAt != null
+
+    /** True when [phone] is a real number rather than a placeholder (internet-only, or soft-deleted). */
+    val hasPhone: Boolean get() = !isDeleted && !phone.startsWith(NOSTR_PHONE_PREFIX)
 
     /** True when messages to this contact can be delivered over the internet transport. */
     val canUseInternetTransport: Boolean get() = nostrPubkey != null
@@ -47,6 +55,7 @@ data class Contact(
     /** Secondary line for lists: the phone number if there is one, else a short key fingerprint. */
     val subtitle: String
         get() = when {
+            isDeleted -> "Deleted contact"
             hasPhone -> phone
             nostrPubkey != null && !qrVerified ->
                 "Relay ID ${nostrPubkey.take(8)}…${nostrPubkey.takeLast(4)} · unverified"

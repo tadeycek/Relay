@@ -14,14 +14,36 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
     suspend fun getAllContacts(): List<Contact> = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
         val cursor = db.query(
-            Contacts.TABLE, null, null, null, null, null, "${Contacts.COL_NAME} ASC"
+            Contacts.TABLE, null,
+            "${Contacts.COL_DELETED_AT} IS NULL", null, null, null, "${Contacts.COL_NAME} ASC",
         )
         cursor.use { it.toContactList() }
     }
 
+    /** Deletes the contact and, through the foreign key, every message in their chat. */
     suspend fun deleteContact(id: Long) = withContext(Dispatchers.IO) {
         val db = dbHelper.writableDatabase
         db.delete(Contacts.TABLE, "${Contacts.COL_ID} = ?", arrayOf(id.toString()))
+    }
+
+    /**
+     * Removes the contact from People and stops them being messageable, but leaves their chat history
+     * in place. Clears their key so a message from the same person later starts a new contact rather
+     * than silently reviving this one.
+     */
+    suspend fun softDeleteContact(id: Long) = withContext(Dispatchers.IO) {
+        val db = dbHelper.writableDatabase
+        val now = System.currentTimeMillis()
+        val values = ContentValues().apply {
+            put(Contacts.COL_DELETED_AT, now)
+            putNull(Contacts.COL_NOSTR_PUBKEY)
+            putNull(Contacts.COL_PUBLIC_KEY)
+            putNull(Contacts.COL_PENDING_PUBLIC_KEY)
+            // phone is NOT NULL UNIQUE; a re-add from the same key later reuses the exact placeholder
+            // this row used to hold, so it must be freed up here rather than left behind on a dead row.
+            put(Contacts.COL_PHONE, "deleted:$id:$now")
+        }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(id.toString()))
     }
 
     suspend fun getById(id: Long): Contact? = withContext(Dispatchers.IO) {
@@ -225,6 +247,9 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         },
         qrVerified = getColumnIndex(Contacts.COL_QR_VERIFIED).let { idx ->
             idx >= 0 && !isNull(idx) && getInt(idx) == 1
+        },
+        deletedAt = getColumnIndex(Contacts.COL_DELETED_AT).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getLong(idx) else null
         },
     )
 }

@@ -33,7 +33,7 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
                    m.type, m.body, m.timestamp, m.is_sent, m.delivery_state, m.read_at,
                    (SELECT COUNT(*) FROM messages u WHERE u.contact_id = c._id AND u.unread = 1),
                    (SELECT COUNT(*) FROM messages r WHERE r.contact_id = c._id AND r.is_sent = 0),
-                   c.phone
+                   c.phone, c.deleted_at
             FROM contacts c
             INNER JOIN messages m ON m._id = (
                 SELECT _id FROM messages WHERE contact_id = c._id ORDER BY timestamp DESC, _id DESC LIMIT 1
@@ -67,6 +67,7 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
                         glyphSeed = seedFor(c.getString(2), c.getString(13), c.getString(1)),
                         hasKey = !c.isNull(2),
                         verified = c.getInt(3) == 1,
+                        contactDeleted = !c.isNull(14),
                     )
                 )
             }
@@ -76,7 +77,7 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
 
     /** Internet-only contacts store a "nostr:..." placeholder in the phone column; that is not a real number. */
     private fun seedFor(nostrPubkey: String?, phone: String?, name: String): String =
-        GlyphGenerator.seedFor(nostrPubkey, phone?.takeUnless { it.startsWith(Contact.NOSTR_PHONE_PREFIX) }, name)
+        GlyphGenerator.seedFor(nostrPubkey, phone?.takeUnless { it.startsWith(Contact.NOSTR_PHONE_PREFIX) || it.startsWith("deleted:") }, name)
 
     /** Up to four member seeds per group, in one query. */
     private fun memberSeedsByGroup(): Map<Long, List<String>> {

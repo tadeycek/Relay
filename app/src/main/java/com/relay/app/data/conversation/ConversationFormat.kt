@@ -29,6 +29,8 @@ data class ConversationSummary(
     val verified: Boolean = false,
     /** Group only: seeds of up to four members, for the group's 2x2 glyph. */
     val memberSeeds: List<String> = emptyList(),
+    /** Contact only: they were removed with "Delete, but keep this chat" — the chat is read-only. */
+    val contactDeleted: Boolean = false,
 ) {
     enum class Kind { CONTACT, GROUP }
 
