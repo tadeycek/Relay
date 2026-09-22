@@ -92,3 +92,17 @@ removed again.
   screen the app is on), and an explicit "No" message (a "No" just lets the first person's wait run out or be
   cancelled).
 - Untested end to end between two phones.
+
+## "Remove me" message on delete (not built)
+
+Deleting a contact, or deleting the app, only ever clears your own local copy — there is no server that
+knows about the relationship, and Android gives no hook that fires on uninstall to send a farewell message
+anyway. So the other side keeps the contact and can still try to message someone who is gone. This is a
+consequence of the local-only, no-sync storage model, not a bug.
+
+**Idea:** an explicit "Remove them and let them know" action (distinct from plain delete), available only
+while the app is still installed, that sends a small control message ("X removed you") before deleting
+locally. The other side would show the contact as removed and offer to clear it. Cannot help with a plain
+uninstall, since nothing can run after that to send the message.
+
+**Status:** proposed, not started.
