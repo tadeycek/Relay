@@ -132,19 +132,28 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
         }
     }
 
+    fun onNfcText(raw: String) {
+        if (scanned) return
+        val decoded = QrContactCode.decode(raw)
+        if (decoded != null) onDecoded(decoded) else errorMsg = "That is not a Relay code."
+    }
+
     // Holding two phones together reads the same code the camera would, so it takes the same path.
     val nfc = remember { NfcPairing.availability(context) }
     DisposableEffect(Unit) {
         val activity = NfcPairing.activityOf(context)
-        if (activity != null) {
-            NfcPairing.startReading(activity) { raw ->
-                if (!scanned) {
-                    val decoded = QrContactCode.decode(raw)
-                    if (decoded != null) onDecoded(decoded) else errorMsg = "That is not a Relay code."
-                }
-            }
-        }
+        if (activity != null) NfcPairing.startReading(activity, ::onNfcText)
         onDispose { activity?.let { NfcPairing.stopReading(it) } }
+    }
+
+    // A tap reader mode did not catch in time still reaches Relay through the manifest's NDEF
+    // intent-filter (see NfcPairing.handleNdefIntent); pick it up here exactly the same way.
+    val discovered by NfcPairing.discoveredCode.collectAsState()
+    LaunchedEffect(discovered) {
+        discovered?.let {
+            onNfcText(it)
+            NfcPairing.consumeDiscoveredCode()
+        }
     }
 
     if (!hasCameraPermission) {

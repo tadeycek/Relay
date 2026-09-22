@@ -4,10 +4,15 @@ import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.Intent
+import android.nfc.NdefMessage
 import android.nfc.NfcAdapter
 import android.nfc.cardemulation.CardEmulation
 import android.nfc.tech.IsoDep
 import android.util.Log
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /** The Android side of tap-to-pair: what the tag serves, and turning reader mode on and off. */
 object NfcPairing {
@@ -17,6 +22,46 @@ object NfcPairing {
     /** The contact code to serve to a reading phone; set only while the code screen is showing. */
     @Volatile
     var payload: String? = null
+
+    private val _discoveredCode = MutableStateFlow<String?>(null)
+
+    /**
+     * A contact code that arrived through the system's own NFC tag dispatch rather than our reader
+     * mode — see [handleNdefIntent]. The scan screen consumes it exactly like a reader-mode read and
+     * clears it back to null.
+     */
+    val discoveredCode: StateFlow<String?> = _discoveredCode.asStateFlow()
+
+    fun consumeDiscoveredCode() {
+        _discoveredCode.value = null
+    }
+
+    /**
+     * A safety net for reader mode: if this phone was not actively reading at the exact moment of the
+     * tap (a brief window right after opening the screen, or a slow first attempt), Android falls back
+     * to its own default handler for an unclaimed tag instead of quietly failing — and without this,
+     * that handler is the system's "Tag" app, not Relay. Declaring this MIME type in the manifest makes
+     * Relay a candidate for that fallback dispatch too. Returns whether the intent held a contact code.
+     */
+    fun handleNdefIntent(intent: Intent?): Boolean {
+        if (intent?.action != NfcAdapter.ACTION_NDEF_DISCOVERED) return false
+        val messages = intent.parcelableArrayExtra(NfcAdapter.EXTRA_NDEF_MESSAGES) ?: return false
+        for (msg in messages) {
+            val ndef = msg as? NdefMessage ?: continue
+            for (record in ndef.records) {
+                if (record.toMimeType() == Type4Tag.MIME_TYPE) {
+                    _discoveredCode.value = String(record.payload, Charsets.UTF_8)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    @Suppress("DEPRECATION")
+    private fun Intent.parcelableArrayExtra(name: String): Array<out android.os.Parcelable>? =
+        if (android.os.Build.VERSION.SDK_INT >= 33) getParcelableArrayExtra(name, NdefMessage::class.java)
+        else getParcelableArrayExtra(name)
 
     enum class Availability { NONE, OFF, ON }
 

@@ -48,6 +48,10 @@ class MainActivity : FragmentActivity() {
     // MessageNotifier). Null when there's nothing pending.
     private val pendingChatContactId = mutableStateOf<Long?>(null)
 
+    // A tap the system routed to Relay via the manifest's NDEF intent-filter rather than reader mode
+    // (see NfcPairing.handleNdefIntent) — jump to the scan screen so the code it carried is not lost.
+    private val pendingOpenScan = mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -56,6 +60,7 @@ class MainActivity : FragmentActivity() {
         PairingCoordinator.restore(applicationContext)
         pendingOpenContacts.value = intent?.getBooleanExtra("open_contacts", false) == true
         handleOpenChatIntent(intent)
+        pendingOpenScan.value = com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)
         setContent {
             RelayTheme {
                 val prefs = remember { RelayPreferences(applicationContext) }
@@ -94,6 +99,14 @@ class MainActivity : FragmentActivity() {
                             pendingChatContactId.value = null
                         }
                     }
+
+                    val shouldOpenScan by pendingOpenScan
+                    LaunchedEffect(shouldOpenScan) {
+                        if (shouldOpenScan) {
+                            navController.navigate(Screen.QrExchange.route)
+                            pendingOpenScan.value = false
+                        }
+                    }
                 }
             }
         }
@@ -106,6 +119,7 @@ class MainActivity : FragmentActivity() {
             pendingOpenContacts.value = true
         }
         handleOpenChatIntent(intent)
+        if (com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)) pendingOpenScan.value = true
     }
 
     /** Tap on a new-message notification (see MessageNotifier): jump straight to that chat. */
