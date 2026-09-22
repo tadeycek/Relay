@@ -103,6 +103,51 @@ removed again.
   problem and can do both. This looks like a hardware/OS limitation of that specific phone, not a Relay bug;
   QR stays the reliable fallback either way.
 
+## Direct phone-to-phone photo/video transfer (built)
+
+Three public Blossom media servers (`blossom.nostr.build`, `blossom.band`, `cdn.satellite.earth`) all
+proved unusable — the first two run real image-processing pipelines that reject encrypted content no
+matter how it's wrapped (confirmed on device: HTTP 415, then 400, then 500 once each successive fix got
+past the previous rejection), and `cdn.satellite.earth` never produced a clear result. Rather than keep
+guessing at more third-party servers, photos and videos now go straight from one phone to the other —
+no server touches them at all — and only when the recipient is reachable right now.
+
+**How it works:**
+- Opening a verified contact's chat sends a one-time "are you there?" check over the normal Nostr
+  transport (never a standing broadcast — nothing about being online is revealed to anyone until they
+  are actively trying to send something, the same way a location request already works).
+- A reply carries the sender's reachable addresses: their LAN IP always, plus a best-effort external
+  address via UPnP router port mapping when one is available.
+- The attach button is disabled with a plain caption ("Checking…" / "They're not online right now" /
+  "Photos and videos are off while Tor is on") until a reply marks them reachable.
+- Sending: the decryption key and file metadata travel over the normal end-to-end encrypted message
+  channel (sealed, exactly like today's Blossom `MediaRef` key already is); only the raw ciphertext
+  itself crosses a direct socket to the recipient's phone. The key is never on the same channel as the
+  bytes it decrypts — critical, since the alternative would make the encryption pointless.
+- Both the offer and the socket connection are authenticated by a single-use nonce that only ever
+  reached the real recipient through the Nostr-authenticated ping/pong exchange (mirrors how
+  `PairingSessions.consume` authenticates pairing).
+
+**Known limits, by design:**
+- **Disabled entirely whenever Tor is on.** A direct transfer reveals the sender's IP to the recipient
+  by design, and NAT traversal needs raw UDP, which cannot be routed through Tor's SOCKS proxy. Rather
+  than carve an exception into the app's fail-closed privacy guarantee, P2P is simply switched off —
+  the attach caption explains why instead of running a check.
+- **Same-Wi-Fi transfers are the reliable case** (a direct LAN connection has no NAT problem at all).
+  **Cross-network transfers are genuinely best-effort** — no TURN relay (that would be exactly the kind
+  of server this feature exists to avoid), so if UPnP isn't available (most mobile data / CGNAT
+  connections have no router to ask at all, and plenty of home routers ship with UPnP disabled) or the
+  direct connect otherwise fails, the transfer fails with a plain message ("Couldn't connect directly —
+  this doesn't always work across different networks") rather than a silent retry or a fallback to
+  Blossom.
+- **On-device verification status:** compiles, and the pure wire/offer/presence formats are unit-tested
+  (round-trips, malformed input, timing). The actual socket transfer between two real phones — same
+  Wi-Fi first, then across networks — has not yet been run.
+
+**Not built:** a TURN-relay fallback for when direct connection fails (would need a server, which is
+what this feature was built to avoid); NAT-PMP as an alternative to UPnP; IPv6 candidates (IPv4-only
+for now).
+
 ## "Remove me" message on delete (not built)
 
 Deleting a contact, or deleting the app, only ever clears your own local copy — there is no server that
