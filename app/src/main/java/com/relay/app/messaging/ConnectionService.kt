@@ -3,7 +3,6 @@ package com.relay.app.messaging
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -14,7 +13,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
-import com.relay.app.MainActivity
 import com.relay.app.transport.TransportStatus
 import com.relay.app.transport.Transports
 import kotlinx.coroutines.CoroutineScope
@@ -105,20 +103,15 @@ class ConnectionService : Service() {
         }
 
         private fun buildNotification(context: Context, status: TransportStatus): Notification {
-            val open = PendingIntent.getActivity(
-                context, 0,
-                Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_SINGLE_TOP },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-            )
             return NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-                .setContentTitle("Relay")
+                .setContentTitle("Calculator")
                 .setContentText(statusText(status))
                 .setOngoing(true)
                 .setSilent(true)
                 .setPriority(NotificationCompat.PRIORITY_MIN)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
-                .setContentIntent(open)
+                .setContentIntent(null)
                 .build()
         }
     }

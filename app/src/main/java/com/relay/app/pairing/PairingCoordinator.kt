@@ -59,12 +59,13 @@ object PairingCoordinator {
     private const val PREFS = "relay_pairing"
     private const val KEY_OUTGOING = "outgoing"
 
-    val sessions = PairingSessions()
+    val sessions = PairingSessions(clock = android.os.SystemClock::elapsedRealtime)
 
-    private val _shownNonce = MutableStateFlow(sessions.current())
+    data class ShownCode(val nonce: String, val expiresAtMs: Long)
+    private val _shownCode = MutableStateFlow<ShownCode?>(null)
 
     /** The one-time code the "Show my code" screen must currently encode. */
-    val shownNonce: StateFlow<String> = _shownNonce.asStateFlow()
+    val shownCode: StateFlow<ShownCode?> = _shownCode.asStateFlow()
 
     private val _incoming = MutableStateFlow<IncomingPairing?>(null)
     val incoming: StateFlow<IncomingPairing?> = _incoming.asStateFlow()
@@ -76,8 +77,19 @@ object PairingCoordinator {
     val events: SharedFlow<PairingEvent> = _events.asSharedFlow()
 
     /** Called on a timer by the code screen so an unused code rotates instead of living forever. */
-    fun refreshShownNonce() {
-        _shownNonce.value = sessions.current()
+    @Synchronized
+    fun startShowingCode() {
+        publishShownCode(sessions.issue())
+    }
+
+    @Synchronized
+    fun refreshShownCode() {
+        val nonce = sessions.current()
+        if (_shownCode.value?.nonce != nonce) publishShownCode(nonce)
+    }
+
+    private fun publishShownCode(nonce: String) {
+        _shownCode.value = ShownCode(nonce, System.currentTimeMillis() + sessions.remainingMs(nonce))
     }
 
     /** Picks up a pairing that was waiting when the app last stopped. */
@@ -101,6 +113,7 @@ object PairingCoordinator {
     @Synchronized
     fun startOutgoing(context: Context, scanned: QrContactCode.ScannedContact): Boolean {
         val appContext = context.applicationContext
+        if (!QrContactCode.isUsableInvitation(scanned)) return false
         val nonce = scanned.pairNonce ?: return false
         val peer = scanned.nostrPubkeyHex ?: return false
         val myKey = RelayCrypto.myPublicKeyBase64(appContext) ?: return false
@@ -219,7 +232,7 @@ object PairingCoordinator {
             Log.i(TAG, "ignored a pairing request with an unknown or used code")
             return
         }
-        _shownNonce.value = sessions.current()
+        refreshShownCode()
 
         val incoming = IncomingPairing(sender, req.name, req.publicKeyBase64, req.signingPublicKeyBase64, req.nonce, deadline)
         if (PairingRules.isCrossRequest(_outgoing.value, sender)) {

@@ -16,7 +16,6 @@ import com.relay.app.data.repository.MessageRepository
 import com.relay.app.data.repository.SeenPayloadRepository
 import com.relay.app.media.MediaReceiver
 import com.relay.app.p2p.P2pOfferMessages
-import com.relay.app.p2p.PresenceCoordinator
 import com.relay.app.p2p.PresenceMessages
 import com.relay.app.pairing.PairingCoordinator
 import com.relay.app.pairing.PairingMessages
@@ -66,14 +65,9 @@ class IncomingMessageHandler(context: Context) {
             return
         }
 
-        // Presence check ("are you online, how do I reach you"): a blocked contact gets no reply, so
-        // blocking someone also stops them learning whether this phone is reachable right now.
-        PresenceMessages.parse(payload.body)?.let { presence ->
-            if (contact?.trustLevel != ContactTrustLevel.BLOCKED) {
-                PresenceCoordinator.onMessage(appContext, envelope.senderPubkeyHex, presence)
-            }
-            return
-        }
+        // Direct peer transfers were replaced by encrypted blob uploads. Ignore old probes so
+        // a contact cannot make this app disclose LAN/public IP candidates or open a UPnP mapping.
+        if (PresenceMessages.parse(payload.body) != null) return
 
 
         if (contact == null) {
@@ -100,13 +94,8 @@ class IncomingMessageHandler(context: Context) {
             body = opened
         }
 
-        // The metadata (and decryption key) for a direct transfer whose socket connection is about to
-        // arrive separately -- see P2pOfferMessages. Sealed like MediaRef's key already is, so this check
-        // runs on the decrypted body, unlike pairing/presence which deliberately stay unsealed.
-        P2pOfferMessages.parse(body)?.let { offer ->
-            PresenceCoordinator.onOffer(contact.id, offer)
-            return
-        }
+        // Retired direct-transfer offers never start a listening socket.
+        if (P2pOfferMessages.parse(body) != null) return
 
         val sentAt = TimestampPolicy.resolve(payload.ts, now)
 
@@ -155,7 +144,7 @@ class IncomingMessageHandler(context: Context) {
                 storeReceived(contact, body, MessageType.TEXT, payload.id, sentAt, now)
                 routeToGroups(contact, body, MessageType.TEXT, sentAt, null, null, null, null)
                 notifyUpdated(contact.id)
-                MessageNotifier.notifyIncoming(appContext, contact, MessageType.TEXT)
+                MessageNotifier.notifyIncoming(appContext, contact, MessageType.TEXT, body)
             }
         }
     }

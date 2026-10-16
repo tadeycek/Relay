@@ -1,8 +1,76 @@
 # Relay
 
-Relay is an Android messenger with built-in location sharing. Messages travel over the **internet** as end-to-end encrypted Nostr private messages (NIP-17) through public relays, so there is no server of our own, no accounts, no phone number, and no SMS/MMS permissions. Contacts are added by scanning each other's QR codes in person.
+## Calculator entry and Control Panel
 
-> **Status:** rebuilt from an SMS/MMS app (see `rebuild/`). It compiles, lints without errors, and has 107 passing JVM unit tests. It **has been installed and launched on one Android 16 phone** (the relay connection shows as connected and the new navigation renders), but two-phone messaging, offline delivery, media and Tor are **unverified**. See `rebuild/PROGRESS.md` for exactly what is and is not verified.
+The Android launcher is **Calculator**, with the supplied calculator icon. It opens a working basic
+calculator with decimal arithmetic, precedence, parentheses, percentages, clear and delete. On first
+use, enter **four digits, then +** to set the private entry code and open messaging. Later, press C,
+enter the same four digits and +. Leaving the private screens returns to the calculator. Calculated
+results do not count as code attempts. Three incorrect four-digit submissions lock messaging until
+the owner sends an unblock. The calculator keeps working. The original code is required afterwards.
+PIN verification, counters, recovery credentials and the separate recovery identity are stored in
+Keystore-backed encrypted preferences, excluded from backup. This UI gate does not secure a rooted
+or otherwise compromised device.
+
+Message notifications show purple conversation-style previews with sender and text. They have no
+content intent or reply action, so tapping them does not open the app. Android attributes them to
+**Calculator**. Previews expose message text to anyone allowed to see notifications on the device;
+system lock-screen settings also apply. The app does not impersonate the genuine Viber app.
+
+Run `owner/run.sh` to open the native Linux **Control Panel**, with the supplied figure icon in
+`owner/assets/control-panel.png`. The helper installs the pinned rust-nostr Python SDK in an ignored
+local virtual environment on first use. Python with Tk is required. Install the app-menu shortcut
+with `python3 owner/install-desktop.py`. It uses `com.relay.ControlPanel.desktop`, backing up and
+removing this checkout's obsolete Calculator Owner shortcut.
+
+**No separately hosted HTTP/HTTPS service is needed for recovery.** The panel receives encrypted
+reports and sends encrypted, signed unblock commands through public Nostr relays. Only the panel
+holds the owner signing key. Each phone pins that owner's public key and checks that a command
+matches its own installation. Older commands cannot clear a newer lockout. Phones use a recovery
+identity separate from their conversation identity; the panel receives neither conversation keys,
+contacts, messages nor PINs. Both the panel and phone need internet; an offline phone waits until
+it reconnects. Public relay retention and availability are outside this project's control.
+
+**Main logs** shows the latest 300 access reports, owner actions and consent changes. Double-click
+an entry to open **Individual installations**, or select a random recovery ID there and click
+**Unblock selected**. Up to 100 access events per installation and 1,000 owner/consent actions are
+retained. Received times show when reports reached the panel, including delayed offline reports;
+access state does not prove a phone is currently online. Account → Security shows the recovery ID.
+Reinstalling or clearing app data creates a new identity/installation and loses local history.
+
+Optional diagnostics are **off by default**. Account → Security asks the phone user to explicitly
+agree before sending manufacturer/model, Android/app versions, network type and this app's
+camera/location/notification permission states. No extra Android permission is requested. Only the
+latest report is kept, expiring after 7 days without updates. Turning sharing off requests deletion
+when the phone reconnects; signed diagnostic revisions stop older opt-in messages undoing a later
+revocation. These are self-reported summaries, not attestation or a comprehensive leak scan.
+**Relay recovery does not reveal the phone's connection IP to Control Panel.** Relay providers can
+see connecting addresses unless Tor is used. No separate IP-discovery request is made.
+
+`owner/run.sh --prepare` creates the private owner identity under git-excluded `.local/owner/` and
+writes only its public key into the build configuration. The Android build helper does this first.
+The distributable APK contains the owner public key, with no local service token or owner private
+key. Use the existing Control Panel on this computer to manage that APK. Protect and back up the
+private owner state separately; a fresh source checkout generates a different owner identity.
+Publishing the owner private key would let other people issue recovery commands.
+
+Recovery follows the phone's Tor policy and waits when Tor is required but unavailable. Legacy HTTP
+helpers remain only for regression/compatibility checks; the configured relay mode opens no owner
+web server. The new app does not use an HTTP owner endpoint.
+
+Build a test APK with `rebuild/dev/build.sh -PrelayPreview=true assembleDebug`. Package it using
+`python3 rebuild/dev/package.py --apk app/build/outputs/apk/debug/app-debug.apk --output <new-folder>`.
+The numbered package puts the APK first, then instructions, verification, full Android/Control Panel
+source and checksums. See [DISTRIBUTION.md](rebuild/DISTRIBUTION.md) and
+[VERIFICATION.md](rebuild/VERIFICATION.md) for the measured scope and remaining limits.
+
+Relay is an Android messenger with built-in location sharing. Messages travel over the internet as
+end-to-end encrypted Nostr private messages (NIP-17), without a phone number or SMS/MMS permissions.
+Contacts are added by expiring QR invitations and mutual approval. Control Panel tracks anonymous
+installation access and manages recovery, with separately consented diagnostics.
+
+> **Status:** test build, not an audited production release. Current build/test results and what still
+> needs physical-device verification are recorded in [VERIFICATION.md](rebuild/VERIFICATION.md).
 
 ## Features and how they work
 
@@ -15,14 +83,14 @@ Relay is an Android messenger with built-in location sharing. Messages travel ov
 
 ### Pairing and trust
 - Each install has a Nostr identity (secp256k1) plus the Tink keys below. **My code** shows a QR containing your name, Nostr key, Tink public keys and up to 3 relay hints — no phone number.
-- Scanning a code trusts those keys immediately and marks the contact **verified (met in person)**. Contacts who only know your key and message you first appear as **unverified**: they get no automatic media download and can never trigger an automatic location share.
+- A displayed invitation expires after 30 minutes and is single-use. Scanning it starts mutual approval; both devices must agree before the contact is marked **verified (met in person)**. The display rotates expired/used codes, and terminating the issuer app process invalidates unused codes. Existing contacts are unaffected by invitation expiry. Contacts who only know your key and message you first appear as **unverified**: they get no automatic media download and can never trigger an automatic location share.
 - Old-style QR codes from the SMS version are rejected; contacts from that era stay visible with their history but must re-pair by QR.
 
 ### Location sharing (no map)
 There is no map screen. In a chat, **Share my location** sends your current position (it expires after the time set in Settings) and **Request location** asks for theirs; a shared location appears as a card with coordinates and **Tap to open in Maps**, which hands it to your own maps app. Requests can be answered automatically only for **Trusted** contacts, or for **verified** contacts if auto-approve is on; otherwise you get a Share/Decline notification. Do-Not-Disturb hours and "who can request my location" apply. Replying while the app is closed cannot read the location (no background location permission).
 
 ### Photos and video
-Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. If an upload fails the user must retry. The default Blossom servers are **unverified**.
+Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. If an upload fails the user must retry. The defaults are `blossom.ditto.pub` and `blossom.data.haus`; encrypted binary upload/download, hash verification, decryption and cleanup were tested at the 3 MiB photo limit. Availability and retention can change. Gallery access uses selected-URI grants and survives Calculator relocking. A direct peer connection is not required.
 
 ### Groups
 Lightweight, local groups; sending fans out one message per member (NIP-17 discourages groups beyond ~10). There is no group membership authentication.
@@ -42,21 +110,21 @@ Layers, from outside in:
 Threat-model notes: metadata (who talks to whom, when, message size) is partly visible to relays; a compromised phone defeats all of it; scanning the wrong QR code securely connects you to the wrong person. This is a hobby/friends project, not an audited secure messenger.
 
 ### Known gaps
-- **Only lightly device-tested.** It has been installed on one phone; two-phone messaging, relay retention, foreground-service survival through Doze/OEM killers, battery cost, media and real Tor behaviour are unmeasured.
+- **Physical devices still need tests.** Two-emulator pairing and text replies work through public relays. Relay retention, physical-camera QR scanning, foreground-service survival through Doze/OEM killers, battery cost and real Tor behavior remain unmeasured.
 - Outgoing media is kept as a plaintext cache file (needed to display and to upload); only received media is encrypted at rest.
 - No chat-history export or backup: a phone swap loses history and identity (keys are Keystore-bound), and contacts must re-pair.
 - Media uploads are not retried automatically.
-- Public relay/Blossom defaults are placeholders whose policies were not verified.
+- Public relay/blob-server retention and continued availability are not guaranteed.
 - No `.onion` relays are bundled; relay list editing UI is not built (defaults/preferences only).
 - Group sends have no membership authentication or rate awareness.
 - No license file yet.
-- No instrumented (on-device) tests; the JVM tests cover the pure logic (codecs, crypto helpers, policies, download checks), not Android/Keystore/network integration.
+- Android tests cover Calculator access, Keystore persistence, notifications and layout; the opt-in two-emulator harness checks live conversations. Real-phone and Tor integration still need device tests.
 
 ## Tech stack
 - Kotlin, Jetpack Compose (Material 3), Android SDK 26+ (compile/target 36), JDK 17
 - `org.rust-nostr:nostr-sdk-kmp-android:0.44.8` (alpha-quality Kotlin bindings; wrapped behind `com.relay.app.transport`)
 - SQLCipher, Google Tink, WorkManager, CameraX + ML Kit (QR), zxing
-- Kotlin coroutines; no backend, no analytics
+- Kotlin coroutines; separate owner service for the installation/access reports described above
 
 ## Project structure (`app/src/main/java/com/relay/app`)
 - `transport/` — `Transport` interface, `NostrTransport`, Nostr identity, payload codec, outbox policy, dedupe, Tor route policy
@@ -71,10 +139,40 @@ Threat-model notes: metadata (who talks to whom, when, message size) is partly v
 ## Build and run
 The build files pin `org.gradle.java.home=/opt/android-studio/jbr`; on other machines override it (`-Dorg.gradle.java.home=<JDK 17>`).
 
+### This computer
+
+The active checkout is `Relay-rebuild`, branch `feat/rebuild`.
+The separate `../Relay` directory contains the earlier `main` branch and is not this app.
+
+Installed user-local tools: JDK 17 at `~/.local/share/relay-tools/jdk-17`, Android SDK at
+`~/Android/Sdk` (platform 36, build tools, platform tools, command-line tools and emulator),
+and the Gradle 8.14 wrapper distribution. Android Studio is optional and is not installed.
+The system Java installation is unchanged.
+
+From this checkout:
+
+```sh
+rebuild/dev/build.sh                                      # Build the debug APK
+rebuild/dev/build.sh testDebugUnitTest lintDebug           # Run existing checks
+rebuild/dev/run-emulator.sh                               # Install and open on Relay_API_35
+source rebuild/dev/env.sh                                # Make adb/emulator available in this terminal
+```
+
+The launcher only targets the dedicated emulator, not a connected physical phone.
+Keep its terminal open if it starts the emulator. This Fedora host uses Mesa llvmpipe
+with `-gpu host -feature -Vulkan`; the bundled renderers and the NVK hardware path
+crashed. The launch helper includes the working settings. Local logs and screenshots
+are in the git-excluded `.local/` directory.
+
+Current verification and known limits are recorded in [VERIFICATION.md](rebuild/VERIFICATION.md).
+The original setup check used upstream commit `bb88bff`; the working preview adds the changes above.
+
+### Other development machines
+
 1. JDK 17, Android SDK platform 36 (Android Studio provides both).
 2. `./gradlew assembleDebug` (or `rebuild/dev/build.sh :app:assembleDebug` under WSL, see `rebuild/09-dev-environment.md`).
 3. `./gradlew testDebugUnitTest` runs the JVM unit tests.
-4. Two real phones are needed to test a conversation; no SIM is required. A debug-only relay probe is at `com.relay.app/.lab.RelayLabActivity` (launch with `adb shell am start`).
+4. Two separate installs are needed to test a conversation; no SIM is required. On dedicated emulators, install the app and test APK on each, then run `python3 rebuild/dev/test-two-emulators.py`. This uses fixture names Alice/Bob and test code 4826; see its help before running. A debug-only relay probe is at `com.relay.app/.lab.RelayLabActivity` (launch with `adb shell am start`).
 
 The debug APK is ~84 MB because it bundles native libraries for four ABIs; use ABI splits or an AAB for release.
 

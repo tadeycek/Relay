@@ -15,6 +15,7 @@ class RelayApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        com.relay.app.calculator.OwnerSync.start(this)
         schedulePinExpiryAlarm()
         scheduleKeyRotationCheck()
         // Connect the internet transport, receive messages and drain the outbox for as long as the

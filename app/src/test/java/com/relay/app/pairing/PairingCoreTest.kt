@@ -40,10 +40,11 @@ class PairingCoreTest {
         var now = 0L
         val s = PairingSessions(clock = { now })
         val n = s.issue()
-        now = PairingRules.NONCE_TTL_MS
-        assertTrue("still valid exactly at the limit", s.consume(n))
+        assertEquals(30 * 60 * 1000L, PairingRules.NONCE_TTL_MS)
+        now = PairingRules.NONCE_TTL_MS - 1
+        assertTrue("valid just before thirty minutes", s.consume(n))
         val n2 = s.issue()
-        now += PairingRules.NONCE_TTL_MS + 1
+        now += PairingRules.NONCE_TTL_MS
         assertFalse(s.consume(n2))
     }
 
@@ -58,6 +59,36 @@ class PairingCoreTest {
         assertNotEquals(first, second)
         now += PairingRules.NONCE_TTL_MS + 1
         assertNotEquals(second, s.current())
+    }
+
+    @Test
+    fun thirtyMinuteCodeCannotBeReplayedOrExtendedByRequestingCurrent() {
+        var now = 0L
+        val s = PairingSessions(clock = { now })
+        val original = s.current()
+        now = 29 * 60 * 1000L
+        assertEquals(original, s.current())
+        assertEquals(60_000L, s.remainingMs(original))
+        now = 30 * 60 * 1000L
+        assertFalse(s.consume(original))
+        assertNotEquals(original, s.current())
+        assertEquals(0, s.remainingMs(original))
+    }
+
+    @Test
+    fun expiringQrRoundTripsAndIsRejectedAtThirtyMinutes() {
+        val start = 1_000_000L
+        val raw = QrContactCode.encode("Bea", npubB, "S0VZ", pairNonce = nonce,
+            expiresAtMs = start + 30 * 60 * 1000L)
+        assertTrue(raw.startsWith("RELAYQR:5|"))
+        val decoded = QrContactCode.decode(raw)!!
+        assertTrue(QrContactCode.isUsableInvitation(decoded, start + 30 * 60 * 1000L - 1))
+        assertFalse(QrContactCode.isUsableInvitation(decoded, start + 30 * 60 * 1000L))
+        assertFalse(QrContactCode.isUsableInvitation(decoded, start + 31 * 60 * 1000L))
+        assertNull(QrContactCode.decode(raw.replace("|EXPIRES:${decoded.expiresAtMs}", "")))
+        assertNull(QrContactCode.decode(raw.replace("|PAIR:$nonce", "")))
+        assertFalse(QrContactCode.isUsableInvitation(QrContactCode.decode(
+            QrContactCode.encode("Bea", npubB, "S0VZ", pairNonce = nonce))!!, start))
     }
 
     @Test

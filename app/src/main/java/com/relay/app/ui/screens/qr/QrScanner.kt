@@ -85,7 +85,9 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
         // Guard against scanning your own code (e.g. a screenshot / second device): it would
         // create a self-contact and send a handshake to ourselves.
         if (!QrContactExchange.canPair(value)) {
-            errorMsg = "That's an older Relay code. Ask them to update the app."
+            errorMsg = if (value.expiresAtMs != null && value.expiresAtMs <= System.currentTimeMillis())
+                "This code has expired. Ask them to show a fresh code."
+            else "This code has no valid expiry. Ask them to update the app and show a fresh code."
             return
         }
         val myNostr = runCatching { NostrIdentity.publicKeyHex(context) }.getOrNull()

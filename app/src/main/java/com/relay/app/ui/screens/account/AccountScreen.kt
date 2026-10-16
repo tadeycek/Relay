@@ -70,7 +70,7 @@ fun AccountScreen(navController: NavController) {
     Column(modifier = Modifier.fillMaxSize().background(Background)) {
         ScreenHeader(title = "Account")
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Profile(status = vm.connectionStatus, onShowCode = { navController.navigate(Screen.QrExchange.route) })
+            Profile(status = vm.connectionStatus, onShowCode = { navController.navigate(Screen.QrMyCode.route) })
             AccountPage.entries.forEach { page ->
                 RowDivider()
                 LinkRow(

@@ -69,6 +69,8 @@ class NostrTransport(
     /** Evaluated at every (re)connect: direct, via a SOCKS proxy (Tor), or blocked (Tor required but down). */
     private val route: () -> Route = { Route.Direct },
     private val lastSeenStore: LastSeenStore = PrefsLastSeenStore(context),
+    private val identity: () -> Keys = { NostrIdentity.keys(context) },
+    private val publishAndDiscoverInbox: Boolean = true,
 ) : Transport {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -123,7 +125,7 @@ class NostrTransport(
         relayHints: List<String>,
     ): SendResult {
         val c = client ?: return SendResult.Failed("Transport not connected", retryable = true)
-        val me = NostrIdentity.keys(context)
+        val me = identity()
         val receiver = try {
             PublicKey.parse(recipientPubkeyHex)
         } catch (e: Exception) {
@@ -131,7 +133,7 @@ class NostrTransport(
         }
         return try {
             // NIP-17: publish to the recipient's own inbox relays when they have published a list.
-            val published = inboxRelaysFor(c, receiver, recipientPubkeyHex)
+            val published = if (publishAndDiscoverInbox) inboxRelaysFor(c, receiver, recipientPubkeyHex) else null
             val targets = InboxRelays.resolveTargets(published, relayHints, relays())
             val urls = targets.mapNotNull { runCatching { RelayUrl.parse(it) }.getOrNull() }
             if (urls.isEmpty()) return SendResult.Failed("No usable relays configured", retryable = false)
@@ -159,7 +161,7 @@ class NostrTransport(
             }
             try {
                 _status.value = TransportStatus.CONNECTING
-                val keys = NostrIdentity.keys(context)
+                val keys = identity()
                 val s = NostrSigner.keys(keys)
                 val c = buildClient(s, currentRoute as? Route.Socks)
                 if (gen != generation) {
@@ -182,7 +184,7 @@ class NostrTransport(
                 if (gen == generation) _status.value = TransportStatus.ONLINE
                 failures = 0
                 // Best effort: tell others where to reach us (NIP-17 kind 10050).
-                runCatching { publishInboxList(c, keys) }
+                runCatching { if (publishAndDiscoverInbox) publishInboxList(c, keys) }
                     .onFailure { Log.d(TAG, "inbox relay list not published: ${it.message}") }
 
                 // Blocks until the notification stream ends or the client is torn down.

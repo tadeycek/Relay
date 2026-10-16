@@ -68,10 +68,10 @@ private enum class QrTab { SCAN, MY_CODE }
 
 /** Meeting in person: scan a friend's code, then let them scan yours. This is what "verified" means. */
 @Composable
-fun QrExchangeScreen(navController: NavController) {
+fun QrExchangeScreen(navController: NavController, showMyCodeInitially: Boolean = false) {
     val context = LocalContext.current
     val prefs = remember { RelayPreferences(context) }
-    var selectedTab by remember { mutableStateOf(QrTab.SCAN) }
+    var selectedTab by remember { mutableStateOf(if (showMyCodeInitially) QrTab.MY_CODE else QrTab.SCAN) }
     var pendingContactId by remember { mutableStateOf<Long?>(null) }
     // True when the other person also said yes, so both sides are already verified.
     var mutual by remember { mutableStateOf(false) }
@@ -110,7 +110,7 @@ fun QrExchangeScreen(navController: NavController) {
                 mutual = mutual,
                 onProceedToChat = { contactId ->
                     navController.navigate(Screen.Chat.routeFor(contactId)) {
-                        popUpTo(Screen.QrExchange.route) { inclusive = true }
+                        popUpTo(if (showMyCodeInitially) Screen.QrMyCode.route else Screen.QrExchange.route) { inclusive = true }
                     }
                 },
             )
@@ -215,16 +215,20 @@ private fun MyCodeTab(
             // stall here would freeze at the worst moment). null bitmap after done = failure.
             var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
             var qrFailed by remember { mutableStateOf(false) }
-            val nonce by PairingCoordinator.shownNonce.collectAsState()
+            val invitation by PairingCoordinator.shownCode.collectAsState()
+            var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
             // An unused code rotates, so a code someone photographed earlier stops working.
             LaunchedEffect(Unit) {
-                PairingCoordinator.refreshShownNonce() // the app may have been open longer than a code lives
+                PairingCoordinator.startShowingCode()
                 while (true) {
-                    delay(60_000)
-                    PairingCoordinator.refreshShownNonce()
+                    delay(1_000)
+                    nowMs = System.currentTimeMillis()
+                    PairingCoordinator.refreshShownCode()
                 }
             }
-            LaunchedEffect(prefs.myName, nonce) {
+            LaunchedEffect(prefs.myName, invitation) {
+                val active = invitation ?: return@LaunchedEffect
+                qrBitmap = null
                 qrFailed = false
                 val bmp = withContext(Dispatchers.Default) {
                     val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return@withContext null
@@ -236,7 +240,8 @@ private fun MyCodeTab(
                         publicKeyBase64 = myKey,
                         signingPublicKeyBase64 = mySigningKey,
                         relayHints = prefs.nostrRelays.take(3),
-                        pairNonce = nonce,
+                        pairNonce = active.nonce,
+                        expiresAtMs = active.expiresAtMs,
                     )
                     NfcPairing.payload = code // the same code, served to a phone that is held against this one
                     encodeQrBitmap(code, 800)
@@ -258,6 +263,11 @@ private fun MyCodeTab(
                             .padding(RelaySpacing.md),
                     )
                     Text(prefs.myName, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                    val seconds = ((invitation?.expiresAtMs ?: nowMs) - nowMs).coerceAtLeast(0) / 1_000
+                    Text("Expires in %d:%02d · one use".format(seconds / 60, seconds % 60),
+                        style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    Text("Valid for 30 minutes. An expired code cannot add you; a fresh one appears here automatically.",
+                        style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
                     when (nfc) {
                         NfcPairing.Availability.ON -> Column {
                             Text("Or hold the back of your phone against theirs.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)

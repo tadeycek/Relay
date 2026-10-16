@@ -11,7 +11,12 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import com.relay.app.calculator.CalculatorAccessStore
 import com.relay.app.data.model.PinExpiry
 import com.relay.app.transport.TransportStatus
 import com.relay.app.ui.components.ChoiceRow
@@ -182,6 +187,21 @@ private fun PrivacyPage(vm: SettingsViewModel) {
 
 @Composable
 private fun SecurityPage(vm: SettingsViewModel) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
+    val recoveryId = remember { CalculatorAccessStore.get(context).credentials().first }
+    SectionHeader("Calculator access")
+    Text("Three wrong codes lock messaging until the owner clears the lockout. " +
+        "The owner receives a random installation ID and access reports, not your messages or code.",
+        style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+    ListRow(
+        headline = "Recovery ID",
+        supporting = recoveryId,
+        onClick = { clipboard.setText(AnnotatedString(recoveryId)) },
+        trailing = { Text("Copy", style = MaterialTheme.typography.labelLarge, color = Accent) },
+    )
+    OwnerDiagnosticsSettings()
+    SectionHeader("Device lock")
     ToggleRow(
         "App lock",
         vm.appLock,

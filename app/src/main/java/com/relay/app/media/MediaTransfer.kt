@@ -36,13 +36,9 @@ object MediaSender {
 
         val client = blossomClientFor(context) ?: return Result.Failed(TOR_UNAVAILABLE_MESSAGE)
         val encrypted = MediaCrypto.encrypt(plain)
-        // Wrapped in a structurally valid JPEG so a server's file-type check sees a real image instead
-        // of ciphertext it would otherwise (correctly) refuse — see MediaContainer. The bytes inside are
-        // exactly what MediaCrypto.encrypt produced; nothing about what is private changes.
-        val wrapped = MediaContainer.wrap(encrypted.blob)
-        val wrappedSha256 = MediaCrypto.sha256Hex(wrapped)
+        val blobSha256 = MediaCrypto.sha256Hex(encrypted.blob)
         val servers = RelayPreferences(context).blossomServers
-        val uploaded = client.upload(servers, wrapped, wrappedSha256, MediaContainer.UPLOAD_CONTENT_TYPE)
+        val uploaded = client.upload(servers, encrypted.blob, blobSha256, "application/octet-stream")
         if (uploaded == null) {
             // The friendly message can't explain a server's own error text, but logcat can: pull it
             // when a report says uploads are failing.
@@ -52,7 +48,7 @@ object MediaSender {
 
         val ref = MediaRef(
             url = uploaded.url,
-            sha256Hex = wrappedSha256,
+            sha256Hex = blobSha256,
             keyBase64 = encrypted.keyBase64,
             mime = mime,
             size = plain.size.toLong(),
@@ -92,12 +88,13 @@ object MediaReceiver {
 
         slots.acquireUninterruptibly()
         try {
-            // The stored blob is the ciphertext wrapped in a JPEG shell (see MediaContainer); bound the
-            // download by the wrapped size, then strip the wrapper before decrypting.
+            // Allow enough room for legacy JPEG containers while bounding raw ciphertext downloads.
+            // Both formats are hash-verified before any decryption.
             val cipherSize = ref.size + BLOB_OVERHEAD
             val maxBytes = if (cipherSize in 0..Int.MAX_VALUE) MediaContainer.wrappedSize(cipherSize.toInt()).toLong() else Long.MAX_VALUE
             val wrapped = client.download(ref.url, ref.sha256Hex, maxBytes)
-            val unwrapped = wrapped?.let { MediaContainer.unwrap(it) }
+            // Accept the old container for existing conversations; new uploads are raw ciphertext.
+            val unwrapped = wrapped?.let { MediaContainer.unwrap(it) ?: it }
             val plain = unwrapped?.let { MediaCrypto.decrypt(it, ref.keyBase64) }
             if (plain == null || plain.size.toLong() != ref.size) {
                 store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media couldn't be downloaded or verified]", null)
@@ -110,7 +107,7 @@ object MediaReceiver {
             RelayFileCrypto.writeEncrypted(context, file, plain)
             val type = if (ref.isVideo) MessageType.VIDEO else MessageType.IMAGE
             store(context, repo, contact, payloadId, sentAt, type, ref.caption, file.absolutePath)
-            MessageNotifier.notifyIncoming(context, contact, type)
+            MessageNotifier.notifyIncoming(context, contact, type, ref.caption)
         } catch (e: Exception) {
             Log.w(TAG, "media receive failed: ${e.message}")
             store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media couldn't be downloaded or verified]", null)

@@ -1,12 +1,8 @@
 package com.relay.app.ui.screens.chat
 
 import android.Manifest
-import android.content.Context
 import android.net.Uri
-import android.os.Build
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -47,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -58,15 +55,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
 import coil.compose.AsyncImage
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.accompanist.permissions.rememberPermissionState
-import com.relay.app.p2p.PresenceState
+import com.relay.app.media.LocalChatMediaPicker
+import com.relay.app.media.ChatMediaSource
 import com.relay.app.sms.LocationShareService
 import com.relay.app.ui.components.ConfirmDialog
 import com.relay.app.ui.components.EmptyState
@@ -81,7 +77,6 @@ import com.relay.app.ui.theme.Surface1
 import com.relay.app.ui.theme.Surface2
 import com.relay.app.ui.theme.TextPrimary
 import com.relay.app.ui.theme.TextSecondary
-import java.io.File
 
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
@@ -91,7 +86,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val messages by vm.messages.collectAsState()
     val contact by vm.contact.collectAsState()
     val unreadAnchor by vm.unreadAnchorId.collectAsState()
-    var inputText by remember { mutableStateOf("") }
+    var inputText by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
     val listState = rememberLazyListState()
 
@@ -99,51 +94,18 @@ fun ChatScreen(contactId: Long, navController: NavController) {
         ChatTimeline.build(messages, unreadAnchor, System.currentTimeMillis())
     }
 
-    var pendingMediaUri by remember { mutableStateOf<Uri?>(null) }
-    var pendingMimeType by remember { mutableStateOf("") }
+    val mediaPicker = LocalChatMediaPicker.current
+    val mediaDraft = mediaPicker.draftFor(contactId)
+    val pendingMediaUri = mediaDraft?.uri
+    val pendingMimeType = mediaDraft?.mime.orEmpty()
     var showAttachSheet by remember { mutableStateOf(false) }
-    var cameraFileUri by remember { mutableStateOf<Uri?>(null) }
     // Both fire something the other person sees; confirming first means a stray tap never sends it.
     var confirmShareLocation by remember { mutableStateOf(false) }
     var confirmRequestLocation by remember { mutableStateOf(false) }
 
-    val mediaPermissions = remember {
-        buildList {
-            add(Manifest.permission.CAMERA)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.READ_MEDIA_IMAGES)
-                add(Manifest.permission.READ_MEDIA_VIDEO)
-            } else {
-                add(Manifest.permission.READ_EXTERNAL_STORAGE)
-            }
-        }
-    }
-    val permState = rememberMultiplePermissionsState(mediaPermissions)
-
     // Share-my-location: ask for location permission the first time, then share straight away.
     val locationPermission = rememberPermissionState(Manifest.permission.ACCESS_FINE_LOCATION) { granted ->
         if (granted) contact?.let { LocationShareService.share(context, it) }
-    }
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            pendingMediaUri = uri
-            pendingMimeType = context.contentResolver.getType(uri) ?: "image/jpeg"
-        }
-    }
-    val videoPickerLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            pendingMediaUri = uri
-            pendingMimeType = context.contentResolver.getType(uri) ?: "video/mp4"
-        }
-    }
-    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success) {
-            cameraFileUri?.let {
-                pendingMediaUri = it
-                pendingMimeType = "image/jpeg"
-            }
-        }
     }
 
     LaunchedEffect(Unit) {
@@ -178,22 +140,15 @@ fun ChatScreen(contactId: Long, navController: NavController) {
             onDismiss = { showAttachSheet = false },
             onPhoto = {
                 showAttachSheet = false
-                if (permState.allPermissionsGranted) photoPickerLauncher.launch("image/*") else permState.launchMultiplePermissionRequest()
+                mediaPicker.open(contactId, ChatMediaSource.PHOTO)
             },
             onVideo = {
                 showAttachSheet = false
-                if (permState.allPermissionsGranted) videoPickerLauncher.launch("video/*") else permState.launchMultiplePermissionRequest()
+                mediaPicker.open(contactId, ChatMediaSource.VIDEO)
             },
             onCamera = {
                 showAttachSheet = false
-                if (permState.allPermissionsGranted) {
-                    val file = createCameraFile(context)
-                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-                    cameraFileUri = uri
-                    cameraLauncher.launch(uri)
-                } else {
-                    permState.launchMultiplePermissionRequest()
-                }
+                mediaPicker.open(contactId, ChatMediaSource.CAMERA)
             },
         )
     }
@@ -279,35 +234,17 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                         .padding(RelaySpacing.lg),
                 )
             } else {
-                // Photos/videos go phone-to-phone, never through a server, so they only send while the
-                // other person is reachable right now -- see PresenceCoordinator.
-                val presence by vm.peerPresence.collectAsState()
-                val presenceCaption = when (presence) {
-                    PresenceState.Checking -> "Checking if they're online…"
-                    PresenceState.Offline -> "They're not online right now, so photos and videos can't be sent."
-                    PresenceState.TorBlocksThis -> "Photos and videos are off while Tor is on."
-                    PresenceState.Unknown, is PresenceState.Online -> null
-                }
-                if (presenceCaption != null) {
-                    Text(
-                        presenceCaption,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = TextSecondary,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.xs),
-                    )
-                }
                 Composer(
                     value = inputText,
                     onValueChange = { inputText = it },
                     pendingMediaUri = pendingMediaUri,
-                    onClearMedia = { pendingMediaUri = null; pendingMimeType = "" },
-                    onAttach = if (presence is PresenceState.Online) { { showAttachSheet = true } } else null,
+                    onClearMedia = { mediaPicker.clear(contactId) },
+                    onAttach = { showAttachSheet = true },
                     onSend = {
                         val uri = pendingMediaUri
                         if (uri != null) {
                             vm.sendMedia(uri, pendingMimeType, inputText.trim(), context)
-                            pendingMediaUri = null
-                            pendingMimeType = ""
+                            mediaPicker.clear(contactId)
                             inputText = ""
                         } else if (inputText.isNotBlank()) {
                             vm.sendText(inputText.trim(), context)
@@ -417,9 +354,4 @@ internal fun Composer(
             }
         }
     }
-}
-
-private fun createCameraFile(context: Context): File {
-    val dir = File(context.cacheDir, "mms").also { it.mkdirs() }
-    return File(dir, "camera_${System.currentTimeMillis()}.jpg")
 }

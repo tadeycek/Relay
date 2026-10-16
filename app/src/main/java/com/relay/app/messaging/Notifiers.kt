@@ -10,19 +10,20 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.app.Person
 import com.relay.app.MainActivity
 import com.relay.app.data.model.Contact
 import com.relay.app.data.model.MessageType
 import com.relay.app.util.RelayPreferences
 
-/** Notifications for incoming internet messages. Deliberately shows no message content. */
+/** Purple conversation previews. Taps intentionally have no intent or action to execute. */
 object MessageNotifier {
 
     const val CHANNEL_MESSAGES = "relay_messages"
     const val EXTRA_OPEN_CHAT = "open_chat_contact_id"
     private const val NOTIF_BASE = 5000
 
-    fun notifyIncoming(context: Context, contact: Contact, type: MessageType) {
+    fun notifyIncoming(context: Context, contact: Contact, type: MessageType, body: String = "") {
         if (contact.id == ActiveChat.contactId) return
         val prefs = RelayPreferences(context)
         val wanted = when (type) {
@@ -35,25 +36,26 @@ object MessageNotifier {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureChannel(nm)
 
-        val open = Intent(context, MainActivity::class.java).apply {
-            putExtra(EXTRA_OPEN_CHAT, contact.id)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        val clean = body.replace(Regex("[\\p{Cc}\\p{Cf}]"), " ").trim().take(240)
+        val text = when (type) {
+            MessageType.LOCATION -> "Shared a location"
+            MessageType.IMAGE -> if (clean.isEmpty()) "Photo" else "Photo: $clean"
+            MessageType.VIDEO -> if (clean.isEmpty()) "Video" else "Video: $clean"
+            else -> clean.ifEmpty { "New message" }
         }
-        val contentIntent = PendingIntent.getActivity(
-            context,
-            NOTIF_BASE + (contact.id % 1000).toInt(),
-            open,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val text = if (type == MessageType.LOCATION) "Shared a location pin" else "New message"
+        val sender = Person.Builder().setName(contact.name).setKey(contact.id.toString()).build()
         val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
-            .setSmallIcon(android.R.drawable.ic_dialog_email)
+            .setSmallIcon(com.relay.app.R.drawable.ic_message_notification)
+            .setColor(0xFF7360F2.toInt())
             .setContentTitle(contact.name)
             .setContentText(text)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setStyle(NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
+                .addMessage(text, System.currentTimeMillis(), sender))
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(contentIntent)
+            .setAutoCancel(false)
+            .setContentIntent(null)
             .build()
         nm.notify(NOTIF_BASE + (contact.id % 1000).toInt(), notification)
     }
@@ -68,7 +70,7 @@ object MessageNotifier {
         if (nm.getNotificationChannel(CHANNEL_MESSAGES) != null) return
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH)
-                .apply { description = "New messages and shared pins from your contacts" }
+                .apply { description = "Message previews; tapping a preview does not open the app" }
         )
     }
 

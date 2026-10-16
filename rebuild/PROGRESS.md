@@ -1,5 +1,26 @@
 # Rebuild progress log
 
+## 2026-10-16: Calculator, Control Panel, expiring invitations and media repair
+
+Current behavior and measured checks are in [VERIFICATION.md](VERIFICATION.md). This
+update supersedes the historical direct-only photo design below: chat attachments
+use encrypted Blossom blobs so they can work across NATs without peer reachability
+or direct IP probing. Public storage receives ciphertext, with the media key inside
+the encrypted conversation. The picker uses access to selected URIs and preserves
+private navigation/attachments across Calculator relocking.
+
+The app launcher is Calculator. A four-digit code followed by + enrolls/opens the
+private UI; three failures require owner recovery. The separate Linux app/shortcut
+is Control Panel with the supplied figure icon. Optional narrow phone diagnostics
+require explicit user consent and can be revoked. Invitations expire in 30 minutes,
+are single-use and require mutual approval. Show my code now opens the display.
+The calculator's landscape layout was repaired.
+
+A token-free preview build and one-folder packaging helper are included. Owner recovery now uses signed encrypted relay messages with a separate phone identity; no hosted
+web service is needed. Production distribution still needs stable release signing and device testing. Historical
+phase notes below describe their state when originally written; consult the current
+verification record before treating a feature as tested.
+
 Branch: `feat/rebuild`. Each phase is two commits. Status labels: **built** (compiles, unit tests where the logic is pure),
 **device-unverified** (needs a real phone/relay to confirm; no device was available while this was written).
 

@@ -8,10 +8,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.CompositionLocalProvider
+import com.relay.app.media.LocalChatMediaPicker
+import com.relay.app.media.rememberChatMediaPicker
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.core.view.WindowCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.fragment.app.FragmentActivity
 import androidx.navigation.compose.rememberNavController
 import com.relay.app.messaging.ConnectionService
@@ -30,9 +37,13 @@ import com.relay.app.ui.navigation.Tab
 import com.relay.app.ui.navigation.navigateToTab
 import com.relay.app.ui.theme.RelayTheme
 import com.relay.app.ui.theme.ThemeController
+import com.relay.app.ui.theme.ThemeMode
 import com.relay.app.util.RelayPreferences
+import com.relay.app.calculator.CalculatorScreen
+import com.relay.app.messaging.ActiveChat
 
 class MainActivity : FragmentActivity() {
+    private val calculatorUnlocked = mutableStateOf(false)
 
     // Note: read once per composition of the lock gate; toggling "App lock" in Settings while
     // Relay is already in the foreground takes effect on the next cold start / resume-from-background,
@@ -55,6 +66,7 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
         // Load the saved Dark / Light / System choice before the first frame so there is no flash.
         ThemeController.load(applicationContext)
         PairingCoordinator.restore(applicationContext)
@@ -62,6 +74,19 @@ class MainActivity : FragmentActivity() {
         handleOpenChatIntent(intent)
         pendingOpenScan.value = com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)
         setContent {
+            val privateScreenState = rememberSaveableStateHolder()
+            val mediaPicker = rememberChatMediaPicker()
+            val messagingDark = when (ThemeController.mode) {
+                ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            SideEffect { setDarkSystemBars(!calculatorUnlocked.value || messagingDark) }
+            if (!calculatorUnlocked.value) {
+                CalculatorScreen(onUnlock = { calculatorUnlocked.value = true })
+            } else {
+            privateScreenState.SaveableStateProvider("private_screens") {
+            CompositionLocalProvider(LocalChatMediaPicker provides mediaPicker) {
             RelayTheme {
                 val prefs = remember { RelayPreferences(applicationContext) }
                 val locked = remember { prefs.appLock && deviceSupportsAppLock(this@MainActivity) }
@@ -109,6 +134,9 @@ class MainActivity : FragmentActivity() {
                     }
                 }
             }
+            }
+            }
+            }
         }
     }
 
@@ -134,9 +162,33 @@ class MainActivity : FragmentActivity() {
         if (RelayPreferences(applicationContext).backgroundConnection) ConnectionService.start(this)
     }
 
-    override fun onStop() {
-        super.onStop()
+    private fun closePrivateScreens() {
+        calculatorUnlocked.value = false
         isUnlocked.value = false
+        ActiveChat.contactId = -1L
+        ActiveChat.groupId = -1L
+    }
+
+    private fun setDarkSystemBars(dark: Boolean) {
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && !calculatorUnlocked.value) setDarkSystemBars(true)
+    }
+
+    override fun onUserLeaveHint() {
+        closePrivateScreens()
+        super.onUserLeaveHint()
+    }
+
+    override fun onStop() {
+        closePrivateScreens()
+        super.onStop()
     }
 }
 

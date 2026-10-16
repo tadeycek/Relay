@@ -4,6 +4,15 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+def previewBuild = providers.gradleProperty('relayPreview').getOrElse('false').toBoolean()
+def localOwnerConfig = new Properties()
+def ownerConfigFile = rootProject.file('.local/owner-config.properties')
+if (ownerConfigFile.exists()) ownerConfigFile.withInputStream { localOwnerConfig.load(it) }
+def ownerPublicKey = localOwnerConfig.getProperty('owner_pubkey', '')
+def ownerConfig = new Properties()
+// Relay recovery needs only the public owner key. Never embed local service credentials with it.
+if (!previewBuild && ownerPublicKey.isBlank()) ownerConfig.putAll(localOwnerConfig)
+
 android {
     namespace 'com.relay.app'
     compileSdk 36
@@ -13,7 +22,11 @@ android {
         minSdk 26
         targetSdk 36
         versionCode 1
-        versionName '1.0'
+        versionName previewBuild ? '1.0-preview' : '1.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        buildConfigField 'String', 'OWNER_PUBLIC_KEY', groovy.json.JsonOutput.toJson(ownerPublicKey)
+        buildConfigField 'String', 'OWNER_SERVICE_URL', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('url', ''))
+        buildConfigField 'String', 'OWNER_ENROLLMENT_TOKEN', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('enrollment_token', ''))
     }
 
     buildFeatures {
@@ -83,7 +96,21 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.json:json:20240303'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:core:1.6.1'
+    androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+    androidTestImplementation 'junit:junit:4.13.2'
 
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+}
+
+// A distributed app pins the owner recovery public key (or explicitly configures legacy HTTPS).
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name in ['assembleRelease', 'bundleRelease'] }) {
+        if (!(ownerPublicKey ==~ /[0-9a-f]{64}/) && (!ownerConfig.getProperty('url', '').startsWith('https://') ||
+                ownerConfig.getProperty('enrollment_token', '').isBlank())) {
+            throw new GradleException('Run owner/run.sh --prepare to configure the owner public key before a release build.')
+        }
+    }
 }

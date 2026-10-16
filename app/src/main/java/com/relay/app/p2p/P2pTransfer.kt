@@ -185,7 +185,7 @@ object P2pListener {
                 putExtra("contact_id", contact.id)
                 setPackage(context.packageName)
             })
-            MessageNotifier.notifyIncoming(context, contact, type)
+            MessageNotifier.notifyIncoming(context, contact, type, offer.caption)
         }
     }
 }

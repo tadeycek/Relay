@@ -29,8 +29,8 @@ import com.relay.app.util.SmsMessageParser
  */
 object QrContactExchange {
 
-    /** Only v3 codes (which carry a Nostr key) can be paired. */
-    fun canPair(scanned: QrContactCode.ScannedContact): Boolean = scanned.nostrPubkeyHex != null
+    /** New pairings require a one-time invitation with a lifetime, never a permanent legacy code. */
+    fun canPair(scanned: QrContactCode.ScannedContact): Boolean = QrContactCode.isUsableInvitation(scanned)
 
     fun onScanned(
         context: Context,

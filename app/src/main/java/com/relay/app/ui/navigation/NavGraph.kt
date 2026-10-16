@@ -34,6 +34,7 @@ sealed class Screen(val route: String) {
         fun routeFor(page: com.relay.app.ui.screens.settings.AccountPage) = "account_page/${page.route}"
     }
     object QrExchange : Screen("qr_exchange")
+    object QrMyCode : Screen("qr_my_code")
     object Chat : Screen("chat/{contactId}") {
         const val ROUTE = "chat/{contactId}"
         fun routeFor(id: Long) = "chat/$id"
@@ -83,6 +84,7 @@ fun RelayNavGraph(navController: NavHostController, unreadMessages: Int = 0) {
                 AccountPageScreen(com.relay.app.ui.screens.settings.AccountPage.fromRoute(entry.arguments?.getString("page")), navController)
             }
             composable(Screen.QrExchange.route) { QrExchangeScreen(navController = navController) }
+            composable(Screen.QrMyCode.route) { QrExchangeScreen(navController = navController, showMyCodeInitially = true) }
             composable(
                 route = Screen.Chat.ROUTE,
                 arguments = listOf(navArgument("contactId") { type = NavType.LongType }),

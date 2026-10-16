@@ -19,7 +19,7 @@ object PairingRules {
     const val GRACE_MS = 45 * 1000L
 
     /** How long a displayed code stays usable if nobody scans it. */
-    const val NONCE_TTL_MS = 10 * 60 * 1000L
+    const val NONCE_TTL_MS = 30 * 60 * 1000L
 
     /** A's deadline for hearing back, counted from A's yes. */
     fun outgoingDeadline(yesAtMs: Long): Long = yesAtMs + WINDOW_MS + GRACE_MS
@@ -126,9 +126,15 @@ class PairingSessions(
         return live.remove(nonce) != null
     }
 
+    @Synchronized
+    fun remainingMs(nonce: String): Long {
+        prune()
+        return live[nonce]?.minus(clock())?.coerceAtLeast(0) ?: 0
+    }
+
     private fun prune() {
         val now = clock()
-        live.entries.removeAll { it.value < now }
+        live.entries.removeAll { it.value <= now }
     }
 }
 

@@ -23,8 +23,9 @@ import java.net.URL
  * download is checked against the expected SHA-256 before anything is decrypted, so a malicious or
  * compromised server can only make a download fail, never substitute content.
  *
- * A server learns the coarse media category ("image" vs. "video") from the upload's Content-Type,
- * plus its size and timing — never the actual pixels or audio, which stay encrypted throughout.
+ * Uploads use application/octet-stream: the server sees ciphertext size and timing, plus the
+ * connection address unless a proxy is used. The media type and decryption key travel inside
+ * the end-to-end encrypted message.
  *
  * All methods are blocking; call them off the main thread. Pass a [proxy] (SOCKS) to route through Tor.
  */
@@ -47,12 +48,8 @@ class BlossomClient(
     /**
      * Tries each server in order and returns the first success, or null if all refuse or fail.
      *
-     * [contentType] is the *original* media's MIME type (e.g. "image/jpeg"), sent as the encrypted
-     * blob's Content-Type. The bytes are still fully encrypted and private either way; this only tells
-     * the server the coarse category (roughly: a photo vs. a video), which it already learns from the
-     * size and timing of the upload. Several public Blossom servers, including both defaults here,
-     * allowlist known media types and reject a plain "application/octet-stream" outright — so without
-     * this, uploads to those servers fail every time with no way to opt back in.
+     * [contentType] describes the uploaded bytes, not the original photo. Encrypted media uses
+     * application/octet-stream and requires a server that stores arbitrary blobs unchanged.
      */
     fun upload(servers: List<String>, blob: ByteArray, sha256Hex: String, contentType: String): Uploaded? {
         lastUploadError = null
@@ -72,14 +69,14 @@ class BlossomClient(
         return null
     }
 
-    private fun upload(base: String, blob: ByteArray, sha256Hex: String, contentType: String): Uploaded? {
+    private fun upload(base: String, blob: ByteArray, sha256Hex: String, contentType: String, legacyAuth: Boolean = false): Uploaded? {
         val conn = open("$base/upload").apply {
             requestMethod = "PUT"
             doOutput = true
             setFixedLengthStreamingMode(blob.size)
             setRequestProperty("Content-Type", contentType.ifBlank { "application/octet-stream" })
             setRequestProperty("X-SHA-256", sha256Hex)
-            setRequestProperty("Authorization", authHeader(sha256Hex))
+            setRequestProperty("Authorization", authHeader(sha256Hex, URL(base).host, legacyAuth))
         }
         try {
             conn.outputStream.use { it.write(blob) }
@@ -89,6 +86,13 @@ class BlossomClient(
                     ?: runCatching { conn.errorStream?.readBytes()?.toString(Charsets.UTF_8) }.getOrNull()
                 lastUploadError = "$base: HTTP $code${reason?.let { " - $it" } ?: ""}"
                 Log.w(TAG, "upload rejected: $lastUploadError")
+                // Some deployed BUD-02 servers still require padded standard Base64 instead of
+                // BUD-11's unpadded Base64url. Retry only explicit encoding rejections, once.
+                if (!legacyAuth && code in listOf(400, 401) && reason != null &&
+                    (reason.contains("base64", ignoreCase = true) || reason.contains("padding", ignoreCase = true))) {
+                    conn.disconnect()
+                    return upload(base, blob, sha256Hex, contentType, legacyAuth = true)
+                }
                 return null
             }
             val body = conn.inputStream.use { it.readBytes() }.toString(Charsets.UTF_8)
@@ -164,18 +168,20 @@ class BlossomClient(
             useCaches = false
         }
 
-    private fun authHeader(sha256Hex: String): String {
+    private fun authHeader(sha256Hex: String, serverHost: String, legacy: Boolean): String {
         val now = System.currentTimeMillis() / 1000
         val event = EventBuilder(Kind(24242u), "Upload encrypted blob")
             .tags(
                 listOf(
                     Tag.parse(listOf("t", "upload")),
                     Tag.parse(listOf("x", sha256Hex)),
+                    Tag.parse(listOf("server", serverHost.lowercase())),
                     Tag.expiration(Timestamp.fromSecs((now + 300).toULong())),
                 )
             )
             .signWithKeys(Keys.generate())
-        return "Nostr " + Base64.encodeToString(event.asJson().toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+        val flags = if (legacy) Base64.NO_WRAP else Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING
+        return "Nostr " + Base64.encodeToString(event.asJson().toByteArray(Charsets.UTF_8), flags)
     }
 
     private companion object {

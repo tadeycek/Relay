@@ -33,11 +33,6 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.filterNotNull
-import kotlinx.coroutines.flow.first
-import com.relay.app.p2p.P2pSender
-import com.relay.app.p2p.PresenceCoordinator
-import com.relay.app.p2p.PresenceState
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -58,9 +53,6 @@ class ChatViewModel(
 
     private val _toastMessage = MutableSharedFlow<String>()
     val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
-
-    /** Whether this contact is reachable right now for a direct photo/video transfer; see PresenceCoordinator. */
-    val peerPresence: StateFlow<PresenceState> get() = PresenceCoordinator.stateOf(contactId)
 
     private var smsUpdateReceiver: BroadcastReceiver? = null
 
@@ -107,13 +99,7 @@ class ChatViewModel(
     fun registerSmsUpdates(context: Context) {
         ActiveChat.contactId = contactId // suppress notifications for the chat that is on screen
         viewModelScope.launch { markReadIfVisible() }
-        // Checked once per chat visit, not continuously -- see PresenceCoordinator's class doc. Contact
-        // may not have loaded yet (loadData() is async); wait for the first non-null value rather than
-        // racing it.
-        viewModelScope.launch {
-            val c = _contact.value ?: _contact.filterNotNull().first()
-            if (c.qrVerified && c.canUseInternetTransport) PresenceCoordinator.ping(context, c)
-        }
+        // Media uses encrypted blob storage; opening a chat does not probe the peer's IP.
         smsUpdateReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val incomingContactId = intent.getLongExtra("contact_id", -1L)
@@ -231,67 +217,14 @@ class ChatViewModel(
         }
     }
 
-    /**
-     * Compresses, encrypts, and sends straight to the other phone -- no media server ever sees any of it.
-     * Only possible while [peerPresence] says they're reachable right now; see PresenceCoordinator.
-     */
-    private fun sendMediaP2p(uri: Uri, mimeType: String, caption: String, contact: Contact, presence: PresenceState.Online, context: Context) {
-        viewModelScope.launch {
-            _toastMessage.emit("Sending...")
-            val outcome = withContext(Dispatchers.IO) {
-                val prepared = if (mimeType.startsWith("image")) {
-                    MediaCompressor.compressImage(context, uri, INTERNET_IMAGE_MAX_BYTES, INTERNET_IMAGE_MAX_DIM)
-                } else {
-                    MediaCompressor.prepareVideo(context, uri, INTERNET_VIDEO_MAX_BYTES, INTERNET_VIDEO_MAX_MS)
-                }
-                when (prepared) {
-                    is MediaCompressor.Result.TooLarge -> Pair(null, prepared.message)
-                    is MediaCompressor.Result.Error -> Pair(null, "Failed to process media")
-                    is MediaCompressor.Result.Success -> {
-                        val plain = prepared.file.readBytes()
-                        when (
-                            val sent = P2pSender.send(context, contact, presence.candidates, presence.nonce, plain, prepared.mimeType, caption)
-                        ) {
-                            is P2pSender.Result.Failed -> Pair(null, sent.reason)
-                            is P2pSender.Result.Sent -> Pair(Triple(sent.msgId, prepared.file, prepared.mimeType), null)
-                        }
-                    }
-                }
-            }
-            val (ok, error) = outcome
-            if (ok == null) {
-                _toastMessage.emit(error ?: "Failed to send")
-                return@launch
-            }
-            val (msgId, file, mime) = ok
-            messageRepo.insertMessage(
-                Message(
-                    contactId = contactId,
-                    body = caption,
-                    type = if (mime.startsWith("image")) MessageType.IMAGE else MessageType.VIDEO,
-                    isSent = true,
-                    mediaUri = file.absolutePath,
-                    msgId = msgId,
-                    // Sent directly, not through the durable outbox -- there is no server-side delivery
-                    // state to show, so this looks the same as an already-delivered message.
-                    deliveryState = DeliveryState.NONE,
-                )
-            )
-            _messages.value = messageRepo.getMessages(contactId)
-        }
-    }
-
     fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context) {
         val contact = _contact.value ?: return
         if (!contact.canUseInternetTransport) {
             viewModelScope.launch { _toastMessage.emit("Scan this contact's QR code to message them") }
             return
         }
-        val presence = peerPresence.value
-        if (presence is PresenceState.Online) {
-            sendMediaP2p(uri, mimeType, textBody, contact, presence, context)
-            return
-        }
+        // Public/mobile NATs often prevent direct connections, even when both contacts are online.
+        // Encrypted uploads also work with the app's Tor route and do not reveal our IP to the peer.
         sendMediaOverInternet(uri, mimeType, textBody, contact, context)
     }
 }

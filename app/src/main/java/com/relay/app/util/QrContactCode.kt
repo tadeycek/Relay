@@ -23,6 +23,7 @@ object QrContactCode {
 
     private const val VERSION = 3
     private const val VERSION_WITH_PAIRING = 4
+    private const val VERSION_WITH_EXPIRY = 5
     private const val MAX_RELAY_HINTS = 5
     private const val MAX_RELAY_LENGTH = 100
     private val BASE64 = Regex("""[A-Za-z0-9+/=]+""")
@@ -42,6 +43,7 @@ object QrContactCode {
         val relayHints: List<String> = emptyList(),
         /** One-time pairing code from a v4 code; null for older codes, which use the one-sided flow. */
         val pairNonce: String? = null,
+        val expiresAtMs: Long? = null,
     )
 
     fun encode(
@@ -51,13 +53,17 @@ object QrContactCode {
         signingPublicKeyBase64: String? = null,
         relayHints: List<String> = emptyList(),
         pairNonce: String? = null,
+        expiresAtMs: Long? = null,
     ): String {
         val safeName = sanitize(name).take(30)
-        val sb = StringBuilder("RELAYQR:${if (pairNonce != null) VERSION_WITH_PAIRING else VERSION}|NAME:$safeName|NPUB:${nostrPubkeyHex.lowercase()}|KEY:$publicKeyBase64")
+        val version = if (expiresAtMs != null) VERSION_WITH_EXPIRY else if (pairNonce != null) VERSION_WITH_PAIRING else VERSION
+        require(expiresAtMs == null || (expiresAtMs > 0 && com.relay.app.pairing.PairingMessages.isValidNonce(pairNonce)))
+        val sb = StringBuilder("RELAYQR:$version|NAME:$safeName|NPUB:${nostrPubkeyHex.lowercase()}|KEY:$publicKeyBase64")
         if (!signingPublicKeyBase64.isNullOrEmpty()) sb.append("|SIGKEY:$signingPublicKeyBase64")
         val hints = cleanRelayHints(relayHints)
         if (hints.isNotEmpty()) sb.append("|RELAYS:").append(hints.joinToString(","))
         if (pairNonce != null) sb.append("|PAIR:").append(pairNonce)
+        if (expiresAtMs != null) sb.append("|EXPIRES:").append(expiresAtMs)
         return sb.toString()
     }
 
@@ -84,6 +90,9 @@ object QrContactCode {
         if (version >= 3) {
             val npub = fields["NPUB"]?.lowercase() ?: return null
             if (!HEX64.matches(npub)) return null
+            val nonce = fields["PAIR"]?.lowercase()?.takeIf { com.relay.app.pairing.PairingMessages.isValidNonce(it) }
+            val expires = fields["EXPIRES"]?.toLongOrNull()?.takeIf { it > 0 }
+            if (version >= VERSION_WITH_EXPIRY && (nonce == null || expires == null)) return null
             return ScannedContact(
                 phone = null,
                 name = name.ifEmpty { "Contact ${npub.take(8)}" },
@@ -91,7 +100,8 @@ object QrContactCode {
                 signingPublicKeyBase64 = signingKey,
                 nostrPubkeyHex = npub,
                 relayHints = cleanRelayHints(fields["RELAYS"]?.split(',').orEmpty()),
-                pairNonce = fields["PAIR"]?.lowercase()?.takeIf { com.relay.app.pairing.PairingMessages.isValidNonce(it) },
+                pairNonce = nonce,
+                expiresAtMs = expires,
             )
         }
 
@@ -104,6 +114,11 @@ object QrContactCode {
             signingPublicKeyBase64 = signingKey,
         )
     }
+
+    /** Legacy codes remain readable, but cannot bypass the expiry of new invitations. */
+    fun isUsableInvitation(scanned: ScannedContact, nowMs: Long = System.currentTimeMillis()): Boolean =
+        scanned.nostrPubkeyHex != null && com.relay.app.pairing.PairingMessages.isValidNonce(scanned.pairNonce) &&
+            scanned.expiresAtMs?.let { nowMs < it } == true
 
     /**
      * Keeps only acceptable relay URLs (`wss://`, or `ws://` for `.onion` hosts; see
