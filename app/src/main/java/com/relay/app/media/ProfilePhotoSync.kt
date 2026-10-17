@@ -20,9 +20,12 @@ object ProfilePhotoSync {
     fun syncPending(context: Context) {
         MessagingRuntime.launchIo {
             val update = ContactPhotos.selfUpdate(context)
-            if (update.revision <= 0) return@launchIo
             for (contact in ContactRepository(MessagingDb.get(context)).getAllContacts()) {
-                if (eligible(contact)) queue(context, contact, update)
+                if (eligible(contact)) {
+                    queue(context, contact, update)
+                    queueName(context, contact)
+                    requestProfile(context, contact)
+                }
             }
         }
     }
@@ -35,23 +38,61 @@ object ProfilePhotoSync {
         }
     }
 
-    fun afterPairing(context: Context, contact: Contact) {
-        if (!eligible(contact)) return
-        MessagingRuntime.launchIo {
-            queue(context, contact, ContactPhotos.selfUpdate(context))
+    @Synchronized private fun queueName(context: Context, contact: Contact, force: Boolean = false) {
+        val self = com.relay.app.util.RelayPreferences(context)
+        val update = ProfileNameBody.Update(self.profileNameRevision, self.myName.trim())
+        val body = runCatching { ProfileNameBody.format(update) }.getOrNull() ?: return
+        if (!force && prefs(context).getLong("name_queued_${contact.id}", -1) >= update.revision) return
+        if (Outgoing.enqueue(context, contact, body) != null) {
+            check(prefs(context).edit().putLong("name_queued_${contact.id}", update.revision).commit())
+        }
+    }
+
+    private val outgoingRequests = CooldownLimiter(30_000L)
+    fun requestProfile(context: Context, contact: Contact) {
+        if (eligible(contact) && outgoingRequests.allow(contact.id, System.currentTimeMillis())) {
             Outgoing.enqueue(context, contact, ProfilePhotoBody.REQUEST)
         }
     }
 
+    fun afterPairing(context: Context, contact: Contact) {
+        if (!eligible(contact)) return
+        MessagingRuntime.launchIo {
+            queue(context, contact, ContactPhotos.selfUpdate(context))
+            queueName(context, contact)
+            requestProfile(context, contact)
+        }
+    }
+
+    private fun refresh(context: Context, id: Long) {
+        val fresh = ContactRepository(MessagingDb.get(context)).getByIdSync(id) ?: return
+        com.relay.app.messaging.MessageNotifier.refreshContact(context, fresh)
+        context.sendBroadcast(android.content.Intent("com.relay.app.NEW_MESSAGE").setPackage(context.packageName)
+            .putExtra("contact_id", id))
+    }
+
     fun handle(context: Context, contact: Contact, body: String): Boolean {
-        if (!ProfilePhotoBody.isControl(body)) return false
+        if (!ProfilePhotoBody.isControl(body) && !ProfileNameBody.isControl(body)) return false
         if (!eligible(contact)) return true
         if (body == ProfilePhotoBody.REQUEST) {
             if (requests.allow(contact.id, System.currentTimeMillis())) {
                 queue(context, contact, ContactPhotos.selfUpdate(context), force = true)
+                queueName(context, contact, force = true)
+            }
+        } else if (ProfileNameBody.isControl(body)) {
+            ProfileNameBody.parse(body)?.let { update ->
+                synchronized(this) {
+                    if (update.revision > prefs(context).getLong("name_received_${contact.id}", -1)) {
+                        ContactRepository(MessagingDb.get(context)).setProfileNameSync(contact.id, update.name)
+                        check(prefs(context).edit().putLong("name_received_${contact.id}", update.revision).commit())
+                        refresh(context, contact.id)
+                    }
+                }
             }
         } else {
-            ProfilePhotoBody.parse(body)?.let { ContactPhotos.receive(context, contact.id, it) }
+            ProfilePhotoBody.parse(body)?.let {
+                if (ContactPhotos.receive(context, contact.id, it)) refresh(context, contact.id)
+            }
         }
         return true
     }

@@ -87,8 +87,10 @@ object ContactPhotos {
 
     @Synchronized fun remove(context: Context, id: Long) {
         if (id > 0) {
+            com.relay.app.messaging.MessageNotifier.cancel(context, id)
             file(context, id).delete()
-            prefs(context).edit().remove("received_$id").remove("queued_$id").apply()
+            prefs(context).edit().remove("received_$id").remove("queued_$id")
+                .remove("name_received_$id").remove("name_queued_$id").apply()
             changes.value += 1
         }
     }

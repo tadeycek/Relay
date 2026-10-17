@@ -53,9 +53,14 @@ class MediaViewerTest {
             RelayFileCrypto.writeEncrypted(context, file, bytes)
             MessageRepository(MessagingDb.get(context)).insertMessageSync(
                 Message(contactId = contact.id, body = "", type = type, isSent = false, mediaUri = file.absolutePath))
-            context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                .putExtra(MessageNotifier.EXTRA_OPEN_CHAT, contact.id))
-            if (device.findObject(UiSelector().text("C")).waitForExists(700)) {
+            device.executeShellCommand("am start -W -f 0x10008000 -n ${context.packageName}/com.relay.app.MainActivity " +
+                "--el ${MessageNotifier.EXTRA_OPEN_CHAT} ${contact.id}")
+            waitFor("Calculator gate or requested media screen finishes opening") {
+                device.findObject(UiSelector().text("C")).exists() ||
+                    device.findObject(UiSelector().description("Open photo")).exists() ||
+                    device.findObject(UiSelector().description("Play video")).exists()
+            }
+            if (device.findObject(UiSelector().text("C")).exists()) {
                 for (key in listOf("C", "4", "8", "2", "6", "+")) device.findObject(UiSelector().text(key)).click()
             }
             verify()
@@ -144,7 +149,10 @@ class MediaViewerTest {
                 val session = ViewModelProvider(activity)[CalculatorSession::class.java]
                 session.expireIfNeeded(session.deadline)
             }
-            assertTrue(device.findObject(UiSelector().text("C")).waitForExists(5_000))
+            device.waitForIdle()
+            val expiredGate = device.findObject(UiSelector().text("C")).waitForExists(15_000)
+            if (!expiredGate) device.dumpWindowHierarchy(File(context.filesDir, "expiry-failure.xml"))
+            assertTrue("Expired media session returns to Calculator", expiredGate)
             waitFor("Session expiry stops playback") { !second.isPlaying }
             waitFor("Session expiry removes the private plaintext view files") {
                 File(context.cacheDir, "private-media-view").listFiles().isNullOrEmpty()

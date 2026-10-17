@@ -70,6 +70,9 @@ class IncomingMessageHandler(context: Context) {
         if (PresenceMessages.parse(payload.body) != null) return
 
 
+        // Profile controls must never create a placeholder before mutual pairing completes.
+        if (contact == null && (com.relay.app.media.ProfilePhotoBody.isControl(payload.body) ||
+                com.relay.app.media.ProfileNameBody.isControl(payload.body))) return
         if (contact == null) {
             if (!unknownSenders.tryAcquire(now)) {
                 Log.w(TAG, "unknown-sender flood limit hit; dropping")
@@ -98,6 +101,7 @@ class IncomingMessageHandler(context: Context) {
         if (P2pOfferMessages.parse(body) != null) return
         if (com.relay.app.media.ProfilePhotoSync.handle(appContext, contact, body)) return
 
+        com.relay.app.media.ProfilePhotoSync.requestProfile(appContext, contact)
         val sentAt = TimestampPolicy.resolve(payload.ts, now)
 
         when (val kind = IncomingClassifier.classify(body)) {

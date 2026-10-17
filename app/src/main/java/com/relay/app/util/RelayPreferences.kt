@@ -5,6 +5,7 @@ import com.relay.app.media.DefaultBlossomServers
 import com.relay.app.transport.nostr.DefaultRelays
 
 class RelayPreferences(context: Context) {
+    private val appContext = context.applicationContext
 
     private val prefs = context.applicationContext
         .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -60,7 +61,14 @@ class RelayPreferences(context: Context) {
     /** Self-profile shown on your own QR code (Contacts -> QR icon -> My Code). Empty until set. */
     var myName: String
         get() = prefs.getString(KEY_MY_NAME, "") ?: ""
-        set(v) { prefs.edit().putString(KEY_MY_NAME, v).apply() }
+        set(v) {
+            if (myName == v) return
+            check(prefs.edit().putString(KEY_MY_NAME, v)
+                .putLong("profile_name_revision", Math.addExact(profileNameRevision, 1L)).commit())
+            com.relay.app.media.ProfilePhotoSync.syncPending(appContext)
+        }
+
+    val profileNameRevision: Long get() = prefs.getLong("profile_name_revision", 0L)
 
     /** Epoch millis after which the retired identity key (kept only to decrypt late-arriving
      *  messages right after a rotation) is permanently deleted. 0 = no retired key on file. */

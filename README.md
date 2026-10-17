@@ -15,7 +15,9 @@ PIN verification, counters, recovery credentials and the separate recovery ident
 Keystore-backed encrypted preferences, excluded from backup. This UI gate does not secure a rooted
 or otherwise compromised device.
 
-Message notifications show the sender name, their profile photo (or generated avatar), a small purple message badge, and up to five unread messages kept separately for each conversation. They have no
+Encrypted profile updates keep approved contacts’ display names and photos in sync, including after reconnect. Locally chosen contact aliases are preserved.
+
+Message notifications show the sender name, their profile photo (or generated avatar), the supplied small purple phone badge, and up to five unread messages kept separately for each conversation. They have no
 content intent or reply action, so tapping them does not open the app. Android attributes them to
 **Calculator**. Previews expose message text to anyone allowed to see notifications on the device;
 system lock-screen settings also apply. The app does not impersonate the genuine Viber app.
