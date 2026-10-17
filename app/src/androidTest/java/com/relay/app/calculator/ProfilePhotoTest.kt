@@ -59,7 +59,7 @@ class ProfilePhotoTest {
                 com.relay.app.data.model.MessageType.TEXT, "Shared profile preview")
             android.os.SystemClock.sleep(300)
             val source = android.graphics.BitmapFactory.decodeResource(context.resources,
-                com.relay.app.R.drawable.notification_avatar_badge)
+                com.relay.app.R.drawable.notification_sender_badge)
             val small = Bitmap.createScaledBitmap(source, 64, 64, true)
             val jpeg = ByteArrayOutputStream().also { small.compress(Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
             source.recycle(); small.recycle()
@@ -68,10 +68,14 @@ class ProfilePhotoTest {
                 com.relay.app.media.ProfileNameBody.Update(1, "Exion preview")))
             android.os.SystemClock.sleep(500)
             val notification = manager.activeNotifications.first { it.tag == "conversation:${contact.id}" }.notification
-            val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
-            assertEquals("Exion preview", style.messages.last().person!!.name.toString())
-            assertEquals(1, style.messages.size)
-            assertNotNull(style.messages.last().person!!.icon)
+            val history = com.relay.app.messaging.NotificationPreview.history(notification)
+            val rendered = PreviewAssertions.content(context, notification)
+            assertEquals("Exion preview", rendered.name)
+            assertEquals(1, history.size)
+            assertEquals(history.last().text, rendered.text)
+            assertNotNull(rendered.avatar)
+            assertEquals(0, Color.alpha(rendered.avatar.getPixel(0, 0)))
+            assertTrue(Color.alpha(rendered.avatar.getPixel(20, 20)) > 0)
             assertEquals("conversation:${contact.id}", notification.shortcutId)
             assertFalse(notification.contentIntent.isActivity)
             device.openNotification()
@@ -133,7 +137,7 @@ class ProfilePhotoTest {
             val decoded = ContactPhotos.load(context, contact.id)!!
             assertEquals(64, decoded.width)
             assertTrue(Color.green(decoded.getPixel(10, 10)) > 200)
-            val badge = android.graphics.BitmapFactory.decodeResource(context.resources, com.relay.app.R.drawable.notification_avatar_badge)
+            val badge = android.graphics.BitmapFactory.decodeResource(context.resources, com.relay.app.R.drawable.notification_sender_badge)
             val avatar = NotificationAvatar.forContact(contact, decoded, badge)
             assertTrue(Color.green(avatar.getPixel(50, 50)) > 200)
             val expectedBadge = badge.getPixel(badge.width / 2, badge.height / 2)

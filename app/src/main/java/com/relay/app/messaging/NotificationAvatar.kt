@@ -50,18 +50,16 @@ object NotificationAvatar {
         }
         canvas.restore()
         paint.style = Paint.Style.FILL
-        paint.color = Color.WHITE
-        canvas.drawCircle(158f, 158f, 34f, paint)
         if (badge != null) {
+            // Keep the supplied rounded-square badge intact, rather than cropping it to a circle.
+            val bounds = RectF(124f, 124f, 192f, 192f)
             canvas.save()
-            canvas.clipPath(Path().apply { addCircle(158f, 158f, 30f, Path.Direction.CW) })
-            paint.color = badge.getPixel(0, 0)
-            canvas.drawCircle(158f, 158f, 30f, paint)
-            val scale = minOf(60f / badge.width, 60f / badge.height)
+            canvas.clipPath(Path().apply { addRoundRect(bounds, 20f, 20f, Path.Direction.CW) })
+            val scale = minOf(bounds.width() / badge.width, bounds.height() / badge.height)
             val width = badge.width * scale
             val height = badge.height * scale
-            canvas.drawBitmap(badge, null, RectF(158f - width / 2, 158f - height / 2,
-                158f + width / 2, 158f + height / 2), paint)
+            canvas.drawBitmap(badge, null, RectF(bounds.centerX() - width / 2, bounds.centerY() - height / 2,
+                bounds.centerX() + width / 2, bounds.centerY() + height / 2), paint)
             canvas.restore()
             return bitmap
         }

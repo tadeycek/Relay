@@ -122,8 +122,10 @@ class CalculatorSecurityTest {
         assertEquals("Hello from the test", notification.extras.getCharSequence("android.text").toString())
         assertEquals("android.app.Notification\$MessagingStyle", notification.extras.getString("android.template"))
         assertNotNull("Contact avatar is supplied to the OS", notification.getLargeIcon())
-        val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
-        assertNotNull("Sender has an avatar", style.messages.last().person?.icon)
+        val rendered = PreviewAssertions.content(context, notification)
+        assertNotNull("Sender has an avatar", rendered.avatar)
+        assertEquals("A rounded square leaves its outer corner transparent", 0, android.graphics.Color.alpha(rendered.avatar.getPixel(0, 0)))
+        assertTrue("Rounded square retains pixels outside a circular crop", android.graphics.Color.alpha(rendered.avatar.getPixel(20, 20)) > 0)
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.pressHome()
         val underlyingPackage = device.currentPackageName
@@ -156,10 +158,11 @@ class CalculatorSecurityTest {
         MessageNotifier.refreshContact(context, contact.copy(name = "Exion"))
         SystemClock.sleep(300)
         val notification = manager.activeNotifications.first { it.tag == "conversation:999" }.notification
-        val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
-        assertEquals(1, style.messages.size)
-        assertEquals("Exion", style.messages.last().person!!.name.toString())
-        assertEquals("Keep this preview", style.messages.last().text.toString())
+        val history = com.relay.app.messaging.NotificationPreview.history(notification)
+        val rendered = PreviewAssertions.content(context, notification)
+        assertEquals(1, history.size)
+        assertEquals("Exion", rendered.name)
+        assertEquals("Keep this preview", rendered.text)
         assertTrue(notification.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
         assertFalse("Preview taps cannot launch an activity", notification.contentIntent.isActivity)
         assertTrue(notification.actions.isNullOrEmpty())
@@ -184,8 +187,8 @@ class CalculatorSecurityTest {
         SystemClock.sleep(300)
         val posted = manager.activeNotifications.filter { it.id == 5000 }
         assertEquals(2, posted.count { it.tag in listOf("conversation:999", "conversation:1999") })
-        val history = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(
-            posted.first { it.tag == "conversation:999" }.notification)!!.messages
+        val history = com.relay.app.messaging.NotificationPreview.history(
+            posted.first { it.tag == "conversation:999" }.notification)
         assertEquals(listOf("Message 3", "Message 4", "Message 5", "Message 6", "Message 7"), history.map { it.text.toString() })
         val firstPreview = posted.first { it.tag == "conversation:999" }.notification
         assertFalse(firstPreview.contentIntent.isActivity)

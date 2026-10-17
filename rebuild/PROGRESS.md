@@ -1,9 +1,13 @@
-## Calculator 1.6 preview — startup notice and hold-to-reply
+## Calculator 1.6 preview — notification content, startup notice and hold-to-reply
 
 - A visible MainActivity stops the connection foreground service and its notice;
   the transport runtime continues. The service starts only when the activity stops
   being visible and background delivery is enabled. Rotation and permission dialogs
   do not start the service; queued starts/status updates guard against UI return.
+- Direct previews use a decorated custom row with an unmasked ImageView for the
+  rounded-square avatar and the latest supplied badge, preserved byte for byte.
+  Bounded history migrates from visible native MessagingStyle previews and survives
+  profile refresh. The OS retains its header and may change conversation priority.
 - Message bubbles use a shared combined tap/long-press gesture. Hold selects the
   quoted reply, replacing the always-visible Reply buttons in individual/group chats.
   Short taps still open photos/video/location, and accessibility exposes Reply.
