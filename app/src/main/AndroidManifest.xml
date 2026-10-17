@@ -44,7 +44,8 @@
     <application
         android:name=".RelayApplication"
         android:label="@string/app_name"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/notification_avatar_badge"
+        android:roundIcon="@drawable/notification_avatar_badge"
         android:theme="@style/Theme.Relay"
         android:hardwareAccelerated="true"
         android:allowBackup="true"
@@ -53,6 +54,8 @@
 
         <activity
             android:name=".MainActivity"
+            android:label="@string/launcher_name"
+            android:icon="@mipmap/ic_launcher"
             android:exported="true"
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"

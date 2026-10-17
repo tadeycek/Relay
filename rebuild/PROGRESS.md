@@ -1,3 +1,9 @@
+## Calculator 1.4 preview — application source name
+
+- Registered Android application label is Viber, using the supplied purple phone icon.
+- MainActivity explicitly retains the Calculator launcher label and calculator icon.
+- Package ID and signing identity stay the same for an in-place update.
+
 ## Calculator 1.3 preview — notification appearance and dismissal
 
 - Rounded-square avatar, replacement flat purple badge, and preserved badge-image proportions.

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Calculator</string>
+    <string name="app_name">Viber</string>
+    <string name="launcher_name">Calculator</string>
     <string name="nfc_service_description">Share your Relay contact code by tapping phones</string>
     <string name="nfc_aid_group_description">Relay contact code</string>
 </resources>

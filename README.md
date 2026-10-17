@@ -18,8 +18,8 @@ or otherwise compromised device.
 Encrypted profile updates keep approved contacts’ display names and photos in sync, including after reconnect. Locally chosen contact aliases are preserved.
 
 Message notifications show the sender name, their rounded-square profile photo (or generated avatar), the supplied flat purple phone badge, and up to five unread messages kept separately for each conversation. Tapping dismisses only the notification through a private receiver; it does not open the app, delete a message, or mark it read. There are no reply actions. Android attributes them to
-**Calculator**. Previews expose message text to anyone allowed to see notifications on the device;
-system lock-screen settings also apply. The app does not impersonate the genuine Viber app.
+**Viber**. The application settings and installer also use that name; the launcher activity remains **Calculator** with its calculator icon. Previews expose message text to anyone allowed to see notifications on the device;
+system lock-screen settings also apply. This remains the Relay build (package `com.relay.app`), using its own messaging transport.
 
 Choose **Account → Profile photo → Choose photo and share** to share your own avatar with
 mutually approved contacts. Photos are reduced to a JPEG of at most 128 px / 6 KiB, sent inside the
