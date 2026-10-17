@@ -15,6 +15,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
@@ -50,6 +52,7 @@ object MessagingRuntime {
     }
 
     fun ensureStarted(context: Context) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(context)) return
         if (started) return
         synchronized(this) {
             if (started) return
@@ -82,6 +85,7 @@ object MessagingRuntime {
                 if (it == TransportStatus.ONLINE) {
                     kick()
                     com.relay.app.media.ProfilePhotoSync.syncPending(appContext)
+                    com.relay.app.groups.GroupMedia.retryPending(appContext)
                 }
             }
         }
@@ -106,7 +110,7 @@ object MessagingRuntime {
                 val wait = ((nextDue ?: (now + MAX_WAIT_MS)) - now).coerceIn(MIN_WAIT_MS, MAX_WAIT_MS)
                 // Sleep until the next entry is due, or until kicked, whichever comes first.
                 withTimeoutOrNull(wait) { kicks.receive() }
-                delay(50) // coalesce a burst of kicks
+                // A queued message wakes the worker immediately.
             }
         }
     }
@@ -116,6 +120,11 @@ object MessagingRuntime {
      * sockets are dead but may not notice for a long time, so force a fresh connection. The initial
      * "available" callback at registration is ignored (nothing was lost yet).
      */
+    suspend fun shutdown(context: Context) {
+        scope.cancel()
+        withContext(Dispatchers.IO) { com.relay.app.transport.Transports.get(context).stop() }
+    }
+
     private fun watchNetwork(context: Context, transport: Transport) {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
         var lost = false

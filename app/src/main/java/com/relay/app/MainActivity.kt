@@ -72,6 +72,10 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (com.relay.app.calculator.CalculatorOnly.enabled(this)) {
+            setContent { CalculatorScreen(allowUnlock = false, onUnlock = {}) }
+            return
+        }
         if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
         // Load the saved Dark / Light / System choice before the first frame so there is no flash.
         ThemeController.load(applicationContext)
@@ -80,6 +84,13 @@ class MainActivity : FragmentActivity() {
         handleOpenChatIntent(intent)
         pendingOpenScan.value = com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)
         setContent {
+            val transition = calculatorSession.transitionUntil
+            LaunchedEffect(transition) {
+                if (transition > 0) {
+                    delay((transition - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(0))
+                    calculatorSession.finishTransition()
+                }
+            }
             val deadline = calculatorSession.deadline
             LaunchedEffect(deadline) {
                 while (calculatorSession.isActive()) delay(calculatorSession.remainingMs().coerceAtLeast(1L))
@@ -104,8 +115,11 @@ class MainActivity : FragmentActivity() {
             if (!calculatorUnlocked.value) {
                 CalculatorScreen(onUnlock = {
                     calculatorSession.unlock()
+                    calculatorSession.startTransition(RelayPreferences(applicationContext).unlockDance && android.animation.ValueAnimator.areAnimatorsEnabled())
                     calculatorUnlocked.value = true
                 })
+            } else if (calculatorSession.transitionUntil > android.os.SystemClock.elapsedRealtime()) {
+                com.relay.app.calculator.UnlockDance()
             } else {
             privateScreenState.SaveableStateProvider("private_screens") {
             CompositionLocalProvider(LocalChatMediaPicker provides mediaPicker,
@@ -166,6 +180,7 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (com.relay.app.calculator.CalculatorOnly.enabled(this)) return
         if (intent.getBooleanExtra("open_contacts", false)) {
             pendingOpenContacts.value = true
         }
@@ -184,7 +199,7 @@ class MainActivity : FragmentActivity() {
         calculatorSession.expireIfNeeded()
         calculatorUnlocked.value = calculatorSession.isActive()
         // The UI itself keeps messaging alive; don't show a connection-service notice on startup.
-        ConnectionService.onAppForeground(this)
+        if (!com.relay.app.calculator.CalculatorOnly.enabled(this)) ConnectionService.onAppForeground(this)
     }
 
     override fun onResume() {
@@ -192,7 +207,7 @@ class MainActivity : FragmentActivity() {
         // A quick Home/return can pause and resume without ever reaching onStop/onStart.
         calculatorSession.expireIfNeeded()
         calculatorUnlocked.value = calculatorSession.isActive()
-        ConnectionService.onAppForeground(this)
+        if (!com.relay.app.calculator.CalculatorOnly.enabled(this)) ConnectionService.onAppForeground(this)
     }
 
     private fun closePrivateScreens() {
@@ -222,7 +237,7 @@ class MainActivity : FragmentActivity() {
     override fun onStop() {
         if (!calculatorSession.keepChatForPicker()) closePrivateScreens()
         // Only start when leaving the visible UI, not for permission dialogs or rotation.
-        if (!isChangingConfigurations) ConnectionService.onAppBackground(this)
+        if (!isChangingConfigurations && !com.relay.app.calculator.CalculatorOnly.enabled(this)) ConnectionService.onAppBackground(this)
         super.onStop()
     }
 }

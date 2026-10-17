@@ -19,15 +19,15 @@ import androidx.compose.ui.unit.sp
 
 /** Ordinary calculator surface; no messaging UI is composed until the gate succeeds. */
 @Composable
-fun CalculatorScreen(onUnlock: () -> Unit) {
+fun CalculatorScreen(allowUnlock: Boolean = true, onUnlock: () -> Unit) {
     var state by remember { mutableStateOf(CalculatorState()) }
     val context = LocalContext.current
-    val store = remember { CalculatorAccessStore.get(context) }
+    val store = remember(allowUnlock) { if (allowUnlock) CalculatorAccessStore.get(context) else null }
 
     fun press(key: String) {
         val candidate = if (key == "+") state.codeCandidate else null
-        if (candidate != null) {
-            val result = runCatching { store.submit(candidate) }.getOrNull()
+        if (candidate != null && allowUnlock) {
+            val result = runCatching { store?.submit(candidate) }.getOrNull()
             OwnerSync.kick()
             if (result == AccessResult.ENROLLED || result == AccessResult.UNLOCKED) {
                 state = CalculatorState()

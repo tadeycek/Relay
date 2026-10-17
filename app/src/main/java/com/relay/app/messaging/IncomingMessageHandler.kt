@@ -51,6 +51,7 @@ class IncomingMessageHandler(context: Context) {
     private val readReceiptCooldown = CooldownLimiter(30_000L)
 
     fun handle(envelope: IncomingEnvelope) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(appContext)) return
         val now = System.currentTimeMillis()
         val payload = envelope.payload
 
@@ -100,6 +101,17 @@ class IncomingMessageHandler(context: Context) {
 
         // Retired direct-transfer offers never start a listening socket.
         if (P2pOfferMessages.parse(body) != null) return
+        if (body.startsWith(PurgeBody.PREFIX)) {
+            if (contact.qrVerified) PurgeBody.parse(body)?.let { MessageDeletion.purge(appContext, "direct:${contact.id}", envelope.senderPubkeyHex, it) }
+            return
+        }
+        if (body.startsWith(DeletionBody.PREFIX)) {
+            if (contact.qrVerified) DeletionBody.parse(body)?.let {
+                MessageDeletion.applyDirect(appContext, contact.id, envelope.senderPubkeyHex, it, false)
+            }
+            return
+        }
+        if (MessageDeletion.isDeleted(db, "direct:${contact.id}", envelope.senderPubkeyHex, payload.id, payload.ts)) return
         if (com.relay.app.groups.SharedGroups.handle(appContext, contact, body)) return
         if (com.relay.app.media.ProfilePhotoSync.handle(appContext, contact, body)) return
 

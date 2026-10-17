@@ -28,7 +28,7 @@ object GroupMessageNotifier {
         manager.activeNotifications.firstOrNull { it.tag == "group:$groupId" && it.id == ID }?.notification?.let {
             NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it)?.messages?.takeLast(4)?.forEach { old -> style.addMessage(old) }
         }
-        val text = ReplyBody.preview(packet.text).replace(Regex("[\\p{Cc}\\p{Cf}]"), " ").take(240)
+        val text = com.relay.app.media.MediaBody.parse(packet.text)?.let { (if (it.isVideo) "Video" else "Photo") + ReplyBody.preview(it.caption).let { c -> if (c.isBlank()) "" else ": $c" } } ?: ReplyBody.preview(packet.text).replace(Regex("[\\p{Cc}\\p{Cf}]"), " ").take(240)
         style.addMessage(text, System.currentTimeMillis(), person)
         val dismiss = PendingIntent.getBroadcast(context, 0, Intent(context, NotificationDismissReceiver::class.java)
             .setAction(NotificationDismissReceiver.ACTION_DISMISS).setData(Uri.parse("relay-preview://dismiss-group/$groupId"))

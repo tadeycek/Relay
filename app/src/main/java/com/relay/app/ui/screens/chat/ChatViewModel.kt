@@ -41,7 +41,7 @@ class ChatViewModel(
     app: Application,
 ) : AndroidViewModel(app) {
 
-    private val db = RelayDbHelper(app)
+    private val db = com.relay.app.messaging.MessagingDb.get(app)
     private val messageRepo = MessageRepository(db)
     private val contactRepo = ContactRepository(db)
 
@@ -123,19 +123,18 @@ class ChatViewModel(
     fun sendText(body: String, context: Context) {
         val contact = _contact.value ?: return
         viewModelScope.launch {
-            val ts = System.currentTimeMillis()
-            val handle = withContext(Dispatchers.IO) { RelaySecureSend.sendWithId(context, contactRepo, contact, body) }
-            if (!handle.ok) _toastMessage.emit("Message failed to send")
-            val msg = Message(
-                contactId = contactId,
-                body = body,
-                type = MessageType.TEXT,
-                isSent = true,
-                timestamp = ts,
-                msgId = handle.msgId ?: ts.toString(),
-                deliveryState = initialDeliveryState(contact, handle),
-            )
-            messageRepo.insertMessage(msg)
+            val ok = withContext(Dispatchers.IO) {
+                val sql = db.writableDatabase
+                sql.beginTransaction()
+                try {
+                    val handle = RelaySecureSend.sendWithId(context, contactRepo, contact, body)
+                    check(messageRepo.insertMessageSync(Message(contactId = contactId, body = body,
+                        isSent = true, msgId = handle.msgId, deliveryState = initialDeliveryState(contact, handle))) != -1L)
+                    sql.setTransactionSuccessful()
+                    handle.ok
+                } finally { sql.endTransaction(); com.relay.app.messaging.MessagingRuntime.kick() }
+            }
+            if (!ok) _toastMessage.emit("Message failed to queue")
             _messages.value = messageRepo.getMessages(contactId)
         }
     }
@@ -179,7 +178,7 @@ class ChatViewModel(
     private fun sendMediaOverInternet(uri: Uri, mimeType: String, caption: String, contact: Contact, context: Context) {
         viewModelScope.launch {
             _toastMessage.emit("Sending...")
-            val outcome = withContext(Dispatchers.IO) {
+            val outcome = try { withContext(Dispatchers.IO) {
                 val prepared = if (mimeType.startsWith("image")) {
                     MediaCompressor.compressImage(context, uri, INTERNET_IMAGE_MAX_BYTES, INTERNET_IMAGE_MAX_DIM)
                 } else {
@@ -188,13 +187,17 @@ class ChatViewModel(
                 when (prepared) {
                     is MediaCompressor.Result.TooLarge -> Pair(null, prepared.message)
                     is MediaCompressor.Result.Error -> Pair(null, "Failed to process media")
-                    is MediaCompressor.Result.Success -> when (
+                    is MediaCompressor.Result.Success -> try { when (
                         val sent = MediaSender.send(context, contact, prepared.file, prepared.mimeType, caption)
                     ) {
                         is MediaSender.Result.Failed -> Pair(null, sent.reason)
-                        is MediaSender.Result.Sent -> Pair(Triple(sent.msgId, prepared.file, prepared.mimeType), null)
-                    }
+                        is MediaSender.Result.Sent -> Pair(Triple(sent.msgId, MediaSender.keepEncryptedCopy(context, prepared.file), prepared.mimeType), null)
+                    } } finally { prepared.file.delete() }
                 }
+            }
+            } catch (e: Exception) {
+                _toastMessage.emit(e.message ?: "Couldn't prepare attachment")
+                return@launch
             }
             val (ok, error) = outcome
             if (ok == null) {

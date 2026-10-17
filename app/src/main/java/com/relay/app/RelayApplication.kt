@@ -15,6 +15,10 @@ class RelayApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        if (com.relay.app.calculator.CalculatorOnly.enabled(this)) {
+            com.relay.app.calculator.CalculatorOnly.clean(this)
+            return
+        }
         // Remove view copies left behind if the previous process died while showing media.
         java.io.File(cacheDir, "private-media-view").listFiles()?.forEach { it.delete() }
         com.relay.app.calculator.OwnerSync.start(this)

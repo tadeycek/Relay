@@ -12,6 +12,10 @@ class CalculatorSession : ViewModel() {
         private set
 
     // Only an explicit, in-flight picker may retain the private navigation tree. Never persisted.
+    var transitionUntil by mutableLongStateOf(0L)
+        private set
+    fun startTransition(enabled: Boolean) { transitionUntil = if (enabled) SystemClock.elapsedRealtime() + 4000 else 0 }
+    fun finishTransition() { transitionUntil = 0 }
     var pickerOpen = false
     fun keepChatForPicker() = SessionPolicy.retainChatForPicker(pickerOpen, deadline, SystemClock.elapsedRealtime())
 

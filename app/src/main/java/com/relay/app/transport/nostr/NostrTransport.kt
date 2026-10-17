@@ -133,7 +133,15 @@ class NostrTransport(
         }
         return try {
             // NIP-17: publish to the recipient's own inbox relays when they have published a list.
-            val published = if (publishAndDiscoverInbox) inboxRelaysFor(c, receiver, recipientPubkeyHex) else null
+            val cachedInbox = inboxCache[recipientPubkeyHex]
+            val published = if (!publishAndDiscoverInbox) null
+                else if (cachedInbox != null) cachedInbox.relays
+                else if (relayHints.isNotEmpty()) null
+                else inboxRelaysFor(c, receiver, recipientPubkeyHex)
+            if (publishAndDiscoverInbox && (cachedInbox == null || System.currentTimeMillis() - cachedInbox.fetchedAt >
+                if (cachedInbox.relays == null) NEGATIVE_TTL_MS else POSITIVE_TTL_MS)) {
+                scope.launch { inboxRelaysFor(c, receiver, recipientPubkeyHex) }
+            }
             val targets = InboxRelays.resolveTargets(published, relayHints, relays())
             val urls = targets.mapNotNull { runCatching { RelayUrl.parse(it) }.getOrNull() }
             if (urls.isEmpty()) return SendResult.Failed("No usable relays configured", retryable = false)

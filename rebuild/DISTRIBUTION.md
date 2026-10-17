@@ -1,12 +1,23 @@
-Calculator 1.7 preview package
+Calculator 1.8 preview package
 ==========================
 
-New in 1.7: native conversation previews replace the custom content that produced
-an extra leading app icon beside the sender photo. The latest supplied purple phone
-image is now the Android application icon/roundIcon for the native app badge. The
-sender photo is no longer painted with a second badge. Android controls the actual
-mask, badge position and surrounding layout; check a fresh notification on the target
-phone. Hold-to-reply and the startup-notice behavior from 1.6 are retained.
+New in 1.8: group photos/videos, quoted replies and member management inside group
+chats; hold a message for Reply, Copy and Delete; author-scoped remote deletion;
+four-recipient concurrent dispatch without reordering a recipient's queue; and an
+optional four-second illustration dance under Account → Appearance.
+
+Account → Connection → Hide connection notification opens Android's channel settings.
+Turn off only Relay connection and leave Messages on. Android controls visibility;
+the app still uses the required foreground service for prompt background delivery.
+
+Account → Security → Emergency: keep calculator only requires your four-digit code.
+It attempts remote history deletion for up to 15 seconds, wipes this phone's messaging
+data/keys, disables messaging, then closes. Reopen to use the calculator. The compiled
+APK code remains; reinstalling/clearing data can reset this local mode. Wrong confirmation
+codes count toward lockout. Remote deletion requires compatible recipient apps, reachable
+relays and membership/contact authorization. It cannot guarantee erasure of offline or
+old devices, saved/forwarded/quoted copies, screenshots or retained relay ciphertext.
+Undelivered requests are lost when local data is wiped. Test only on disposable app data.
 
 00-Calculator-preview.apk is the Android installer. The numbered names put it first
 when sorting this folder by name. Android 8 or newer is required. Allow installation
@@ -101,11 +112,14 @@ Members aren't automatically added or marked verified on other members' phones.
 Delete closes a creator-owned group; on other phones it deletes the local copy.
 Existing local-only groups are retained for reading and do not send private direct
 messages masquerading as group messages. Create a new shared group instead.
-This first group version supports text and quoted replies, not group attachments or
-location requests. It trusts the creator to attribute and forward other members'
+Group chats support text, photos, videos and quoted replies. Tap Members in the
+header to manage verified friends (creator only). Failed downloads retry when reopening
+the group or reconnecting. Group location requests are not supported. It trusts the creator to attribute and forward other members'
 posts; it does not independently authenticate each original author to every member.
 
-Touch and hold a text, photo, video or location message, type, and send. Cancel reply clears the quote.
+Touch and hold a text, photo, video or location message, choose Reply, type, and send.
+The same menu offers Copy, Delete for me, and Delete for everyone on authored messages
+with stable ids. Install 1.8 on all devices; older group rows allow local deletion only. Cancel reply clears the quote.
 Typing indicators stop after a pause/send/exit and expire within eight seconds if
 interrupted. They use the existing encrypted transport and are not stored in chat
 history or the durable send queue; encrypted relay events can still be retained by

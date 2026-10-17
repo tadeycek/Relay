@@ -8,6 +8,7 @@ import com.relay.app.util.RelayPreferences
 /** Restores the background connection after a reboot (if the user has it enabled). */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(context)) return
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         MessagingRuntime.ensureStarted(context)
         if (RelayPreferences(context).backgroundConnection) ConnectionService.start(context)

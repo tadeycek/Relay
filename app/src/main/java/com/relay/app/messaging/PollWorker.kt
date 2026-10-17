@@ -23,6 +23,7 @@ import java.util.concurrent.TimeUnit
 class PollWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(applicationContext)) return Result.success()
         MessagingRuntime.ensureStarted(applicationContext)
         val transport = Transports.get(applicationContext)
         // Give the connection a chance to come up, then a short window for stored events to stream in.

@@ -45,6 +45,7 @@ class RelayDbHelper(context: Context) :
         db.execSQL(DatabaseContract.Messages.INDEX_UNREAD)
         db.execSQL(DatabaseContract.GroupMessages.INDEX_UNREAD)
         createSharedGroups(db)
+        createMessageActions(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -114,6 +115,7 @@ class RelayDbHelper(context: Context) :
             db.execSQL(DatabaseContract.Contacts.ADD_DELETED_AT)
         }
         if (oldVersion < 16) createSharedGroups(db)
+        if (oldVersion < 17) createMessageActions(db)
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.
@@ -130,6 +132,14 @@ class RelayDbHelper(context: Context) :
         db.execSQL(com.relay.app.groups.SharedGroups.CREATE_SEEN)
         db.execSQL("ALTER TABLE group_messages ADD COLUMN sender_key TEXT")
         db.execSQL("ALTER TABLE group_messages ADD COLUMN sender_name TEXT")
+    }
+
+    private fun createMessageActions(db: SQLiteDatabase) {
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN event_id TEXT")
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN media_ref TEXT")
+        db.execSQL("CREATE INDEX group_event ON group_messages(group_id,event_id)")
+        db.execSQL(com.relay.app.messaging.MessageDeletion.CREATE)
+        db.execSQL(com.relay.app.messaging.MessageDeletion.CREATE_PURGES)
     }
 
     override fun onConfigure(db: SQLiteDatabase) {

@@ -12,6 +12,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -192,6 +194,7 @@ private fun SecurityPage(vm: SettingsViewModel) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
     val recoveryId = remember { CalculatorAccessStore.get(context).credentials().first }
+    EmergencyReset()
     SectionHeader("Calculator access")
     Text("Three wrong codes lock messaging until the owner clears the lockout. " +
         "The owner receives a random installation ID and access reports, not your messages or code.",
@@ -226,6 +229,13 @@ private fun SecurityPage(vm: SettingsViewModel) {
 
 @Composable
 private fun ConnectionPage(vm: SettingsViewModel) {
+    val context = LocalContext.current
+    ListRow(headline = "Hide connection notification", supporting = "In Android settings, turn off only the Relay connection channel. Keep Messages enabled for message previews. Android controls whether a foreground-service notice can be hidden.", onClick = {
+        com.relay.app.messaging.ConnectionService.ensureChannel(context)
+        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
+            .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, "relay_connection"))
+    })
     ListRow(
         headline = "Relay connection",
         supporting = connectionText(vm.connectionStatus),
@@ -243,6 +253,11 @@ private fun ConnectionPage(vm: SettingsViewModel) {
 
 @Composable
 private fun AppearancePage(vm: SettingsViewModel) {
+    val context = LocalContext.current
+    val prefs = remember { RelayPreferences(context) }
+    var dance by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(prefs.unlockDance) }
+    ToggleRow("Dancing unlock illustration", dance, { dance = it; prefs.unlockDance = it },
+        supporting = "Show your illustration swaying and bouncing for four seconds after unlocking. Off by default; skipped when system animations are disabled.")
     ChoiceRow(
         headline = "Theme",
         options = listOf(

@@ -86,8 +86,12 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val messages by vm.messages.collectAsState()
     val contact by vm.contact.collectAsState()
     val unreadAnchor by vm.unreadAnchorId.collectAsState()
+    var actionMessage by remember { mutableStateOf<com.relay.app.data.model.Message?>(null) }
     var replyDraft by rememberSaveable { mutableStateOf<String?>(null) }
     var inputText by rememberSaveable { mutableStateOf("") }
+    MessageActions(actionMessage, onReply = { message ->
+        replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(app).myName.ifBlank { "Me" } else contact?.name ?: "Someone")
+    }, onDismiss = { actionMessage = null })
     val context = LocalContext.current
     val listState = rememberLazyListState()
 
@@ -218,9 +222,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.md),
                 ) {
-                    items(items, key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "", onReply = { message ->
-                        replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(context).myName.ifBlank { "Me" } else contact?.name ?: "Someone")
-                    }) }
+                    items(items, key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "", onReply = { message -> actionMessage = message } ) }
                 }
             }
 
@@ -266,7 +268,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
 }
 
 @Composable
-private fun AttachSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, onVideo: () -> Unit, onCamera: () -> Unit) {
+internal fun AttachSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, onVideo: () -> Unit, onCamera: () -> Unit) {
     RelayBottomSheet(onDismiss = onDismiss) {
         ListRow(headline = "Photo from gallery", onClick = onPhoto, leading = { AttachIcon(Icons.Outlined.Image) })
         ListRow(headline = "Video from gallery", onClick = onVideo, leading = { AttachIcon(Icons.Outlined.VideoLibrary) })

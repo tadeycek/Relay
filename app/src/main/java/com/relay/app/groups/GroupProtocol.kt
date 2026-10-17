@@ -30,8 +30,8 @@ object GroupProtocol {
             s.members.map { it.key }.distinct().size == s.members.size && s.members.any { it.key == s.owner } &&
             when (p.kind) {
                 "sync" -> p.event.isEmpty() && p.author.isEmpty() && p.text.isEmpty()
-                "post", "submit" -> runCatching { UUID.fromString(p.event).toString() == p.event }.getOrDefault(false) &&
-                    s.members.any { it.key == p.author } && p.text.isNotBlank() && p.text.length <= 4000 && p.time > 0
+                "purge", "purge-submit", "delete", "delete-submit", "post", "submit" -> runCatching { UUID.fromString(p.event).toString() == p.event }.getOrDefault(false) &&
+                    s.members.any { it.key == p.author } && p.text.isNotBlank() && (!com.relay.app.media.MediaBody.isMedia(p.text) || com.relay.app.media.MediaBody.parse(p.text) != null) && p.text.length <= 4000 && (p.kind !in listOf("delete", "delete-submit") || runCatching { UUID.fromString(p.text).toString() == p.text }.getOrDefault(false)) && (p.kind !in listOf("purge", "purge-submit") || (p.text.toLongOrNull() ?: 0) > 0) && p.time > 0
                 else -> false
             }
     }
@@ -58,10 +58,10 @@ object GroupProtocol {
     }.getOrNull()
 
     /** Submitters cannot supply another author's identity or change the roster. */
-    fun acceptSubmit(sender: String, current: State, packet: Packet) = packet.kind == "submit" &&
+    fun acceptSubmit(sender: String, current: State, packet: Packet) = packet.kind in listOf("submit", "delete-submit", "purge-submit") &&
         packet.state.id == current.id && packet.state.owner == current.owner && packet.state.revision <= current.revision && packet.author == sender && current.members.any { it.key == sender } && sender != current.owner
-    fun acceptOwner(sender: String, current: State?, packet: Packet) = packet.kind in listOf("sync", "post") &&
+    fun acceptOwner(sender: String, current: State?, packet: Packet) = packet.kind in listOf("sync", "post", "delete", "purge") &&
         sender == packet.state.owner && (current == null || (current.owner == sender && current.id == packet.state.id &&
         (packet.state.revision > current.revision || packet.state == current ||
-            (packet.kind == "post" && packet.state.revision < current.revision && current.members.any { it.key == packet.author }))))
+            (packet.kind in listOf("post", "delete", "purge") && packet.state.revision < current.revision && current.members.any { it.key == packet.author }))))
 }

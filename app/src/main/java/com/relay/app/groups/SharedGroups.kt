@@ -52,7 +52,7 @@ object SharedGroups {
         check(stored != -1L) { "Couldn’t save group membership" }
         return id
     }
-    private fun notify(context: Context, id: Long) {
+    internal fun notify(context: Context, id: Long) {
         for (action in listOf("com.relay.app.NEW_MESSAGE", "com.relay.app.NEW_GROUP_MESSAGE"))
             context.sendBroadcast(Intent(action).setPackage(context.packageName).putExtra("group_id", id))
     }
@@ -95,6 +95,8 @@ object SharedGroups {
         val members = if (add) {
             val contact = repo.getByIdSync(contactId) ?: error("Contact no longer exists")
             require(GroupProtocol.eligible(contact)) { "Only verified friends can be added" }
+            require(old.members.none { it.key == contact.nostrPubkey }) { "Already a member" }
+            require(old.members.size < GroupProtocol.MAX_MEMBERS) { "Group is full" }
             old.members + GroupProtocol.Member(contact.nostrPubkey!!, contact.name.take(30))
         } else old.members.filterNot { GroupProtocol.memberId(it.key) == contactId && it.key != old.owner }
         val next = old.copy(revision = old.revision + 1, members = members)
@@ -126,7 +128,7 @@ object SharedGroups {
         com.relay.app.messaging.GroupMessageNotifier.cancel(context, id)
         notify(context, id)
     }
-    @Synchronized fun send(context: Context, id: Long, text: String) {
+    @Synchronized fun send(context: Context, id: Long, text: String, mediaPath: String? = null) {
         val db = MessagingDb.get(context); val stored = get(db, id) ?: error("This is a legacy local group; create a new shared group")
         val own = NostrIdentity.publicKeyHex(context); val state = stored.state
         require(!stored.hidden && state.members.any { it.key == own }) { "You are no longer in this group" }
@@ -139,20 +141,63 @@ object SharedGroups {
                 val owner = ContactRepository(db).findByNostrPubkeySync(state.owner) ?: error("Group creator is no longer a friend")
                 queue(context, owner, packet)
             }
-            store(db, stored.localId, packet, own)
+            store(context, db, stored.localId, packet, own, mediaPath)
         }
         notify(context, id)
     }
-    private fun store(db: RelayDbHelper, id: Long, packet: GroupProtocol.Packet, own: String): Boolean {
+    @Synchronized fun purgeOwnHistory(context: Context, id: Long, before: Long) {
+        val db = MessagingDb.get(context); val stored = get(db, id) ?: return
+        val own = NostrIdentity.publicKeyHex(context)
+        if (stored.hidden || stored.state.members.none { it.key == own }) return
+        val packet = GroupProtocol.Packet(if (own == stored.state.owner) "purge" else "purge-submit", stored.state,
+            UUID.randomUUID().toString(), own, before.toString(), System.currentTimeMillis())
+        transaction(context) {
+            if (own == stored.state.owner) contacts(context, stored.state).forEach { queue(context, it, packet) }
+            else queue(context, ContactRepository(db).findByNostrPubkeySync(stored.state.owner) ?: error("Group creator unavailable"), packet)
+        }
+    }
+    @Synchronized fun deleteMessage(context: Context, id: Long, event: String) {
+        val db = MessagingDb.get(context)
+        val stored = get(db, id) ?: error("Legacy messages support local deletion only")
+        val own = NostrIdentity.publicKeyHex(context)
+        require(!stored.hidden && stored.state.members.any { it.key == own })
+        val packet = GroupProtocol.Packet(if (own == stored.state.owner) "delete" else "delete-submit", stored.state,
+            UUID.randomUUID().toString(), own, event, System.currentTimeMillis())
+        transaction(context) {
+            if (own == stored.state.owner) contacts(context, stored.state).forEach { queue(context, it, packet) }
+            else queue(context, ContactRepository(db).findByNostrPubkeySync(stored.state.owner) ?: error("Group creator unavailable"), packet)
+            com.relay.app.messaging.MessageDeletion.applyGroup(context, id, own, event)
+        }
+        notify(context, id)
+    }
+
+    private fun store(context: Context, db: RelayDbHelper, id: Long, packet: GroupProtocol.Packet, own: String, mediaPath: String? = null): Boolean {
+        if (com.relay.app.messaging.MessageDeletion.isDeleted(db, "group:$id", packet.author, packet.event, packet.time)) return false
         val fresh = db.writableDatabase.insertWithOnConflict("shared_group_seen", null, ContentValues().apply {
             put("group_id", id); put("event", packet.event)
         }, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE) != -1L
         if (!fresh) return false
-        val message = GroupMessageRepository(db).insertMessageSync(GroupMessage(groupId = id, body = packet.text,
+        if (packet.kind in listOf("purge", "purge-submit")) {
+            com.relay.app.messaging.MessageDeletion.purge(context, "group:$id", packet.author, packet.text.toLong())
+            return false
+        }
+        if (packet.kind in listOf("delete", "delete-submit")) {
+            com.relay.app.messaging.MessageDeletion.applyGroup(context, id, packet.author, packet.text)
+            return false
+        }
+        val message = GroupMessageRepository(db).insertMessageSync(GroupMessage(groupId = id, body = com.relay.app.media.MediaBody.parse(packet.text)?.caption ?: packet.text,
+            eventId = packet.event, mediaUri = mediaPath,
+            type = com.relay.app.media.MediaBody.parse(packet.text)?.let { if (it.isVideo) com.relay.app.data.model.MessageType.VIDEO else com.relay.app.data.model.MessageType.IMAGE } ?: com.relay.app.data.model.MessageType.TEXT,
             senderKey = packet.author, senderName = packet.state.members.first { it.key == packet.author }.name,
             timestamp = com.relay.app.messaging.TimestampPolicy.resolve(packet.time, System.currentTimeMillis()),
             isSent = packet.author == own, unread = packet.author != own))
         check(message != -1L) { "Couldn’t save group message" }
+        if (mediaPath == null) com.relay.app.media.MediaBody.parse(packet.text)?.let { ref ->
+            db.writableDatabase.execSQL("UPDATE group_messages SET media_ref=? WHERE group_id=? AND event_id=?", arrayOf(packet.text, id, packet.event))
+            com.relay.app.messaging.MessagingRuntime.launchIo {
+                GroupMedia.download(context, id, packet.event, ref)
+            }
+        }
         return true
     }
     @Synchronized fun handle(context: Context, sender: Contact, body: String): Boolean {
@@ -162,7 +207,7 @@ object SharedGroups {
         val db = MessagingDb.get(context); val own = NostrIdentity.publicKeyHex(context)
         val existing = find(db, packet.state)
         if (existing?.hidden == true) return true
-        if (packet.kind == "submit") {
+        if (packet.kind in listOf("submit", "delete-submit", "purge-submit")) {
             if (existing == null || existing.state.owner != own ||
                 !GroupProtocol.acceptSubmit(sender.nostrPubkey!!, existing.state, packet)) return true
             var received = false
@@ -170,8 +215,8 @@ object SharedGroups {
                 // Every accepted submission is stored and fanned out atomically with durable outbox writes.
                 val duplicate = db.readableDatabase.rawQuery("SELECT 1 FROM shared_group_seen WHERE group_id=? AND event=?", arrayOf(existing.localId.toString(), packet.event)).use { it.moveToFirst() }
                 if (!duplicate) {
-                    contacts(context, existing.state).forEach { queue(context, it, packet.copy(kind = "post", state = existing.state)) }
-                    received = store(db, existing.localId, packet.copy(state = existing.state), own)
+                    contacts(context, existing.state).forEach { queue(context, it, packet.copy(kind = when (packet.kind) { "delete-submit" -> "delete"; "purge-submit" -> "purge"; else -> "post" }, state = existing.state)) }
+                    received = store(context, db, existing.localId, packet.copy(state = existing.state), own)
                 }
             }
             notify(context, existing.localId)
@@ -184,7 +229,7 @@ object SharedGroups {
             var received = false
             val id = transaction(context) {
                 val id = save(db, effective, existing)
-                if (member && packet.kind == "post") received = store(db, id, packet, own)
+                if (member && packet.kind in listOf("post", "delete", "purge")) received = store(context, db, id, packet, own)
                 id
             }
             notify(context, id)

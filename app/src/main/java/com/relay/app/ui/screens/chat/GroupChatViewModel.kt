@@ -33,11 +33,59 @@ class GroupChatViewModel(
     app: Application,
 ) : AndroidViewModel(app) {
 
-    private val db = RelayDbHelper(app)
+    private val db = com.relay.app.messaging.MessagingDb.get(app)
     private val groupRepo = GroupRepository(db)
     private val groupMessageRepo = GroupMessageRepository(db)
     private val contactRepo = ContactRepository(db)
 
+    private val _friends = MutableStateFlow<List<com.relay.app.data.model.Contact>>(emptyList())
+    val friends = _friends.asStateFlow()
+    private val _sending = MutableStateFlow(false)
+    val sending = _sending.asStateFlow()
+    fun refresh() {
+        loadData()
+        com.relay.app.messaging.MessagingRuntime.launchIo { com.relay.app.groups.GroupMedia.retryPending(getApplication()) }
+    }
+    fun changeMember(context: Context, contact: Long, add: Boolean) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.changeMember(context, groupId, contact, add) } }
+                .onFailure { _error.value = it.message ?: "Couldn't update members" }
+            loadData()
+        }
+    }
+    fun deleteGroup(context: Context, done: () -> Unit) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.delete(context, groupId) } }
+                .onSuccess { done() }.onFailure { _error.value = it.message }
+        }
+    }
+    fun sendMedia(context: Context, uri: android.net.Uri, mime: String, caption: String, done: () -> Unit) {
+        if (_sending.value) return
+        _sending.value = true
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    val result = if (mime.startsWith("image/")) com.relay.app.mms.MediaCompressor.compressImage(context, uri, 3L*1024*1024, 2048)
+                        else com.relay.app.mms.MediaCompressor.prepareVideo(context, uri, 12L*1024*1024, 60000L)
+                    when (result) {
+                        is com.relay.app.mms.MediaCompressor.Result.Success -> {
+                            var copy: java.io.File? = null
+                            try {
+                                val ref = com.relay.app.media.MediaSender.upload(context, result.file, result.mimeType, com.relay.app.media.MediaBody.normalizeCaption(caption))
+                                copy = com.relay.app.media.MediaSender.keepEncryptedCopy(context, result.file)
+                                com.relay.app.groups.SharedGroups.send(context, groupId, com.relay.app.media.MediaBody.format(ref), copy.absolutePath)
+                            } catch (e: Exception) { copy?.delete(); throw e }
+                            finally { result.file.delete() }
+                        }
+                        is com.relay.app.mms.MediaCompressor.Result.TooLarge -> error(result.message)
+                        else -> error("Couldn't prepare attachment")
+                    }
+                }
+                done()
+            } catch (e: Exception) { _error.value = e.message ?: "Couldn't send attachment" }
+            finally { _sending.value = false; loadData() }
+        }
+    }
     private val _group = MutableStateFlow<Group?>(null)
     val group: StateFlow<Group?> = _group.asStateFlow()
 
@@ -46,12 +94,11 @@ class GroupChatViewModel(
 
     private var receiver: BroadcastReceiver? = null
 
-    init {
-        loadData()
-    }
+    init { refresh() }
 
     private fun loadData() {
         viewModelScope.launch {
+            _friends.value = contactRepo.getAllContacts().filter(com.relay.app.groups.GroupProtocol::eligible)
             val groups = groupRepo.getAllGroups()
             _group.value = groups.find { it.id == groupId }
             _messages.value = groupMessageRepo.getMessages(groupId)

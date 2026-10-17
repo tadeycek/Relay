@@ -26,6 +26,10 @@ class RelayPreferences(context: Context) {
         get() = prefs.getString(KEY_THEME, THEME_SYSTEM) ?: THEME_SYSTEM
         set(v) { prefs.edit().putString(KEY_THEME, v).apply() }
 
+    var unlockDance: Boolean
+        get() = prefs.getBoolean("unlock_dance", false)
+        set(v) { prefs.edit().putBoolean("unlock_dance", v).apply() }
+
     var appLock: Boolean
         get() = prefs.getBoolean(KEY_APP_LOCK, false)
         set(v) { prefs.edit().putBoolean(KEY_APP_LOCK, v).apply() }

@@ -10,6 +10,7 @@ import com.relay.app.data.repository.MessageRepository
 
 class PinExpiryReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(context)) return
         val db = RelayDbHelper(context)
         MessageRepository(db).deleteExpiredPinsSync()
         GroupMessageRepository(db).deleteExpiredPinsSync()

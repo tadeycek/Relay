@@ -288,7 +288,10 @@ private fun openInMaps(context: Context, lat: Double, lng: Double, label: String
 
 @Composable
 private fun ImageBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) {
-    val uri = message.mediaUri ?: return
+    val uri = message.mediaUri ?: run {
+        TextBubble(message.copy(type = MessageType.TEXT, body = "Photo not downloaded yet"), shape, onReply)
+        return
+    }
     val displayFile = rememberDisplayFile(uri)
     var ratio by remember(uri) { mutableStateOf(1f) }
     var viewing by remember(uri) { mutableStateOf(false) }
@@ -312,7 +315,10 @@ private fun ImageBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) 
 
 @Composable
 private fun VideoBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) {
-    val path = message.mediaUri ?: return
+    val path = message.mediaUri ?: run {
+        TextBubble(message.copy(type = MessageType.TEXT, body = "Video not downloaded yet"), shape, onReply)
+        return
+    }
     val displayFile = rememberDisplayFile(path)
     var viewing by remember(path) { mutableStateOf(false) }
     if (viewing && displayFile != null) MediaViewer(displayFile, isVideo = true, onDismiss = { viewing = false })
@@ -380,5 +386,5 @@ private fun Modifier.messageGestures(
     onClick = onClick ?: {},
     onClickLabel = if (onClick != null) onClickLabel else null,
     onLongClick = onReply,
-    onLongClickLabel = if (onReply != null) "Reply" else null,
+    onLongClickLabel = if (onReply != null) "Message actions" else null,
 )
