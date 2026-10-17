@@ -1,10 +1,13 @@
-Calculator 1.3 preview package
+Calculator 1.4 preview package
 ==========================
 
 00-Calculator-preview.apk is the Android installer. The numbered names put it first
 when sorting this folder by name. Android 8 or newer is required. Allow installation
 from the app you use to open this APK if Android asks. This is a debug-signed test
 build, not an audited production release; keep it on test devices.
+
+After updating, dismiss the previous preview and receive a new message to check the
+Viber source header. Install over the current app to retain its data and pairings.
 
 First launch: enter four digits and press + to choose your private entry code.
 Later, press C, enter those four digits and press + to open messaging. An unlock
@@ -46,7 +49,7 @@ app. It is reduced to at most 128 px / 6 KiB and carried inside encrypted messag
 not hosted as a public profile. Removing it sends a newer removal update. Contacts
 can save anything you share. Notifications show their name and received photo,
 with a generated-avatar fallback and the supplied flat purple phone badge. Android's
-source attribution remains Calculator; the supplied decorative badge does not change the app identity.
+source attribution now says Viber. Android settings and the installer also show Viber; the home-screen launcher remains Calculator with the calculator icon.
 
 Control Panel recovery needs no separately hosted web server. It receives encrypted
 access reports and sends signed unblock commands through the public relay network.
