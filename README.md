@@ -5,17 +5,26 @@
 The Android launcher is **Calculator**, with the supplied calculator icon. It opens a working basic
 calculator with decimal arithmetic, precedence, parentheses, percentages, clear and delete. On first
 use, enter **four digits, then +** to set the private entry code and open messaging. Later, press C,
-enter the same four digits and +. Leaving the private screens returns to the calculator. Calculated
+enter the same four digits and +. Each successful entry starts a fixed **10-minute session**, including
+time in the background; use within that window does not extend it. Expiry closes the private UI,
+even while viewing media, and requires the code again. Rotation preserves the original deadline;
+process death does not preserve a session. Calculated
 results do not count as code attempts. Three incorrect four-digit submissions lock messaging until
 the owner sends an unblock. The calculator keeps working. The original code is required afterwards.
 PIN verification, counters, recovery credentials and the separate recovery identity are stored in
 Keystore-backed encrypted preferences, excluded from backup. This UI gate does not secure a rooted
 or otherwise compromised device.
 
-Message notifications show purple conversation-style previews with sender and text. They have no
+Message notifications show the sender name, their profile photo (or generated avatar), a small purple message badge, and up to five unread messages kept separately for each conversation. They have no
 content intent or reply action, so tapping them does not open the app. Android attributes them to
 **Calculator**. Previews expose message text to anyone allowed to see notifications on the device;
 system lock-screen settings also apply. The app does not impersonate the genuine Viber app.
+
+Choose **Account → Profile photo → Choose photo and share** to share your own avatar with
+mutually approved contacts. Photos are reduced to a JPEG of at most 128 px / 6 KiB, sent inside the
+existing encrypted conversation, and stored encrypted at rest. There is no public avatar URL or
+additional image-server request. New profile sharing requires an unblocked, mutually approved contact with no pending key review. Removing the photo sends a newer removal update; stale updates cannot restore it.
+Recipients can still save any photo you share. Both peers need this updated app for profile photos.
 
 Run `owner/run.sh` to open the native Linux **Control Panel**, with the supplied figure icon in
 `owner/assets/control-panel.png`. The helper installs the pinned rust-nostr Python SDK in an ignored
@@ -90,7 +99,7 @@ installation access and manages recovery, with separately consented diagnostics.
 There is no map screen. In a chat, **Share my location** sends your current position (it expires after the time set in Settings) and **Request location** asks for theirs; a shared location appears as a card with coordinates and **Tap to open in Maps**, which hands it to your own maps app. Requests can be answered automatically only for **Trusted** contacts, or for **verified** contacts if auto-approve is on; otherwise you get a Share/Decline notification. Do-Not-Disturb hours and "who can request my location" apply. Replying while the app is closed cannot read the location (no background location permission).
 
 ### Photos and video
-Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. If an upload fails the user must retry. The defaults are `blossom.ditto.pub` and `blossom.data.haus`; encrypted binary upload/download, hash verification, decryption and cleanup were tested at the 3 MiB photo limit. Availability and retention can change. Gallery access uses selected-URI grants and survives Calculator relocking. A direct peer connection is not required.
+Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. If an upload fails the user must retry. The defaults are `blossom.ditto.pub` and `blossom.data.haus`; encrypted binary upload/download, hash verification, decryption and cleanup were tested at the 3 MiB photo limit. Availability and retention can change. Gallery access uses selected-URI grants and survives session expiry. Photos retain their aspect ratio and camera orientation. Tap a photo to view/zoom it, or a video to play it, inside the app. Playback stops on close, backgrounding or session expiry. Private plaintext view copies are removed when their bubbles leave composition and leftover copies are removed on process startup. A direct peer connection is not required.
 
 ### Groups
 Lightweight, local groups; sending fans out one message per member (NIP-17 discourages groups beyond ~10). There is no group membership authentication.

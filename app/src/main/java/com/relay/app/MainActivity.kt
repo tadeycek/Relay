@@ -11,6 +11,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.CompositionLocalProvider
 import com.relay.app.media.LocalChatMediaPicker
 import com.relay.app.media.rememberChatMediaPicker
+import com.relay.app.media.LocalProfilePhotoPicker
+import com.relay.app.media.rememberProfilePhotoPicker
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -41,9 +43,13 @@ import com.relay.app.ui.theme.ThemeMode
 import com.relay.app.util.RelayPreferences
 import com.relay.app.calculator.CalculatorScreen
 import com.relay.app.messaging.ActiveChat
+import androidx.lifecycle.ViewModelProvider
+import com.relay.app.calculator.CalculatorSession
+import kotlinx.coroutines.delay
 
 class MainActivity : FragmentActivity() {
     private val calculatorUnlocked = mutableStateOf(false)
+    private val calculatorSession by lazy { ViewModelProvider(this)[CalculatorSession::class.java] }
 
     // Note: read once per composition of the lock gate; toggling "App lock" in Settings while
     // Relay is already in the foreground takes effect on the next cold start / resume-from-background,
@@ -74,8 +80,15 @@ class MainActivity : FragmentActivity() {
         handleOpenChatIntent(intent)
         pendingOpenScan.value = com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)
         setContent {
+            val deadline = calculatorSession.deadline
+            LaunchedEffect(deadline) {
+                while (calculatorSession.isActive()) delay(calculatorSession.remainingMs().coerceAtLeast(1L))
+                calculatorSession.expireIfNeeded()
+                if (!calculatorSession.isActive()) closePrivateScreens()
+            }
             val privateScreenState = rememberSaveableStateHolder()
             val mediaPicker = rememberChatMediaPicker()
+            val profilePhotoPicker = rememberProfilePhotoPicker()
             val messagingDark = when (ThemeController.mode) {
                 ThemeMode.DARK -> true
                 ThemeMode.LIGHT -> false
@@ -83,10 +96,14 @@ class MainActivity : FragmentActivity() {
             }
             SideEffect { setDarkSystemBars(!calculatorUnlocked.value || messagingDark) }
             if (!calculatorUnlocked.value) {
-                CalculatorScreen(onUnlock = { calculatorUnlocked.value = true })
+                CalculatorScreen(onUnlock = {
+                    calculatorSession.unlock()
+                    calculatorUnlocked.value = true
+                })
             } else {
             privateScreenState.SaveableStateProvider("private_screens") {
-            CompositionLocalProvider(LocalChatMediaPicker provides mediaPicker) {
+            CompositionLocalProvider(LocalChatMediaPicker provides mediaPicker,
+                LocalProfilePhotoPicker provides profilePhotoPicker) {
             RelayTheme {
                 val prefs = remember { RelayPreferences(applicationContext) }
                 val locked = remember { prefs.appLock && deviceSupportsAppLock(this@MainActivity) }
@@ -158,8 +175,17 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
+        calculatorSession.expireIfNeeded()
+        calculatorUnlocked.value = calculatorSession.isActive()
         // The activity is visible, which is when Android allows starting a foreground service.
         if (RelayPreferences(applicationContext).backgroundConnection) ConnectionService.start(this)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // A quick Home/return can pause and resume without ever reaching onStop/onStart.
+        calculatorSession.expireIfNeeded()
+        calculatorUnlocked.value = calculatorSession.isActive()
     }
 
     private fun closePrivateScreens() {

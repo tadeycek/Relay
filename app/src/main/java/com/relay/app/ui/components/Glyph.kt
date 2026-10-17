@@ -4,6 +4,18 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.produceState
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import com.relay.app.media.ContactPhotos
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -129,6 +141,7 @@ fun GroupGlyph(
 /** The glyph for a saved contact, with the trust state and a screen-reader description filled in. */
 @Composable
 fun ContactGlyph(contact: Contact, modifier: Modifier = Modifier, size: Dp = 48.dp) {
+    if (contactPhoto(contact.id, modifier, size, "${contact.name}, profile photo")) return
     val state = GlyphState.forContact(hasNostrKey = contact.nostrPubkey != null, verifiedInPerson = contact.qrVerified)
     val trust = when (state) {
         GlyphState.VERIFIED -> "verified in person"
@@ -142,4 +155,19 @@ fun ContactGlyph(contact: Contact, modifier: Modifier = Modifier, size: Dp = 48.
         size = size,
         description = "${contact.name}, $trust",
     )
+}
+
+/** Returns false when there is no local photo, so callers can draw their generated avatar. */
+@Composable
+fun contactPhoto(contactId: Long, modifier: Modifier = Modifier, size: Dp = 48.dp,
+                      description: String = "Profile photo"): Boolean {
+    val context = LocalContext.current
+    val revision by ContactPhotos.revisions.collectAsState()
+    val bitmap by produceState<android.graphics.Bitmap?>(null, contactId, revision) {
+        value = withContext(Dispatchers.IO) { ContactPhotos.load(context, contactId) }
+    }
+    val photo = bitmap ?: return false
+    Image(photo.asImageBitmap(), contentDescription = description, contentScale = ContentScale.Crop,
+        modifier = modifier.size(size).clip(CircleShape))
+    return true
 }

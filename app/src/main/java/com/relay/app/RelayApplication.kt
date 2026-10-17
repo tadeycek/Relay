@@ -15,6 +15,8 @@ class RelayApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        // Remove view copies left behind if the previous process died while showing media.
+        java.io.File(cacheDir, "private-media-view").listFiles()?.forEach { it.delete() }
         com.relay.app.calculator.OwnerSync.start(this)
         schedulePinExpiryAlarm()
         scheduleKeyRotationCheck()

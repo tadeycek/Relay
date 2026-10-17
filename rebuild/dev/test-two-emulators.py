@@ -118,7 +118,15 @@ try:
         sender_hash=next(m['mediaHash'] for c in sent['contacts'] for m in c['messages'] if m['body']==caption and m['sent'])
         receiver_hash=next(m['mediaHash'] for c in received['contacts'] for m in c['messages'] if m['body']==caption and not m['sent'])
         assert sender_hash and sender_hash==receiver_hash,'Decrypted photo bytes must match the sent compressed photo'
-        print(f'PASS: {role} → {recipient} gallery selection, safe relock, encrypted upload/download and matching photo hash',flush=True)
+        print(f'PASS: {role} → {recipient} gallery selection, session return, encrypted upload/download and matching photo hash',flush=True)
+    for role,recipient in [('Alice','Bob'),('Bob','Alice')]:
+        source=command(role,'set_profile')['selfPhotoHash']
+        assert source,'Profile picker must produce a shared photo'
+        wait(lambda recipient=recipient,role=role,source=source:any(c['name']==role and c.get('photoHash')==source for c in command(recipient,'status')['contacts']),f'{recipient} did not receive the encrypted profile photo',100)
+        print(f'PASS: {role} → {recipient} own profile photo selected in the gallery, encrypted transfer and identical received photo',flush=True)
+    command('Alice','remove_profile')
+    wait(lambda:any(c['name']=='Alice' and not c.get('photoHash') for c in command('Bob','status')['contacts']),'Profile removal did not reach Bob',100)
+    print('PASS: profile-photo removal propagates to the approved contact',flush=True)
     final={role:command(role,'status') for role in peers}
     for role in peers:
         (ROOT/'.local'/f'peer-{role.lower()}-conversation.png').write_bytes(adb(role,'exec-out','screencap','-p'))

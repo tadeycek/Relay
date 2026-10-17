@@ -5,7 +5,6 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,7 +14,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -33,6 +33,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,7 +48,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import com.relay.app.crypto.RelayFileCrypto
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.ui.components.DeliveryTick
@@ -60,7 +62,6 @@ import com.relay.app.ui.theme.TextSecondary
 import com.relay.app.util.GeoLinks
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -275,36 +276,25 @@ private fun openInMaps(context: Context, lat: Double, lng: Double, label: String
     }
 }
 
-/**
- * Received media is cached at rest as ciphertext ([RelayFileCrypto]); this produces a short-lived
- * plaintext copy for Coil/MediaMetadataRetriever to render. Files that were never encrypted (e.g.
- * media we sent) come back through unchanged via [RelayFileCrypto.decryptedViewCopy]'s fallback.
- */
-@Composable
-private fun rememberDisplayFile(path: String): File? {
-    val context = LocalContext.current
-    return produceState<File?>(initialValue = null, key1 = path) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                val original = File(path)
-                if (!original.exists()) null else RelayFileCrypto.decryptedViewCopy(context, original)
-            }.getOrNull()
-        }
-    }.value
-}
-
 @Composable
 private fun ImageBubble(message: Message, shape: Shape) {
     val uri = message.mediaUri ?: return
-    val displayFile = if (uri.startsWith("/")) rememberDisplayFile(uri) else null
-    val model: Any? = if (uri.startsWith("/")) displayFile else Uri.parse(uri)
+    val displayFile = rememberDisplayFile(uri)
+    var ratio by remember(uri) { mutableStateOf(1f) }
+    var viewing by remember(uri) { mutableStateOf(false) }
+    if (viewing && displayFile != null) MediaViewer(displayFile, isVideo = false, onDismiss = { viewing = false })
 
-    Column(modifier = Modifier.widthIn(max = MaxMediaWidth).clip(shape).background(Surface2)) {
+    Column(modifier = Modifier.widthIn(max = MaxMediaWidth).clip(shape).background(Surface2)
+        .clickable(enabled = displayFile != null, onClickLabel = "Open photo") { viewing = true }) {
         AsyncImage(
-            model = model,
-            contentDescription = "Photo",
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxWidth().height(200.dp),
+            model = displayFile,
+            contentDescription = "Open photo",
+            contentScale = ContentScale.Fit,
+            onSuccess = { result ->
+                val size = result.painter.intrinsicSize
+                if (size.width > 0 && size.height > 0) ratio = size.width / size.height
+            },
+            modifier = Modifier.width(minOf(260f, 340f * ratio).dp).aspectRatio(ratio),
         )
         if (message.body.isNotEmpty()) MediaCaption(message.body)
     }
@@ -314,6 +304,8 @@ private fun ImageBubble(message: Message, shape: Shape) {
 private fun VideoBubble(message: Message, shape: Shape) {
     val path = message.mediaUri ?: return
     val displayFile = rememberDisplayFile(path)
+    var viewing by remember(path) { mutableStateOf(false) }
+    if (viewing && displayFile != null) MediaViewer(displayFile, isVideo = true, onDismiss = { viewing = false })
 
     val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = displayFile) {
         val target = displayFile
@@ -334,14 +326,16 @@ private fun VideoBubble(message: Message, shape: Shape) {
         }
     }
 
-    Column(modifier = Modifier.widthIn(max = MaxMediaWidth).clip(shape).background(Surface2)) {
-        Box(modifier = Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
+    val ratio = thumbnail?.let { it.width.toFloat() / it.height } ?: (16f / 9f)
+    Column(modifier = Modifier.widthIn(max = MaxMediaWidth).clip(shape).background(Surface2)
+        .clickable(enabled = displayFile != null, onClickLabel = "Play video") { viewing = true }) {
+        Box(modifier = Modifier.width(minOf(260f, 340f * ratio).dp).aspectRatio(ratio), contentAlignment = Alignment.Center) {
             val bitmap = thumbnail
             if (bitmap != null) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "Video thumbnail",
-                    contentScale = ContentScale.Crop,
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier.matchParentSize(),
                 )
             }
@@ -349,7 +343,7 @@ private fun VideoBubble(message: Message, shape: Shape) {
                 modifier = Modifier.size(52.dp).clip(CircleShape).background(MediaScrim),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(Icons.Filled.PlayArrow, contentDescription = "Video", tint = Color.White, modifier = Modifier.size(30.dp))
+                Icon(Icons.Filled.PlayArrow, contentDescription = "Play video", tint = Color.White, modifier = Modifier.size(30.dp))
             }
         }
         if (message.body.isNotEmpty()) MediaCaption(message.body)

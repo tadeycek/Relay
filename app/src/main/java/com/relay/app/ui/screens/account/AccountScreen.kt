@@ -18,6 +18,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
+import com.relay.app.media.ContactPhotos
+import com.relay.app.media.LocalProfilePhotoPicker
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -90,6 +93,12 @@ private fun Profile(status: TransportStatus, onShowCode: () -> Unit) {
     val prefs = remember { RelayPreferences(context) }
     var name by remember { mutableStateOf(prefs.myName) }
     var editing by remember { mutableStateOf(false) }
+    var editingPhoto by remember { mutableStateOf(false) }
+    val photoPicker = LocalProfilePhotoPicker.current
+    val photoRevision by ContactPhotos.revisions.collectAsState()
+    val hasPhoto by produceState(false, photoRevision) {
+        value = withContext(Dispatchers.IO) { ContactPhotos.hasPhoto(context, 0) }
+    }
 
     // The identity key may need the Keystore on first use; keep that off the main thread.
     val key by produceState<String?>(null) {
@@ -98,7 +107,7 @@ private fun Profile(status: TransportStatus, onShowCode: () -> Unit) {
 
     Column(modifier = Modifier.padding(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.lg)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(RelaySpacing.lg)) {
-            Glyph(
+            if (!com.relay.app.ui.components.contactPhoto(0, size = 72.dp, description = "Your profile photo")) Glyph(
                 seed = key ?: name,
                 state = GlyphState.SELF,
                 size = 72.dp,
@@ -133,6 +142,20 @@ private fun Profile(status: TransportStatus, onShowCode: () -> Unit) {
         ) {
             PrimaryButton("Show my code", onShowCode, Modifier.weight(1f))
             SecondaryButton("Edit name", { editing = true }, Modifier.weight(1f))
+        }
+        SecondaryButton("Profile photo", { editingPhoto = true }, Modifier.fillMaxWidth().padding(top = RelaySpacing.sm))
+    }
+
+    if (editingPhoto) {
+        RelayBottomSheet(onDismiss = { editingPhoto = false }) {
+            Text("Your profile photo", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+            Text("Share a small photo with contacts you have both approved. It travels inside encrypted messages, not a public profile. They can save photos you share.",
+                style = MaterialTheme.typography.bodyMedium, color = TextSecondary,
+                modifier = Modifier.padding(top = RelaySpacing.sm))
+            PrimaryButton("Choose photo and share", { editingPhoto = false; photoPicker.choose() },
+                Modifier.fillMaxWidth().padding(top = RelaySpacing.lg))
+            if (hasPhoto) SecondaryButton("Remove profile photo", { editingPhoto = false; photoPicker.remove() },
+                Modifier.fillMaxWidth().padding(top = RelaySpacing.sm))
         }
     }
 
