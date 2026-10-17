@@ -1,53 +1,51 @@
-Calculator 1.10 local preview — installation notes
-================================================
+Calculator 1.11 preview — installation notes
+============================================
 
-This preview is prepared from feat/rebuild. It is not merged into main or published as a new release.
-Install 00-Calculator-preview.apk on a test phone running Android 8/API 26 or later.
-It is installed as Viber, with the Calculator launcher and existing private-entry code.
-The preview is debug signed. Install over a build with the same signing certificate to
-preserve data. Do not uninstall to bypass a signature mismatch without preserving data
-that you need: uninstalling clears it.
+Install 00-Calculator-preview.apk on Android 8/API 26 or later. This is a debug-signed
+preview from feat/rebuild, including main's direct group delivery (PR #32).
+The app is registered as Viber with the Calculator launcher/private-entry flow.
+Install over a matching-signature existing copy to preserve data. Do not uninstall to
+bypass a certificate mismatch: uninstalling deletes local data. The required signing
+certificate is 06a3d4109ba2322fcb2251f4c4ad97fed523eac1db00dc8bedb3201201de2da9.
 
-The running-in-background connection notice is removed by retiring the continuous
-foreground connection service. Open the app once after updating to clean the previous
-notice/channel. Real incoming-message notifications remain enabled, subject to mute,
-settings and Android permission. After Android stops the process, ordinary background
-checks have a 15-minute minimum and can be delayed much longer. Open the app for prompt
-delivery; this build cannot promise instant closed-app delivery without that service.
+IMPORTANT: messages and app-private attachments now delete locally after SEVEN DAYS,
+including older history when this version first runs. Contacts, identities, local aliases,
+group membership and permissions remain. Updated phones apply their own retention;
+Android may delay background cleanup until the next run. This cannot erase external
+saved files or ciphertext retained by relays. Use test data for this preview.
 
-New controls: tap the dancing character or Skip animation; Import QR image / Download
-my QR code; People → group → Edit → Group picture; Attach → Animated GIF / sticker;
-hold a message for reactions or Remove my reaction. QR images keep the original
-30-minute invitation expiry and still require mutual approval. GIFs are local files,
-not a third-party search service. Only group creators can change group pictures.
-Android 14+ chat screenshot notices are best effort; older Android versions explicitly
-show that detection is unavailable. Not all capture methods can be detected.
+The composer clears its accepted text while preserving newer typing/replies/attachments.
+The top-right DOT opens mute/location/group options. The screenshot banner is removed;
+support information is in the menu. Notification channels migrate to disable launcher
+counts while retaining current importance/sound/vibration settings and in-app unread.
 
-Upgrade all participants/creators to 1.10 for these controls and events. Reselect the
-original profile photo to improve old reduced copies. Existing paired identities,
-local aliases, calculator session security and encrypted-message/media routes remain.
+People and chat headers show approximate Active now / Last active for verified friends.
+Both peers need the updated feature. Privacy and Tor → Share active status controls your
+sharing. Only resumed private screens renew encrypted leases; a missing update expires
+after one minute. Unknown status is not proof that a person is offline.
 
-Read 02-TEST-RESULTS.txt. No phone was connected, so real UI, screenshot callbacks,
-notification cleanup, restart recovery and multi-phone synchronization remain untested.
-Use disposable data. This is not an audited or bug-free production release.
+Open a photo → Save photo to export its original bytes through a chosen destination.
+You confirm that a notice naming you and that exact photo will be sent. Saved copies are
+outside app control. Android 14+ reported chat screenshots identify visible photos when
+possible. Secure fullscreen viewing stays protected. External copies and unsupported
+capture methods cannot be detected; older Android has no screenshot callback.
 
-The folder includes the APK first, installation notes, verification results, complete
-tracked source, build provenance and SHA-256 checksums. Run sha256sum -c 04-SHA256SUMS.txt.
-Private owner configuration, signing keys, local SDK paths and build caches are excluded.
-A fresh source build creates a different recovery owner unless you securely reuse the
-existing private owner state. Never publish that state.
+Every group participant must use a protocol-v2 build (published 1.10 or this 1.11).
+Bring the upgraded creator online to refresh old rosters with member keys/relay hints.
+Until refresh, non-contact member traffic uses NIP-17 without the extra inner Tink layer.
+The creator still controls membership and group pictures.
 
-First launch: enter four digits and + to choose the private entry code. Later, press C,
-enter that code and +. Unlock lasts ten minutes from entry, including background time;
-rotation retains the deadline and process death ends the session. App lock still applies.
-Pairing requires each person to approve. Codes expire after thirty minutes or first use.
+Open the app once after updating to clear a legacy running-in-background notice. The
+foreground connection service remains retired. Genuine message alerts remain subject to
+mute/settings/permission. Android can delay background checks far beyond their 15-minute
+minimum; prompt closed-app delivery is not guaranteed. Reselect original personal photos
+to improve old reduced copies.
 
-Profile photos are limited to 256 px / 8 KiB and remain encrypted. Old reduced copies
-cannot regain detail: select the original photo again. Saving a QR image intentionally
-shares a public invitation, not a private identity/recovery key; its original expiry and
-one-use issuer checks remain in force.
+Read 02-TEST-RESULTS.txt. No phone was connected: real keyboard/launcher behavior,
+screenshot callbacks, system export, SQLCipher upgrade and multi-phone sync remain
+unverified. This is not an audited or bug-free production release.
 
-Control Panel: run owner/run.sh from source. Its private state is excluded from the
-package; keep the original computer's state safe if you need to manage this APK.
-Emergency calculator-only reset is destructive. Test on disposable data and read the
-full README before using it; remote erasure of saved copies/offline devices is not assured.
+This folder includes the APK first, source, installation/verification notes, build
+provenance and checksums. Run sha256sum -c 04-SHA256SUMS.txt here. Signing keys, local
+owner configuration and build caches are excluded. A local build needs the documented
+Android/JDK toolchain and its own signing key; do not assume it can replace this APK.

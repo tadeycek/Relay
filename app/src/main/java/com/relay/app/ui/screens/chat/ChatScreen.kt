@@ -92,7 +92,12 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val acceptedDraft by vm.acceptedDraft.collectAsState()
     val composerId = rememberSaveable { java.util.UUID.randomUUID().toString() }
     var draftRevision by rememberSaveable { mutableStateOf(0L) }
-    var inputText by rememberSaveable { mutableStateOf("") }
+    var input by rememberSaveable(stateSaver = androidx.compose.ui.text.input.TextFieldValue.Saver) {
+        mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(""))
+    }
+    val inputText = input.text
+    var appendOnly by rememberSaveable { mutableStateOf(true) }
+    var consumedRevision by rememberSaveable { mutableStateOf(-1L) }
     MessageActions(actionMessage, onReply = { message ->
         draftRevision += 1
         replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(app).myName.ifBlank { "Me" } else contact?.name ?: "Someone")
@@ -108,13 +113,19 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val mediaDraft = mediaPicker.draftFor(contactId)
     val pendingMediaUri = mediaDraft?.uri
     val pendingMimeType = mediaDraft?.mime.orEmpty()
-    LaunchedEffect(acceptedDraft) {
-        acceptedDraft?.takeIf { it.composerId == composerId }?.let { accepted ->
-            if (draftRevision == accepted.revision) { inputText = ""; replyDraft = null }
-            if (accepted.mediaSelectionId != null && mediaPicker.draftFor(contactId)?.selectionId == accepted.mediaSelectionId)
-                mediaPicker.clear(contactId)
-        }
+    fun consumeAccepted(accepted: AcceptedDraft) {
+        if (accepted.composerId != composerId || consumedRevision >= accepted.revision) return
+        val remaining = accepted.remainingText(input.text, draftRevision == accepted.revision, appendOnly)
+        if (remaining != input.text) input = androidx.compose.ui.text.input.TextFieldValue(remaining,
+            androidx.compose.ui.text.TextRange((input.selection.end - (input.text.length - remaining.length)).coerceIn(0, remaining.length)))
+        if (replyDraft == accepted.reply) replyDraft = null
+        if (accepted.mediaSelectionId != null && mediaPicker.draftFor(contactId)?.selectionId == accepted.mediaSelectionId)
+            mediaPicker.clear(contactId)
+        consumedRevision = accepted.revision
+        draftRevision += 1
     }
+    LaunchedEffect(acceptedDraft) { acceptedDraft?.let(::consumeAccepted) }
+
     var showAttachSheet by remember { mutableStateOf(false) }
     // Both fire something the other person sees; confirming first means a stray tap never sends it.
     var confirmShareLocation by remember { mutableStateOf(false) }
@@ -198,15 +209,10 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 contact = contact,
                 onBack = { navController.popBackStack() },
                 actions = {
-                    ConversationMute(contactId)
-                    if (contact?.isDeleted != true) {
-                        IconButton(onClick = { confirmShareLocation = true }) {
-                            Icon(Icons.Outlined.MyLocation, contentDescription = "Share my location", tint = TextSecondary)
-                        }
-                        IconButton(onClick = { confirmRequestLocation = true }) {
-                            Icon(Icons.Outlined.LocationSearching, contentDescription = "Ask for their location", tint = TextSecondary)
-                        }
-                    }
+                    ConversationMenu(contactId,
+                        onShare = if(contact?.isDeleted != true) ({ confirmShareLocation = true }) else null,
+                        onRequest = if(contact?.isDeleted != true) ({ confirmRequestLocation = true }) else null)
+
                 },
             )
         },
@@ -231,7 +237,11 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 }
             }
 
-            ConversationCaptureNotice(contact = contactId)
+            ConversationCaptureNotice(contact = contactId, targets = {
+                val visibleKeys = listState.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
+                messages.filter { it.type == com.relay.app.data.model.MessageType.IMAGE && "m_${it.id}" in visibleKeys }
+                    .mapNotNull { it.msgId }.take(8)
+            })
             if (contact?.isDeleted == true) {
                 Text(
                     "You deleted this contact. You can't send new messages here.",
@@ -248,21 +258,37 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 ConversationTyping(inputText, contactId = contactId)
                 ReplyPreview(replyDraft) { draftRevision += 1; replyDraft = null }
                 Composer(
-                    value = inputText,
+                    value = input,
                     placeholder = if (sending) "Preparing message…" else "Message",
-                    onValueChange = { draftRevision += 1; inputText = it.take(8000) },
+                    onValueChange = { edited ->
+                        val accepted = vm.acceptedDraft.value?.takeIf { it.composerId == composerId && it.revision == consumedRevision }
+                        val text = accepted?.rebaseKeyboardEdit(inputText,input.text,edited.text) ?: edited.text
+                        val removed = edited.text.length - text.length
+                        val next = if(removed == 0) edited else edited.copy(text=text,
+                            selection=androidx.compose.ui.text.TextRange((edited.selection.end-removed).coerceIn(0,text.length)), composition=null)
+                        if (next.text != input.text) {
+                            appendOnly = appendOnly && input.selection.collapsed && input.selection.end == input.text.length && next.text.startsWith(input.text)
+                            draftRevision += 1
+                        }
+                        input = if (next.text.length <= 8000) next else next.copy(text = next.text.take(8000), selection = androidx.compose.ui.text.TextRange(8000))
+                    },
                     pendingMediaUri = pendingMediaUri,
                     pendingMediaMime = pendingMimeType,
                     onClearMedia = { mediaPicker.clear(contactId) },
                     onAttach = { showAttachSheet = true },
                     sending = sending,
                     onSend = {
-                        if (!sending && vm.acceptedDraft.value != AcceptedDraft(composerId, draftRevision, mediaDraft?.selectionId) && (inputText.isNotBlank() || mediaDraft != null)) {
+                        if (!vm.sending.value && !(vm.acceptedDraft.value?.let { it.composerId == composerId && it.revision == draftRevision } ?: false) && (inputText.isNotBlank() || mediaDraft != null)) {
                             val revision = draftRevision
+                            appendOnly = true
+                            val submittedText = input.text
+                            val submittedReply = replyDraft
                             val submittedMedia = mediaDraft
                             val body = com.relay.app.messaging.ReplyBody.withText(replyDraft, inputText.trim())
                             val accepted = {
-                                vm.acceptedDraft.value = AcceptedDraft(composerId, revision, submittedMedia?.selectionId)
+                                val accepted = AcceptedDraft(composerId, revision, submittedMedia?.selectionId, submittedText, submittedReply)
+                                vm.acceptedDraft.value = accepted
+                                consumeAccepted(accepted)
                             }
                             if (submittedMedia != null) vm.sendMedia(submittedMedia.uri, submittedMedia.mime, body, context, accepted)
                             else vm.sendText(body, context, accepted)
@@ -292,8 +318,8 @@ private fun AttachIcon(icon: androidx.compose.ui.graphics.vector.ImageVector) {
 /** Attach, a pill-shaped text field and a send button; shows a preview of a pending photo above. */
 @Composable
 internal fun Composer(
-    value: String,
-    onValueChange: (String) -> Unit,
+    value: androidx.compose.ui.text.input.TextFieldValue,
+    onValueChange: (androidx.compose.ui.text.input.TextFieldValue) -> Unit,
     onSend: () -> Unit,
     pendingMediaUri: Uri? = null,
     pendingMediaMime: String = "",
@@ -302,7 +328,7 @@ internal fun Composer(
     placeholder: String = "Message",
     sending: Boolean = false,
 ) {
-    val canSend = !sending && (pendingMediaUri != null || value.isNotBlank())
+    val canSend = !sending && (pendingMediaUri != null || value.text.isNotBlank())
 
     Column(
         modifier = Modifier

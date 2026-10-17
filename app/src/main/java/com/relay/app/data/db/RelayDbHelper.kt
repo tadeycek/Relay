@@ -50,6 +50,7 @@ class RelayDbHelper(context: Context) :
         db.execSQL(com.relay.app.groups.GroupDelivery.CREATE)
         db.execSQL(com.relay.app.media.PendingAttachments.CREATE)
         createConversationExtras(db)
+        db.execSQL(com.relay.app.messaging.PresenceSignals.CREATE)
         db.execSQL(com.relay.app.groups.SharedGroups.CREATE_PENDING)
     }
 
@@ -135,6 +136,11 @@ class RelayDbHelper(context: Context) :
             db.execSQL(DatabaseContract.Outbox.V20_DROP)
             db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
             db.execSQL(com.relay.app.groups.SharedGroups.CREATE_PENDING)
+        }
+        if (oldVersion < 21) {
+            db.execSQL(com.relay.app.messaging.PresenceSignals.CREATE)
+            if (oldVersion >= 19) db.execSQL("ALTER TABLE reactions ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("UPDATE reactions SET received_at=?", arrayOf(System.currentTimeMillis()))
         }
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact

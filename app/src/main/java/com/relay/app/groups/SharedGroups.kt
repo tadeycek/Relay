@@ -211,6 +211,7 @@ object SharedGroups {
 
     private fun store(context: Context, db: RelayDbHelper, id: Long, state: GroupProtocol.State, e: GroupProtocol.Event, own: String, mediaPath: String? = null): Boolean {
         if (com.relay.app.messaging.MessageDeletion.isDeleted(db, "group:$id", e.author, e.event, e.time)) return false
+        if (e.kind == "post" && !com.relay.app.messaging.RetentionPolicy.admissible(e.time, System.currentTimeMillis())) return false
         // Keyed by author as well: events come from every member now, and one member must not be able to
         // suppress another's message by reusing its id.
         val fresh = db.writableDatabase.insertWithOnConflict("shared_group_seen", null, ContentValues().apply {
@@ -235,7 +236,7 @@ object SharedGroups {
         }
         val message = if (staged && e.author == own) 1L else GroupMessageRepository(db).insertMessageSync(GroupMessage(groupId = id, body = com.relay.app.media.MediaBody.parse(e.text)?.caption ?: e.text,
             eventId = e.event, mediaUri = mediaPath,
-            type = if(event?.kind == "screenshot") com.relay.app.data.model.MessageType.SCREENSHOT else com.relay.app.media.MediaBody.parse(e.text)?.let { if (it.isVideo) com.relay.app.data.model.MessageType.VIDEO else com.relay.app.data.model.MessageType.IMAGE } ?: com.relay.app.data.model.MessageType.TEXT,
+            type = if(event?.kind == "screenshot" || event?.kind == "media_saved") com.relay.app.data.model.MessageType.SCREENSHOT else com.relay.app.media.MediaBody.parse(e.text)?.let { if (it.isVideo) com.relay.app.data.model.MessageType.VIDEO else com.relay.app.data.model.MessageType.IMAGE } ?: com.relay.app.data.model.MessageType.TEXT,
             senderKey = e.author, senderName = state.members.first { it.key == e.author }.name,
             timestamp = com.relay.app.messaging.TimestampPolicy.resolve(e.time, System.currentTimeMillis()),
             isSent = e.author == own, unread = e.author != own))

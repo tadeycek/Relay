@@ -63,6 +63,7 @@ class IncomingMessageHandler(context: Context) {
             TypingSignals.handle(appContext, envelope.senderPubkeyHex, contact, payload.body)
             return
         }
+        if (PresenceSignals.handle(appContext,contact,payload.body)) return
         if (!seenRepo.markIfNewSync(payload.id, now)) return
 
         // Pairing messages are plain control messages. They are handled before an unknown sender would be
@@ -125,11 +126,12 @@ class IncomingMessageHandler(context: Context) {
             return
         }
         if (MessageDeletion.isDeleted(db, "direct:${contact.id}", envelope.senderPubkeyHex, payload.id, payload.ts)) return
-        if (ConversationEvents.handle(appContext, contact, body, payload.id, TimestampPolicy.resolve(payload.ts, now))) return
         if (com.relay.app.groups.SharedGroups.handle(appContext, envelope.senderPubkeyHex, contact, body)) return
         if (com.relay.app.groups.GroupAvatars.handle(appContext, contact, body)) return
         if (com.relay.app.media.ProfilePhotoSync.handle(appContext, contact, body)) return
 
+        if (!RetentionPolicy.admissible(payload.ts, now)) return
+        if (ConversationEvents.handle(appContext, contact, body, payload.id, TimestampPolicy.resolve(payload.ts, now))) return
         com.relay.app.media.ProfilePhotoSync.requestProfile(appContext, contact)
         val sentAt = TimestampPolicy.resolve(payload.ts, now)
 

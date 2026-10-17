@@ -140,7 +140,7 @@ object MediaReceiver {
         mediaPath: String?,
     ): Boolean {
         synchronized(MessageDeletion) {
-        if (com.relay.app.calculator.CalculatorOnly.enabled(context) || MessageDeletion.isDeleted(MessagingDb.get(context), "direct:${contact.id}", contact.nostrPubkey.orEmpty(), payloadId, sentAt)) {
+        if (com.relay.app.messaging.RetentionPolicy.expired(sentAt, System.currentTimeMillis()) || com.relay.app.calculator.CalculatorOnly.enabled(context) || MessageDeletion.isDeleted(MessagingDb.get(context), "direct:${contact.id}", contact.nostrPubkey.orEmpty(), payloadId, sentAt)) {
             mediaPath?.let { File(it).delete() }; return false
         }
         repo.insertMessageSync(

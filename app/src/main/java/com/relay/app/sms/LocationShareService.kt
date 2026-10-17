@@ -187,9 +187,11 @@ class LocationShareService : Service() {
     }
 
     private fun showSharedNotification(contactName: String) {
+        com.relay.app.messaging.LauncherBadges.disable(this)
         ensureChannel()
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val notif = NotificationCompat.Builder(this, RelayPreferences.LOCATION_REQUEST_CHANNEL)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE).setNumber(0)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("Location shared")
             .setContentText("Your location was shared with $contactName")
@@ -206,6 +208,7 @@ class LocationShareService : Service() {
             "Location Requests",
             NotificationManager.IMPORTANCE_HIGH,
         ).apply {
+            setShowBadge(false)
             description = "Notifications for location sharing requests"
         }
         nm.createNotificationChannel(channel)

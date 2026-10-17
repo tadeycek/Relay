@@ -1,5 +1,19 @@
 # Relay
 
+## 1.11 preview: current follow-up
+
+Fixes for #31 and #33–#37 add seven-day local message/attachment retention, precise
+in-app photo-save references and supported screenshot photo references, non-badging
+notification channels, draft acceptance that preserves newer typing, a single chat
+options dot, and approximate encrypted active/last-active status for verified contacts.
+Activity sharing can be disabled under Privacy and Tor; it only renews in resumed
+private screens and expires after a minute. Universal external capture/copy detection
+is unavailable. Explicit Save photo exports a user-confirmed plaintext copy; private
+viewing otherwise stays protected. Retention cannot erase exported copies/relay data.
+See [verification](rebuild/VERIFICATION.md) and [installation](rebuild/DISTRIBUTION.md)
+for the checks and remaining phone acceptance. Existing 1.10 direct group delivery is retained.
+
+
 ## Calculator entry and Control Panel
 
 The Android launcher is **Calculator**, with the supplied calculator icon. It opens a working basic

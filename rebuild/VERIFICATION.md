@@ -1,103 +1,100 @@
-# Calculator 1.10 local preview verification — 2026-10-17
+# Calculator 1.11 preview verification — 2026-10-17
 
-This follow-up is prepared on permanent branch feat/rebuild for the authorized push.
-No new main merge, release or issue closure is performed. The published 1.9 preview
-is unchanged. Issues #18–#27 remain open pending their device criteria.
+Prepared on permanent development branch feat/rebuild from main's PR #30/#32 merge.
+The published 1.10 preview is preserved. This report supersedes the historical 1.10
+checkpoint for this build. Android 8+, versionCode 12, database schema 21.
 
-## Implemented scope
+## Implemented issue changes
 
-- Retired and disabled ConnectionService. No connection foreground-service start,
-  persistent connection card, background setting toggle or channel-settings workaround.
-  App startup/boot/background paths stop the legacy service and cancel notification
-  1001 and its relay_connection channel. Incoming user-message notifications and
-  per-conversation mute are separate. Ordinary WorkManager checks continue; Android
-  can delay them beyond the 15-minute minimum. Prompt closed-app delivery is not assured.
-- Unlock illustration click and accessible Skip animation call the existing idempotent
-  transition-completion path. Authentication, app lock and session expiry are unchanged.
-- Gallery/Files QR import is offered before camera permission, and uses the same
-  decoding/admission/preview/confirmation and mutual pairing flow as camera/NFC.
-  My Code exports the exact rendered PNG and original expiry through CreateDocument.
-  Saving/re-importing cannot mint a new invitation; issuer nonce consumption and expiry
-  checks still govern trust. Saved-image success feedback includes its original expiry.
-- Creator-only group picture choose/preview/save/replace/remove. Bounded 256 px / 8 KiB
-  JPEGs are sent in authenticated private encrypted group-avatar controls; SQLCipher
-  stores the blobs. Independent monotonic revisions reject old updates/removals. Local
-  save and durable fanout are transactional; failed preparation/enqueue preserves the
-  old picture. Reconnect/new-member sync queues current pictures without public URLs.
-  Contacts, conversation list and group header resolve the same local group avatar.
-- Android 14+ lifecycle-scoped ScreenCaptureCallback creates a timestamped screenshot
-  event only for a visible/resumed chat. Capture notices use durable encrypted direct
-  or creator-mediated group transport and stable event IDs. On-screen disclosure is
-  explicit. Android 8–13 has no gallery-monitoring fallback. Hardware captures require
-  device testing; ADB/instrumentation screenshots do not establish detector coverage.
-- Local GIF/sticker selection preserves the original animated bytes (3 MiB, 2048 px
-  bounds). Coil's pinned GIF decoder handles chats/viewer; other pictures retain normal
-  compression. No external search provider. Reactions reference message UUIDs and use
-  per-actor monotonic revisions, including removal tombstones. Sender identity comes
-  from the authenticated channel/group author, not a claimed body field. Muting still
-  suppresses conversation alerts. Deleted messages have their local reactions removed.
-- Newest-200 history windows, explicit older-page expansion, stable timestamp/id order,
-  retained lower boundary during incoming updates and composite indexes. Group sender
-  resolution is per distinct author and delivery-state reads are batched. Active-group
-  refresh no longer loads every group. No recipient routing/relay defaults changed.
-- Additive schema 19 creates group avatars/reactions and query indexes. Existing rows,
-  profile revisions, identities, memberships, permissions and private routes remain.
+- #31: seven-day LOCAL message retention for direct/group history, attachments,
+  reactions, pending uploads and associated outgoing fanout. Contacts, aliases,
+  paired identities, group rosters and permissions remain. Expiry runs on history
+  entry, process startup/minutely while alive and ordinary periodic background work.
+  Expired incoming content is rejected using its original timestamp, including after
+  reconnect; deletion/profile/roster controls retain their separate handling.
+  Android can delay background execution: an offline/stopped phone cleans up on its
+  next run. This cannot erase remote relay ciphertext or copies already saved outside
+  the app, and older peers do not acquire retention until updated.
+- #33: authenticated in-chat photo-save notices after a successful explicit Save photo
+  export; cancellation/failure does not announce a successful save. Notices identify
+  the actor and stable photo message ID, with a local thumbnail when still available.
+  Android 14+ reported chat screenshots include up to eight visible photo IDs and
+  thumbnails. A chat capture can contain several photos, so all identified visible
+  photos are listed rather than guessing one. Secure fullscreen viewing remains
+  protected. No gallery spying, public photo URLs or capture-protection bypass.
+  External saves/copies/cameras and unsupported capture methods cannot be detected.
+- #34: non-badging notification channels for messages, security and location, plus
+  zero notification number/badge icon. Existing channel migration copies current
+  importance/sound/vibration/light/visibility settings and updates active cards.
+  Android does not allow changing a previously created channel's badge policy in
+  place; the migration uses new IDs. In-app unread counters are preserved. OEM
+  launcher appearance is unverified.
+- #35: draft acceptance now applies immediately after durable enqueue, with a retained
+  acceptance token for recreation. Only an unchanged accepted draft or its accepted
+  prefix is removed; appended text survives. Selection-aware edit tracking preserves
+  replacements/in-place edits and new reply/media selections. Stale keyboard edits
+  are rebased so they cannot restore the accepted prefix. Rejected local sends retain
+  the draft. Direct/group button/IME paths share the synchronous ViewModel busy guard.
+- #36: removed the permanent screenshot banner. A single accessible dot at the top
+  right opens mute/unmute, direct location share/request or group members/settings.
+  Screenshot support/limits and seven-day retention are available in that menu.
+- #37: eligible contacts show approximate Active now / Last active in People and the
+  direct-chat header. Authenticated encrypted status leases go only to verified
+  contacts over the existing Tor-aware transport while private screens are resumed;
+  calculator/locked/background screens do not renew them. Leases expire after one
+  minute, and monotonic persisted timestamps reject stale/replayed rollback. Unknown
+  means no observation, not offline. Privacy and Tor contains Share active status.
+  These are activity observations, not proof of constant connectivity or availability.
 
-## Verification
+Schema 21 adds contact activity and a reaction receipt timestamp. Migration retains
+existing reactions/revision tombstones, messages and outbox entries; older upgrades
+that create the latest reaction table do not add the column twice. The previous
+schema-20 direct member group transport remains in place.
 
-- `rebuild/dev/build.sh -PrelayPreview=true assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug`: successful.
-- 275 JVM tests: zero failures, errors or skips. New tests cover exact QR pixel roundtrip
-  and unchanged nonce/expiry, malformed images, typed screenshot/reaction controls,
-  invalid reaction IDs/revisions/emoji, group-avatar updates/removals and an actual
-  maximum-avatar HPKE ciphertext within the existing 16 KiB payload limit.
-- Lint: zero errors, 19 warnings, 11 informational findings. Existing SDK/plugin,
-  deprecated API and resource/platform warnings remain.
-- Android integration-test APK compiles, including retired-notification/manifest checks
-  and byte-for-byte animated GIF preservation. These tests were not executed on a device.
-- All 17 Control Panel unit tests passed.
-- Host SQLite regression and synthetic history benchmark passed. Android SQLCipher,
-  on-screen animation, system screenshot callbacks and physical notifications are unrun.
-- APK metadata: com.relay.app, 1.10-preview, code 11, min API 26, target API 36. The
-  compiled manifest disables ConnectionService and omits its remote-messaging foreground
-  permission. DETECT_SCREEN_CAPTURE is declared for the Android 14+ callback.
-- APK signature and local package checksums/provenance are verified with the final package.
-  No credentials or private owner state are included by the packaging script.
+## Verified
 
-The synthetic host SQLite benchmark uses 50,000 messages and 31 samples: full-history
-query/materialization p50/p95 90.913/126.633 ms; newest-200 window 0.401/0.501 ms. It
-checks equal-timestamp ordering, incoming anchor retention and older-page expansion.
-These are not phone, SQLCipher, frame-time or network results. Details and the dated
-free-hosting comparison are in PERFORMANCE-2026-10-17.md.
+- `rebuild/dev/build.sh -PrelayPreview=true assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug`: BUILD SUCCESSFUL.
+- 301 JVM tests: zero failures, errors or skips (JUnit XML inspected). New checks cover
+  accepted/appended/replaced drafts and stale keyboard callbacks, exact seven-day
+  boundaries/future rejection, activity ordering/expiry/labels, and bounded valid photo
+  references in screenshot/save controls. Existing crypto/group/QR tests also pass.
+- Lint: zero errors, 19 warnings and 13 informational findings. Existing deprecated
+  platform/plugin, resource/icon and notification-dismissal warnings remain.
+- All 17 Control Panel tests passed.
+- `python3 rebuild/dev/check-group-schema.py`: passed. Covers old migrations plus v21
+  reaction preservation, per-identity monotonic activity, scoped message/outbox expiry,
+  colliding group event IDs, and preservation of fresh content, aliases and rosters.
+- `python3 rebuild/dev/benchmark-history.py`: history ordering/window/anchor/page
+  regression checks passed. Its timing is synthetic host SQLite, not phone/UI/network.
+- Android integration-test APK compiled, including non-badging channel migration with
+  silent/blocked preferences. No Android tests were executed: adb reports no devices.
 
-Host schema regression includes v16–v19 additive migration, old-row preservation,
-transaction rollback, avatar/reaction monotonicity, removal replay rejection and
-actor/conversation isolation. It does not execute Android SQLCipher.
+APK certificate, package checksums and source provenance are checked separately during
+packaging/publication. The required certificate is
+06a3d4109ba2322fcb2251f4c4ad97fed523eac1db00dc8bedb3201201de2da9.
 
-## Remaining acceptance checks
+## Remaining device checks / limits
 
-No connected phone/emulator is available; no emulator profiles were recreated.
-All phone assertions below remain unverified:
+1. Existing 1.10 install → 1.11 upgrade and SQLCipher v20→v21; seven-day boundary with
+   app open, stopped and offline; saved external copies remain outside app control.
+2. Direct/group button and IME sends while appending, replacing, replying, attaching,
+   rotating, failing local enqueue and reconnecting. Verify actual keyboard behavior.
+3. Existing badge/card migration and fresh direct/group/security/location notifications
+   on affected launchers. Verify no badge while in-app unread and mute behavior remain.
+4. Real Android 14+ hardware screenshots in direct/group chats with one/multiple photos;
+   non-chat screens, lifecycle, older Android and secure viewer behavior. ADB captures
+   do not prove screenshot callback coverage. Universal capture detection is unavailable.
+5. Save still/GIF photo: destination picker cancel/failure/success, exact exported bytes,
+   actor/photo reference on other phones, offline delivery/retry and expired/deleted media.
+6. Two upgraded contacts: active lease, background/lock, disconnect/crash expiry,
+   reconnect/restart, delayed/replayed updates, privacy off/on, blocked/deleted contacts,
+   Tor unavailable and a peer on an old version. A missing update must never claim active.
+7. Three upgraded group peers: direct member delivery with creator offline and existing
+   v2 compatibility tests. No real end-to-end delivery or latency is claimed here.
 
-1. Upgrade with an existing connection notice, reopen, background, reboot and restart:
-   no running-in-background card or service reappears; genuine messages still notify.
-   Measure actual reception delays under Doze/OEM battery restrictions and force-stop.
-2. Real QR export/import: camera denied, picker cancel, valid image, non-Relay/unreadable
-   images, self code, re-export near expiry, import after expiry/use and issuer restart.
-   Verify the original expiration and both participants' confirmation remain required.
-3. Tap/Skip/automatic unlock animation; repeated taps, app lock, rotation and expiry.
-4. Three phones: creator avatar replacement/removal, failure preserving previous image,
-   new/offline members, stale replay, ordinary-member rejection and restart persistence.
-5. Android 14+ physical screenshot buttons in direct/group chat, then non-chat screens,
-   background, navigation, media viewer and session expiry. Check real timestamp/sender,
-   offline delivery/dedup and the Android system disclosure. Verify older-OS behavior.
-6. Send animated GIFs and text/media reactions in direct/group chats; change/remove,
-   out-of-order/duplicate controls, before-target arrival, restart, muted chat, deletion,
-   unsupported old peers, failed uploads and encrypted-at-rest copies. Confirm animation
-   in both the bubble and viewer, including Android 8/9 decoder paths.
-7. Long-history entry/scroll/older loads, simultaneous arrivals, inset/IME/media resizing,
-   exact composer acceptance, new edits/attachments, button and keyboard sends. Obtain
-   before/after phone p50/p95 and real recipient/relay timings before closing #25.
+No phone/emulator was available, and no emulator profiles were created. New issue
+acceptance is not asserted solely from compilation. Background delivery and cleanup
+remain subject to Android scheduling. This is not a claim of a bug-free app.
 
-Creator availability, free-relay retention, Android background restrictions, seven-day
-upload retries and lack of manual upload-retry UI remain. Android screenshot detection
-is best effort. No claim of complete acceptance, instant delivery or a bug-free app.
+Platform references: [notification badge policy](https://developer.android.com/reference/android/app/NotificationChannel#setShowBadge(boolean))
+and [Android screenshot detection limits](https://developer.android.com/about/versions/14/features/screenshot-detection).

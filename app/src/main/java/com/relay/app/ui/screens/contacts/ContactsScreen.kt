@@ -148,7 +148,7 @@ fun ContactsScreen(navController: NavController) {
 private fun ContactRow(contact: Contact, onClick: () -> Unit) {
     ListRow(
         headline = contact.name,
-        supporting = contact.subtitle,
+        supporting = if (com.relay.app.groups.GroupProtocol.eligible(contact)) com.relay.app.ui.screens.chat.contactActivityLabel(contact.nostrPubkey) else contact.subtitle,
         onClick = onClick,
         maxSupportingLines = 1,
         leading = { ContactGlyph(contact, size = AvatarSize) },
@@ -157,7 +157,7 @@ private fun ContactRow(contact: Contact, onClick: () -> Unit) {
                 contact.pendingPublicKey != null -> StatusChip("Key changed", ChipKind.DANGER)
                 contact.trustLevel == ContactTrustLevel.BLOCKED -> StatusChip("Blocked", ChipKind.DANGER)
                 contact.nostrPubkey == null -> StatusChip("Old contact", ChipKind.NEUTRAL)
-                contact.qrVerified -> StatusChip("Verified", ChipKind.VERIFIED)
+                contact.qrVerified -> Unit
                 else -> StatusChip("Not verified", ChipKind.NEUTRAL)
             }
         },

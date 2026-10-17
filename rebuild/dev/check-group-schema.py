@@ -134,9 +134,9 @@ for revision,jpeg in [(2,b'new'),(1,b'old'),(3,None),(2,b'replay')]:
 assert db.execute('SELECT revision,jpeg FROM group_avatars').fetchone()==(3,None)
 reaction_sql=re.search(r'execSQL\("(INSERT INTO reactions.*?)"',reactions).group(1)
 for revision,emoji in [(2,'like'),(1,'old'),(3,''),(2,'replay')]:
-    db.execute(reaction_sql,('group:3','message','alice',revision,emoji))
-db.execute(reaction_sql,('group:3','message','bob',1,'other'))
-db.execute(reaction_sql,('direct:3','message','alice',1,'independent'))
+    db.execute(reaction_sql,('group:3','message','alice',revision,emoji,100))
+db.execute(reaction_sql,('group:3','message','bob',1,'other',100))
+db.execute(reaction_sql,('direct:3','message','alice',1,'independent',100))
 assert db.execute("SELECT revision,emoji FROM reactions WHERE scope='group:3' AND actor='alice'").fetchone()==(3,'')
 assert db.execute("SELECT emoji FROM reactions WHERE scope='group:3' AND actor='bob'").fetchone()==('other',)
 assert db.execute("SELECT emoji FROM reactions WHERE scope='direct:3' AND actor='alice'").fetchone()==('independent',)
@@ -190,3 +190,42 @@ assert [r[0] for r in db.execute('SELECT body FROM shared_group_pending ORDER BY
 db.execute(evict_all, (104, 99))
 assert [r[0] for r in db.execute('SELECT body FROM shared_group_pending')] == ['b4']
 print('Host SQLite: held group events are capped per group and overall, evict oldest first, and expire.')
+
+# v21: actual old-v20 reaction table migrates additively; stale activity never regresses.
+v21 = sqlite3.connect(':memory:')
+v21.execute('CREATE TABLE reactions (scope TEXT,target TEXT,actor TEXT,revision INTEGER,emoji TEXT,PRIMARY KEY(scope,target,actor))')
+v21.execute("INSERT INTO reactions VALUES ('direct:1','photo','alice',3,'')")
+v21.execute('CREATE TABLE messages (_id INTEGER PRIMARY KEY,contact_id INTEGER,msg_id TEXT,timestamp INTEGER,media_uri TEXT,is_sent INTEGER DEFAULT 1)')
+v21.execute('CREATE TABLE group_messages (_id INTEGER PRIMARY KEY,group_id INTEGER,event_id TEXT,timestamp INTEGER,media_uri TEXT,is_sent INTEGER DEFAULT 1)')
+v21.execute('CREATE TABLE group_delivery (group_id INTEGER,event TEXT,payload_id TEXT)')
+v21.execute('CREATE TABLE outbox (payload_id TEXT,created_at INTEGER)')
+v21.execute('CREATE TABLE contacts (_id INTEGER PRIMARY KEY,name TEXT)')
+v21.execute('CREATE TABLE shared_groups (group_id INTEGER,state TEXT)')
+v21.execute("INSERT INTO contacts VALUES (1,'Alias kept')")
+v21.execute("INSERT INTO shared_groups VALUES (1,'roster kept')")
+block21=re.search(r'if \(oldVersion < 21\) \{(.*?)\n        \}',helper,re.S).group(1)
+v21.execute(re.search(r'ALTER TABLE reactions[^"\n]*',block21).group(0))
+assert v21.execute('SELECT revision,emoji FROM reactions').fetchone()==(3,'')
+presence=(ROOT/'app/src/main/java/com/relay/app/messaging/PresenceSignals.kt').read_text()
+v21.execute(re.search(r'const val CREATE = "(.*?)"',presence).group(1))
+activity_upsert=re.search(r'execSQL\("(INSERT INTO contact_activity.*?)"',presence).group(1)
+for ts,active in [(100,1),(101,0),(100,1),(101,1)]: v21.execute(activity_upsert,('alice',ts,active))
+assert v21.execute('SELECT last_at,active FROM contact_activity').fetchone()==(101,0)
+v21.execute(activity_upsert,('bob',90,1))
+assert v21.execute('SELECT count(*) FROM contact_activity').fetchone()==(2,)
+# Expiring a group message must cancel only that group's fanout, including colliding event ids elsewhere.
+v21.executemany('INSERT INTO messages(_id,contact_id,msg_id,timestamp,media_uri) VALUES (?,?,?,?,?)',[(1,1,'old-direct',100,'private-old'),(2,1,'fresh-direct',101,'private-new')])
+v21.executemany('INSERT INTO group_messages(_id,group_id,event_id,timestamp,media_uri) VALUES (?,?,?,?,?)',[(1,1,'collision',100,'old-group'),(2,2,'collision',101,'fresh-group')])
+v21.executemany('INSERT INTO group_delivery VALUES (?,?,?)',[(1,'collision','old-leg'),(2,'collision','fresh-leg')])
+v21.executemany('INSERT INTO outbox VALUES (?,?)', [('old-direct',101),('fresh-direct',101),('old-leg',101),('fresh-leg',101)])
+expiry=re.search(r'fun expire\(.*?\n    private fun remove',actions,re.S).group(0)
+for query in re.findall(r'db.execSQL\("(DELETE FROM (?:outbox|group_delivery).*?)"',expiry):
+    v21.execute(query,tuple(100 for _ in range(query.count('?'))))
+v21.execute('DELETE FROM messages WHERE timestamp<=?',(100,))
+v21.execute('DELETE FROM group_messages WHERE timestamp<=?',(100,))
+assert set(v21.execute('SELECT payload_id FROM outbox'))=={('fresh-direct',),('fresh-leg',)}
+assert v21.execute('SELECT msg_id FROM messages').fetchall()==[('fresh-direct',)]
+assert v21.execute('SELECT group_id FROM group_messages').fetchall()==[(2,)]
+assert v21.execute('SELECT name FROM contacts').fetchone()==('Alias kept',)
+assert v21.execute('SELECT state FROM shared_groups').fetchone()==('roster kept',)
+print('Host SQLite: v21 reaction migration, activity monotonicity/isolation and scoped seven-day message/outbox expiry preserve new content, aliases and rosters.')

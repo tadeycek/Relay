@@ -82,7 +82,7 @@ fun ChatItemRow(item: ChatItem, contactName: String, senderName: ((Long) -> Stri
     when (item) {
         is ChatItem.Day -> DaySeparator(item.label)
         is ChatItem.UnreadDivider -> UnreadDivider(item.count)
-        is ChatItem.Note -> SystemNote(item.message, senderName?.invoke(item.message.contactId) ?: contactName)
+        is ChatItem.Note -> SystemNote(item.message, senderName?.invoke(item.message.contactId) ?: contactName, groupId)
         is ChatItem.Bubble -> BubbleRow(item, senderName?.takeIf { !item.message.isSent && item.startsGroup }?.invoke(item.message.contactId), onReply, groupId)
     }
 }
@@ -121,7 +121,8 @@ private fun UnreadDivider(count: Int) {
 
 /** Location requests and their replies: a quiet centred line, not a bubble. */
 @Composable
-private fun SystemNote(message: Message, contactName: String) {
+private fun SystemNote(message: Message, contactName: String, groupId: Long?) {
+    if(message.type==MessageType.SCREENSHOT) { MediaEventNote(message,contactName,groupId); return }
     val (icon, text) = when (message.type) {
         MessageType.SCREENSHOT -> Icons.Outlined.CameraAlt to
             ((if (message.isSent) "You took a screenshot" else "$contactName took a screenshot") + " · " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(message.timestamp)))
@@ -170,7 +171,7 @@ private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((
         when (message.type) {
             MessageType.TEXT -> TextBubble(message, shape, replyTo)
             MessageType.LOCATION -> LocationCard(message, shape, replyTo)
-            MessageType.IMAGE -> ImageBubble(message, shape, replyTo)
+            MessageType.IMAGE -> ImageBubble(message, shape, replyTo, groupId)
             MessageType.VIDEO -> VideoBubble(message, shape, replyTo)
             // Requests and replies are notes and never reach here.
             MessageType.LOCATION_REQUEST, MessageType.LOCATION_DECLINED, MessageType.SCREENSHOT -> Unit
@@ -291,7 +292,7 @@ private fun openInMaps(context: Context, lat: Double, lng: Double, label: String
 }
 
 @Composable
-private fun ImageBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) {
+private fun ImageBubble(message: Message, shape: Shape, onReply: (() -> Unit)?, groupId: Long?) {
     val uri = message.mediaUri ?: run {
         TextBubble(message.copy(type = MessageType.TEXT, body = "Photo not downloaded yet"), shape, onReply)
         return
@@ -299,7 +300,7 @@ private fun ImageBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) 
     val displayFile = rememberDisplayFile(uri)
     var ratio by remember(uri) { mutableStateOf(1f) }
     var viewing by remember(uri) { mutableStateOf(false) }
-    if (viewing && displayFile != null) MediaViewer(displayFile, isVideo = false, onDismiss = { viewing = false })
+    if (viewing && displayFile != null) MediaViewer(displayFile, isVideo = false, onDismiss = { viewing = false }, message=message, group=groupId)
 
     Column(modifier = Modifier.widthIn(max = MaxMediaWidth).clip(shape).background(Surface2)
         .messageGestures(onReply, onClick = if (displayFile != null) ({ viewing = true }) else null, onClickLabel = "Open photo")) {

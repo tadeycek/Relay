@@ -46,6 +46,10 @@ class RelayPreferences(context: Context) {
         get() = prefs.getString(KEY_DEFAULT_PIN_EXPIRY, "never") ?: "never"
         set(v) { prefs.edit().putString(KEY_DEFAULT_PIN_EXPIRY, v).apply() }
 
+    var shareActivity: Boolean
+        get() = prefs.getBoolean("share_activity", true)
+        set(v) { prefs.edit().putBoolean("share_activity",v).apply(); com.relay.app.messaging.MessagingRuntime.launchIo { com.relay.app.messaging.PresenceSignals.heartbeat(appContext) } }
+
     var typingIndicators: Boolean
         get() = prefs.getBoolean("typing_indicators", true)
         set(v) { prefs.edit().putBoolean("typing_indicators", v).apply() }
@@ -157,7 +161,7 @@ class RelayPreferences(context: Context) {
         const val THEME_LIGHT = "light"
         const val THEME_SYSTEM = "system"
 
-        const val LOCATION_REQUEST_CHANNEL = "relay_location_requests"
-        const val SECURITY_ALERT_CHANNEL = "relay_security_alerts"
+        const val LOCATION_REQUEST_CHANNEL = com.relay.app.messaging.LauncherBadges.LOCATION
+        const val SECURITY_ALERT_CHANNEL = com.relay.app.messaging.LauncherBadges.SECURITY
     }
 }

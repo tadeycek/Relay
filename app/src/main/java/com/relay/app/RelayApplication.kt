@@ -25,6 +25,7 @@ class RelayApplication : Application(), coil.ImageLoaderFactory {
             return
         }
         com.relay.app.messaging.ConnectionService.stop(this)
+        com.relay.app.messaging.LauncherBadges.disable(this)
         // Remove view copies left behind if the previous process died while showing media.
         java.io.File(cacheDir, "private-media-view").listFiles()?.forEach { it.delete() }
         com.relay.app.calculator.OwnerSync.start(this)

@@ -34,6 +34,8 @@ class OutboxWorker(context: Context, private val transport: Transport) {
                 fail(entry.id, entry.payloadId, entry.contactId)
                 return@run 0
             }
+            // A retention sweep/deletion may have removed this row after dueSync took its snapshot.
+            if (!db.readableDatabase.rawQuery("SELECT 1 FROM outbox WHERE _id=? AND state=0",arrayOf(entry.id.toString())).use { it.moveToFirst() }) return@run 0
             // A contact's current hints, plus any the group roster supplied for a member who isn't one.
             val hints = (entry.contactId?.let { contacts.getByIdSync(it)?.relayHints }.orEmpty() + entry.relayHints).distinct()
             when (val result = transport.send(entry.recipientPubkeyHex, payload, hints)) {

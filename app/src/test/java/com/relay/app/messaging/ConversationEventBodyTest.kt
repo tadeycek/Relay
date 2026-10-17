@@ -21,4 +21,19 @@ class ConversationEventBodyTest {
         }
         assertNull(ConversationEventBody.parse(ConversationEventBody.PREFIX+"{}"))
     }
+    @Test fun savedPhotoAndScreenshotTargetsRoundtripWithoutChangingIdentity() {
+        val photo=UUID.randomUUID().toString()
+        val saved=ConversationEventBody.Event("media_saved",UUID.randomUUID().toString(),target=photo)
+        val shot=ConversationEventBody.Event("screenshot",UUID.randomUUID().toString(),targets=listOf(photo,UUID.randomUUID().toString()))
+        assertEquals(saved,ConversationEventBody.parse(ConversationEventBody.format(saved)))
+        assertEquals(shot,ConversationEventBody.parse(ConversationEventBody.format(shot)))
+    }
+    @Test fun rejectFakeUnboundedAndDuplicatePhotoReferences() {
+        val shot=ConversationEventBody.Event("screenshot",UUID.randomUUID().toString())
+        val id=UUID.randomUUID().toString()
+        for(bad in listOf(shot.copy(targets=listOf("fake")),shot.copy(targets=List(9) { UUID.randomUUID().toString() }),
+            shot.copy(targets=listOf(id,id)),shot.copy(kind="media_saved"),shot.copy(kind="media_saved",target=id,targets=listOf(id)))) {
+            assertThrows(IllegalArgumentException::class.java) { ConversationEventBody.format(bad) }
+        }
+    }
 }

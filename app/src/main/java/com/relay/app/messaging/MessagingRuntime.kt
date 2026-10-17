@@ -64,6 +64,7 @@ object MessagingRuntime {
         scope.launch {
             val db = MessagingDb.get(appContext)
             runCatching { SeenPayloadRepository(db).purgeOldSync() }
+            PresenceSignals.load(appContext)
             transport.start()
         }
 
@@ -90,6 +91,18 @@ object MessagingRuntime {
             }
         }
 
+        scope.launch {
+            while (true) {
+                runCatching { MessageRetention.sweep(appContext) }.onFailure { Log.e(TAG, "retention sweep failed", it) }
+                delay(60_000L)
+            }
+        }
+        scope.launch {
+            while(true) {
+                runCatching { PresenceSignals.heartbeat(appContext) }.onFailure { Log.w(TAG,"activity lease failed",it) }
+                delay(20_000L)
+            }
+        }
         watchNetwork(appContext, transport)
 
         com.relay.app.p2p.P2pListener.ensureListening(appContext)
