@@ -63,6 +63,13 @@ shutil.copy2(ROOT / 'rebuild/VERIFICATION.md', output / '02-TEST-RESULTS.txt')
 with zipfile.ZipFile(output / '03-Calculator-and-Control-Panel-source.zip', 'w', zipfile.ZIP_DEFLATED) as archive:
     for path, name in source:
         archive.write(path, f'Calculator-source/{name}')
+revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT).decode().strip()
+branch = subprocess.check_output(['git', 'branch', '--show-current'], cwd=ROOT).decode().strip()
+dirty = bool(subprocess.check_output(['git', 'status', '--porcelain'], cwd=ROOT).strip())
+(output / '05-BUILD-INFO.txt').write_text(
+    f'Source commit: {revision}\nBranch: {branch}\nUncommitted source changes: {dirty}\n'
+    'Build: rebuild/dev/build.sh -PrelayPreview=true assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug\n'
+    'Preview APK is debug signed; phone acceptance testing remains pending.\n')
 checksums = []
 for path in sorted(output.iterdir()):
     checksums.append(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}')
