@@ -60,6 +60,7 @@ fun ChatTopBar(
         if (contact != null) {
             ContactGlyph(contact, size = 40.dp)
             Spacer(Modifier.width(RelaySpacing.md))
+            val activity = contactActivityLabel(contact.nostrPubkey)
             val trust = trustLineFor(hasKey = contact.nostrPubkey != null, verifiedInPerson = contact.qrVerified)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -70,9 +71,9 @@ fun ChatTopBar(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = trust.text,
+                    text = if(contact.qrVerified && contact.pendingPublicKey == null && !contact.isDeleted) activity else trust.text,
                     style = MaterialTheme.typography.labelMedium,
-                    color = if (trust.verified) Verified else TextSecondary,
+                    color = if (activity == "Active now" && contact.qrVerified) Verified else TextSecondary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )

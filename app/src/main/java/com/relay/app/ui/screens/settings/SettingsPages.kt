@@ -158,6 +158,8 @@ private fun LocationPage(vm: SettingsViewModel) {
 
 @Composable
 private fun PrivacyPage(vm: SettingsViewModel) {
+    ToggleRow("Share active status", vm.shareActivity, vm::updateShareActivity,
+        supporting = "Verified friends can see approximate activity while private screens are open. Status expires after one minute without an update.")
     ToggleRow("Typing indicators", vm.typingIndicators, vm::updateTypingIndicators,
         supporting = "Let verified friends see when you type. Indicators disappear automatically.")
     ToggleRow(

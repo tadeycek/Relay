@@ -44,6 +44,7 @@ class MessagesViewModel(app: Application) : AndroidViewModel(app) {
 
     fun reload() {
         viewModelScope.launch {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.relay.app.messaging.MessageRetention.sweep(getApplication()) }
             _conversations.value = repo.getConversations()
             _loaded.value = true
         }

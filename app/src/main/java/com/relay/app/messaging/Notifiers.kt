@@ -22,7 +22,7 @@ import com.relay.app.util.RelayPreferences
 /** Conversation previews. A tap only dismisses the preview through a private receiver. */
 object MessageNotifier {
 
-    const val CHANNEL_MESSAGES = "relay_messages"
+    const val CHANNEL_MESSAGES = LauncherBadges.MESSAGES
     const val EXTRA_OPEN_CHAT = "open_chat_contact_id"
     private const val NOTIF_BASE = 5000
     private val shortcutFingerprints = java.util.concurrent.ConcurrentHashMap<String, Int>()
@@ -40,6 +40,7 @@ object MessageNotifier {
         if (!wanted || !canPostNotifications(context)) return
 
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        LauncherBadges.disable(context)
         ensureChannel(nm)
 
         val clean = ReplyBody.preview(body).replace(Regex("[\\p{Cc}\\p{Cf}]"), " ").trim().take(240)
@@ -59,6 +60,7 @@ object MessageNotifier {
 
     private fun post(context: Context, contact: Contact, text: String?, refresh: Boolean, alertToken: Long? = ConversationNotifications.token(context, contact.id)) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        LauncherBadges.disable(context)
         val tag = "conversation:${contact.id}"
         val previousNotification = nm.activeNotifications.firstOrNull { it.id == NOTIF_BASE && it.tag == tag }?.notification
         val previous = NotificationPreview.history(previousNotification)
@@ -96,6 +98,8 @@ object MessageNotifier {
                 .putExtra(NotificationDismissReceiver.EXTRA_CONTACT_ID, contact.id),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
+            .setNumber(0)
             .setSmallIcon(com.relay.app.R.drawable.ic_message_notification)
             .setColor(0xFF7D519E.toInt())
             .setLargeIcon(avatar)
@@ -122,6 +126,7 @@ object MessageNotifier {
     /** Removes the notification for a conversation once the user has opened it. */
     fun cancel(context: Context, contactId: Long) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        LauncherBadges.disable(context)
         shortcutFingerprints.remove("conversation:$contactId")
         ShortcutManagerCompat.removeDynamicShortcuts(context, listOf("conversation:$contactId"))
         ShortcutManagerCompat.removeLongLivedShortcuts(context, listOf("conversation:$contactId"))
@@ -133,7 +138,7 @@ object MessageNotifier {
         if (nm.getNotificationChannel(CHANNEL_MESSAGES) != null) return
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH)
-                .apply { description = "Message previews; tap to dismiss without opening the app" }
+                .apply { setShowBadge(false); description = "Message previews; tap to dismiss without opening the app" }
         )
     }
 
@@ -151,13 +156,14 @@ object SecurityNotifier {
     fun showKeyChange(context: Context, contact: Contact) {
         if (!MessageNotifier.canPostNotifications(context)) return
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        LauncherBadges.disable(context)
         if (nm.getNotificationChannel(RelayPreferences.SECURITY_ALERT_CHANNEL) == null) {
             nm.createNotificationChannel(
                 NotificationChannel(
                     RelayPreferences.SECURITY_ALERT_CHANNEL,
                     "Security alerts",
                     NotificationManager.IMPORTANCE_HIGH,
-                ).apply { description = "Encryption key changes and other security-relevant events" }
+                ).apply { setShowBadge(false); description = "Encryption key changes and other security-relevant events" }
             )
         }
         val open = Intent(context, MainActivity::class.java).apply {
@@ -169,6 +175,8 @@ object SecurityNotifier {
             context, id, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification = NotificationCompat.Builder(context, RelayPreferences.SECURITY_ALERT_CHANNEL)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
+            .setNumber(0)
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setContentTitle("${contact.name}'s encryption key changed")
             .setContentText("Review and confirm in Contacts before trusting it")
@@ -188,13 +196,14 @@ object LocationRequestNotifier {
     fun show(context: Context, contact: Contact, notifyOnShare: Boolean) {
         if (!MessageNotifier.canPostNotifications(context)) return
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        LauncherBadges.disable(context)
         if (nm.getNotificationChannel(RelayPreferences.LOCATION_REQUEST_CHANNEL) == null) {
             nm.createNotificationChannel(
                 NotificationChannel(
                     RelayPreferences.LOCATION_REQUEST_CHANNEL,
                     "Location Requests",
                     NotificationManager.IMPORTANCE_HIGH,
-                ).apply { description = "Notifications for location sharing requests" }
+                ).apply { setShowBadge(false); description = "Notifications for location sharing requests" }
             )
         }
 
@@ -216,6 +225,8 @@ object LocationRequestNotifier {
         val decline = serviceIntent(com.relay.app.sms.LocationShareService.ACTION_DECLINE, (contact.id * 2 + 1).toInt(), false)
 
         val notification = NotificationCompat.Builder(context, RelayPreferences.LOCATION_REQUEST_CHANNEL)
+            .setBadgeIconType(NotificationCompat.BADGE_ICON_NONE)
+            .setNumber(0)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentTitle("${contact.name} is requesting your location")
             .setContentText("Tap Share or Decline to respond")

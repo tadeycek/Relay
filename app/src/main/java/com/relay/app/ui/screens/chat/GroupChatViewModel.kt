@@ -100,6 +100,7 @@ class GroupChatViewModel(
     init { refresh() }
 
     private suspend fun readWindow(older: Boolean = false): List<com.relay.app.data.model.GroupMessage> {
+        withContext(Dispatchers.IO) { com.relay.app.messaging.MessageRetention.sweep(getApplication()) }
         val first = if(older) null else _messages.value.firstOrNull()
         return groupMessageRepo.getMessages(groupId,historyLimit,first?.timestamp,first?.id ?: 0)
     }

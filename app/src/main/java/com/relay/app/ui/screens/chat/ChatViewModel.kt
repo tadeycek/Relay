@@ -74,6 +74,7 @@ class ChatViewModel(
     private var anchorCaptured = false
 
     private suspend fun readWindow(older: Boolean = false): List<com.relay.app.data.model.Message> {
+        withContext(Dispatchers.IO) { com.relay.app.messaging.MessageRetention.sweep(getApplication()) }
         val first = if(older) null else _messages.value.firstOrNull()
         return messageRepo.getMessages(contactId,historyLimit,first?.timestamp,first?.id ?: 0)
     }

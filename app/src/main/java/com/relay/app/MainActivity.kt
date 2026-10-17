@@ -140,6 +140,7 @@ class MainActivity : FragmentActivity() {
                         promptAppUnlock(this@MainActivity) { isUnlocked.value = true }
                     })
                 } else {
+                    com.relay.app.ui.screens.chat.PrivateActivityPresence()
                     NotificationPermissionRequest(prefs)
 
                     val navController = rememberNavController()
@@ -213,6 +214,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun closePrivateScreens() {
+        com.relay.app.messaging.PresenceSignals.visible(applicationContext,false)
         calculatorUnlocked.value = false
         isUnlocked.value = false
         ActiveChat.contactId = -1L

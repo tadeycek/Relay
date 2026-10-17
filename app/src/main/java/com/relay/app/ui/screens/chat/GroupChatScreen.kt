@@ -67,19 +67,30 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val acceptedDraft by vm.acceptedDraft.collectAsState()
     val composerId = rememberSaveable { java.util.UUID.randomUUID().toString() }
     var draftRevision by rememberSaveable { mutableStateOf(0L) }
-    var inputText by rememberSaveable { mutableStateOf("") }
+    var input by rememberSaveable(stateSaver = androidx.compose.ui.text.input.TextFieldValue.Saver) {
+        mutableStateOf(androidx.compose.ui.text.input.TextFieldValue(""))
+    }
+    val inputText = input.text
+    var appendOnly by rememberSaveable { mutableStateOf(true) }
+    var consumedRevision by rememberSaveable { mutableStateOf(-1L) }
     var actionMessage by remember { mutableStateOf<Message?>(null) }
     val picker = com.relay.app.media.LocalChatMediaPicker.current
     // Negative group targets cannot collide with positive contact ids.
     val pickerId = -groupId - 1000000L
     val media = picker.draftFor(pickerId)
-    LaunchedEffect(acceptedDraft) {
-        acceptedDraft?.takeIf { it.composerId == composerId }?.let { accepted ->
-            if (draftRevision == accepted.revision) { inputText = ""; replyDraft = null }
-            if (accepted.mediaSelectionId != null && picker.draftFor(pickerId)?.selectionId == accepted.mediaSelectionId)
-                picker.clear(pickerId)
-        }
+    fun consumeAccepted(accepted: AcceptedDraft) {
+        if (accepted.composerId != composerId || consumedRevision >= accepted.revision) return
+        val remaining = accepted.remainingText(input.text, draftRevision == accepted.revision, appendOnly)
+        if (remaining != input.text) input = androidx.compose.ui.text.input.TextFieldValue(remaining,
+            androidx.compose.ui.text.TextRange((input.selection.end - (input.text.length - remaining.length)).coerceIn(0, remaining.length)))
+        if (replyDraft == accepted.reply) replyDraft = null
+        if (accepted.mediaSelectionId != null && picker.draftFor(pickerId)?.selectionId == accepted.mediaSelectionId)
+            picker.clear(pickerId)
+        consumedRevision = accepted.revision
+        draftRevision += 1
     }
+    LaunchedEffect(acceptedDraft) { acceptedDraft?.let(::consumeAccepted) }
+
     var showAttach by remember { mutableStateOf(false) }
     var showMembers by remember { mutableStateOf(false) }
     var confirmRequestLocation by remember { mutableStateOf(false) }
@@ -125,7 +136,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 memberSeeds = group?.members.orEmpty().map { GlyphGenerator.seedFor(it.nostrPubkey, null, it.name) },
                 memberCount = group?.members?.size ?: 0,
                 onBack = { navController.popBackStack() },
-                actions = { ConversationMute(groupId, true); androidx.compose.material3.TextButton(onClick = { vm.refresh(); showMembers = true }) { androidx.compose.material3.Text("Members") } },
+                actions = { ConversationMenu(groupId, true, onMembers = { vm.refresh(); showMembers = true }) },
 
             )
         },
@@ -145,13 +156,28 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 }
                 if(hasOlder) item(key = "load_older") { androidx.compose.material3.TextButton(onClick=vm::loadOlder) { androidx.compose.material3.Text("Load older messages") } }
             }
-            ConversationCaptureNotice(group = groupId)
+            ConversationCaptureNotice(group = groupId, targets = {
+                val visibleKeys = listState.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
+                messages.filter { it.type == com.relay.app.data.model.MessageType.IMAGE && "m_${it.id}" in visibleKeys }
+                    .mapNotNull { it.eventId }.take(8)
+            })
             if (canSend) {
                 ConversationTyping(inputText, groupId = groupId, revisionKey = group)
                 ReplyPreview(replyDraft) { draftRevision += 1; replyDraft = null }
                 Composer(
-                    value = inputText,
-                    onValueChange = { draftRevision += 1; inputText = it.take(1000) },
+                    value = input,
+                    onValueChange = { edited ->
+                        val accepted = vm.acceptedDraft.value?.takeIf { it.composerId == composerId && it.revision == consumedRevision }
+                        val text = accepted?.rebaseKeyboardEdit(inputText,input.text,edited.text) ?: edited.text
+                        val removed = edited.text.length - text.length
+                        val next = if(removed == 0) edited else edited.copy(text=text,
+                            selection=androidx.compose.ui.text.TextRange((edited.selection.end-removed).coerceIn(0,text.length)), composition=null)
+                        if (next.text != input.text) {
+                            appendOnly = appendOnly && input.selection.collapsed && input.selection.end == input.text.length && next.text.startsWith(input.text)
+                            draftRevision += 1
+                        }
+                        input = if (next.text.length <= 1000) next else next.copy(text = next.text.take(1000), selection = androidx.compose.ui.text.TextRange(1000))
+                    },
                     placeholder = if (sending) "Preparing attachment…" else "Message the group",
                     pendingMediaUri = media?.uri,
                     pendingMediaMime = media?.mime.orEmpty(),
@@ -159,12 +185,17 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                     onAttach = { showAttach = true },
                     sending = sending,
                     onSend = {
-                        if (!sending && vm.acceptedDraft.value != AcceptedDraft(composerId, draftRevision, media?.selectionId) && (inputText.isNotBlank() || media != null)) {
+                        if (!vm.sending.value && !(vm.acceptedDraft.value?.let { it.composerId == composerId && it.revision == draftRevision } ?: false) && (inputText.isNotBlank() || media != null)) {
                             val revision = draftRevision
+                            appendOnly = true
+                            val submittedText = input.text
+                            val submittedReply = replyDraft
                             val sentText = inputText
                             val sentDraft = replyDraft
                             val queued = {
-                                vm.acceptedDraft.value = AcceptedDraft(composerId, revision, media?.selectionId)
+                                val accepted = AcceptedDraft(composerId, revision, media?.selectionId, submittedText, submittedReply)
+                                vm.acceptedDraft.value = accepted
+                                consumeAccepted(accepted)
                             }
                             val body = com.relay.app.messaging.ReplyBody.withText(sentDraft, sentText.trim())
                             if (media != null) vm.sendMedia(context, media.uri, media.mime, body, queued)

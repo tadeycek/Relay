@@ -9,14 +9,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.UUID
 
 object ConversationEvents {
-    const val CREATE = "CREATE TABLE reactions (scope TEXT NOT NULL,target TEXT NOT NULL,actor TEXT NOT NULL,revision INTEGER NOT NULL,emoji TEXT NOT NULL,PRIMARY KEY(scope,target,actor))"
+    const val CREATE = "CREATE TABLE reactions (scope TEXT NOT NULL,target TEXT NOT NULL,actor TEXT NOT NULL,revision INTEGER NOT NULL,emoji TEXT NOT NULL,received_at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(scope,target,actor))"
     val changes = MutableStateFlow(0L)
     fun scope(contact: Long, group: Long?) = group?.let { "group:$it" } ?: "direct:$contact"
     fun apply(context: Context, scope: String, actor: String, event: ConversationEventBody.Event) {
         if (event.kind != "reaction") return
         if(MessagingDb.get(context).readableDatabase.rawQuery("SELECT 1 FROM message_deletions WHERE scope=? AND event=?",arrayOf(scope,event.target)).use { it.moveToFirst() }) return
-        MessagingDb.get(context).writableDatabase.execSQL("INSERT INTO reactions(scope,target,actor,revision,emoji) VALUES(?,?,?,?,?) ON CONFLICT(scope,target,actor) DO UPDATE SET revision=excluded.revision,emoji=excluded.emoji WHERE excluded.revision > reactions.revision",
-            arrayOf(scope,event.target,actor,event.revision,event.emoji))
+        MessagingDb.get(context).writableDatabase.execSQL("INSERT INTO reactions(scope,target,actor,revision,emoji,received_at) VALUES(?,?,?,?,?,?) ON CONFLICT(scope,target,actor) DO UPDATE SET revision=excluded.revision,emoji=excluded.emoji,received_at=excluded.received_at WHERE excluded.revision > reactions.revision",
+            arrayOf(scope,event.target,actor,event.revision,event.emoji,System.currentTimeMillis()))
         changes.value += 1
     }
     fun entries(context: Context, scope: String, target: String): List<Pair<String,String>> = MessagingDb.get(context).readableDatabase.rawQuery(
@@ -48,8 +48,15 @@ object ConversationEvents {
             MessagingRuntime.kick()
         }
     }
-    fun screenshot(context: Context, contact: Long?, group: Long?) {
-        val event = ConversationEventBody.Event("screenshot",UUID.randomUUID().toString())
+    fun screenshot(context: Context, contact: Long?, group: Long?, targets: List<String> = emptyList()) {
+        notice(context,contact,group,ConversationEventBody.Event("screenshot",UUID.randomUUID().toString(),targets=targets.distinct().take(8)))
+    }
+    fun saved(context: Context, message: Message, group: Long?) {
+        val target=message.msgId ?: error("This older photo has no shared message identifier")
+        notice(context,if(group==null) message.contactId else null,group,
+            ConversationEventBody.Event("media_saved",UUID.randomUUID().toString(),target=target))
+    }
+    private fun notice(context: Context, contact: Long?, group: Long?, event: ConversationEventBody.Event) {
         val body = ConversationEventBody.format(event)
         if (group != null) SharedGroups.send(context, group, body, event=event.id)
         else if (contact != null) {

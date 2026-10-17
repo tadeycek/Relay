@@ -62,3 +62,48 @@ fun RelayTextField(
         ),
     )
 }
+
+@Composable
+fun RelayTextField(
+    value: androidx.compose.ui.text.input.TextFieldValue,
+    onValueChange: (androidx.compose.ui.text.input.TextFieldValue) -> Unit,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    placeholder: String? = null,
+    singleLine: Boolean = true,
+    maxLines: Int = if (singleLine) 1 else 4,
+    isError: Boolean = false,
+    supportingText: String? = null,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    keyboardActions: KeyboardActions = KeyboardActions.Default,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    shape: Shape = RelayShapeTokens.control,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier,
+        label = label?.let { { Text(it) } },
+        placeholder = placeholder?.let { { Text(it, color = TextSecondary) } },
+        singleLine = singleLine,
+        maxLines = maxLines,
+        isError = isError,
+        supportingText = supportingText?.let { { Text(it) } },
+        textStyle = MaterialTheme.typography.bodyLarge,
+        shape = shape,
+        keyboardOptions = keyboardOptions,
+        keyboardActions = keyboardActions,
+        visualTransformation = visualTransformation,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = Accent,
+            unfocusedBorderColor = Border,
+            focusedLabelColor = Accent,
+            unfocusedLabelColor = TextSecondary,
+            focusedTextColor = TextPrimary,
+            unfocusedTextColor = TextPrimary,
+            cursorColor = Accent,
+            focusedContainerColor = Surface2,
+            unfocusedContainerColor = Surface2,
+        ),
+    )
+}
