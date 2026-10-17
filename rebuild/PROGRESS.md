@@ -1,3 +1,18 @@
+## Direct group delivery (#29)
+
+- Group messages no longer go through the creator's phone. Posts, reactions, screenshot notices,
+  deletions, purges, name updates and typing travel straight from the author to every member (group
+  protocol v2); the creator still owns the roster. Members accept an event when the authenticated
+  sender is its author and is on their own roster copy.
+- Rosters carry each member's Tink key and up to two relay hints, vouched for by the creator; the
+  creator re-issues its rosters when a member's key or hints change (reconnect, rotation, manual accept).
+- Group packets from members who aren't contacts are handled without creating a contact. Events that
+  name a newer roster than ours are held (100 per group, 500 total, 7 days) and replayed when it arrives.
+- DB v20 rebuilds the outbox with an optional `contact_id` and stored relay hints; queued entries keep
+  their ids, attempts and state. Host SQLite check covers the rebuild and the held-event limits.
+- Every participant must update: phones on 1.10 or older only accept creator-forwarded posts.
+- Not yet tested on phones (see VERIFICATION.md step list for groups).
+
 ## Calculator 1.7 preview — native conversation badge placement
 
 - Removed the 1.6 custom content row that caused a separate leading app icon next to

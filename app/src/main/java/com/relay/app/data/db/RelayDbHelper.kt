@@ -50,6 +50,7 @@ class RelayDbHelper(context: Context) :
         db.execSQL(com.relay.app.groups.GroupDelivery.CREATE)
         db.execSQL(com.relay.app.media.PendingAttachments.CREATE)
         createConversationExtras(db)
+        db.execSQL(com.relay.app.groups.SharedGroups.CREATE_PENDING)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -126,6 +127,15 @@ class RelayDbHelper(context: Context) :
             db.execSQL(com.relay.app.media.PendingAttachments.CREATE)
         }
         if (oldVersion < 19) createConversationExtras(db)
+        if (oldVersion < 20) {
+            // Direct group delivery: outbox entries may target a group member who isn't a contact.
+            db.execSQL(DatabaseContract.Outbox.V20_RENAME)
+            db.execSQL(DatabaseContract.Outbox.CREATE)
+            db.execSQL(DatabaseContract.Outbox.V20_COPY)
+            db.execSQL(DatabaseContract.Outbox.V20_DROP)
+            db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
+            db.execSQL(com.relay.app.groups.SharedGroups.CREATE_PENDING)
+        }
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.

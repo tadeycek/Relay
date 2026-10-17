@@ -153,6 +153,8 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
     fun acceptKeyChange(contactId: Long) {
         viewModelScope.launch {
             repo.acceptPendingPublicKeySync(contactId)
+            // Groups we created hand this key to the other members.
+            runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.refreshOwnRosters(getApplication()) } }
             _contacts.value = repo.getAllContacts()
         }
     }

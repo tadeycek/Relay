@@ -58,8 +58,9 @@ class IncomingMessageHandler(context: Context) {
         var contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
 
         // Typing uses the authenticated NIP-17 encrypted transport directly, without durable replay rows.
+        // Group typing may come from a member who isn't a contact; TypingSignals checks the roster.
         if (payload.body.startsWith(TypingBody.PREFIX)) {
-            if (contact != null) TypingSignals.handle(appContext, contact, payload.body)
+            TypingSignals.handle(appContext, envelope.senderPubkeyHex, contact, payload.body)
             return
         }
         if (!seenRepo.markIfNewSync(payload.id, now)) return
@@ -75,6 +76,18 @@ class IncomingMessageHandler(context: Context) {
         // a contact cannot make this app disclose LAN/public IP candidates or open a UPnP mapping.
         if (PresenceMessages.parse(payload.body) != null) return
 
+
+        // Group members who aren't your contacts send group packets straight to you: the creator's roster
+        // vouches for them, so these are handled without ever creating a contact.
+        if (contact == null) {
+            val opened = if (SmsMessageParser.isEncryptedMessage(payload.body)) InnerEnvelope.open(appContext, payload.body) else payload.body
+            if (opened != null && com.relay.app.groups.GroupProtocol.isControl(opened)) {
+                com.relay.app.groups.SharedGroups.handle(appContext, envelope.senderPubkeyHex, null, opened)
+                return
+            }
+            // Most likely sealed to a key the roster no longer has; not worth a placeholder contact.
+            if (opened == null && com.relay.app.groups.SharedGroups.knows(db, envelope.senderPubkeyHex)) return
+        }
 
         // Profile controls must never create a placeholder before mutual pairing completes.
         if (contact == null && (com.relay.app.media.ProfilePhotoBody.isControl(payload.body) ||
@@ -113,7 +126,7 @@ class IncomingMessageHandler(context: Context) {
         }
         if (MessageDeletion.isDeleted(db, "direct:${contact.id}", envelope.senderPubkeyHex, payload.id, payload.ts)) return
         if (ConversationEvents.handle(appContext, contact, body, payload.id, TimestampPolicy.resolve(payload.ts, now))) return
-        if (com.relay.app.groups.SharedGroups.handle(appContext, contact, body)) return
+        if (com.relay.app.groups.SharedGroups.handle(appContext, envelope.senderPubkeyHex, contact, body)) return
         if (com.relay.app.groups.GroupAvatars.handle(appContext, contact, body)) return
         if (com.relay.app.media.ProfilePhotoSync.handle(appContext, contact, body)) return
 
@@ -220,6 +233,8 @@ class IncomingMessageHandler(context: Context) {
             if (verifiedRotation) {
                 contactRepo.setPublicKeySync(contact.id, key)
                 contactRepo.rejectPendingPublicKeySync(contact.id)
+                // Groups we created carry this key for the other members; hand them the new one.
+                com.relay.app.groups.SharedGroups.refreshOwnRosters(appContext)
             } else {
                 contactRepo.setPendingPublicKeySync(contact.id, key)
                 SecurityNotifier.showKeyChange(appContext, contact)

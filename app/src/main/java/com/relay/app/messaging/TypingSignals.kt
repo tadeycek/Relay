@@ -3,6 +3,7 @@ package com.relay.app.messaging
 import android.content.Context
 import android.os.SystemClock
 import com.relay.app.data.model.Contact
+import com.relay.app.data.model.ContactTrustLevel
 import com.relay.app.groups.GroupProtocol
 import com.relay.app.groups.SharedGroups
 import com.relay.app.transport.PayloadCodec
@@ -44,13 +45,15 @@ object TypingSignals {
     private fun update(key: String, name: String, s: TypingBody.Signal) =
         presence.update(key, name, s, SystemClock.elapsedRealtime())
     private fun deliver(context: Context, contact: Contact, signal: TypingBody.Signal) {
-        if (!GroupProtocol.eligible(contact)) return
+        if (GroupProtocol.eligible(contact)) deliver(context, contact.nostrPubkey!!, contact.relayHints, signal)
+    }
+    private fun deliver(context: Context, recipient: String, relayHints: List<String>, signal: TypingBody.Signal) {
         MessagingRuntime.launchIo {
             val transport = Transports.get(context)
             if (transport.status.value != TransportStatus.ONLINE || System.currentTimeMillis() - signal.time > TypingBody.TTL) return@launchIo
             withTimeoutOrNull(2500) {
-                transport.send(contact.nostrPubkey!!, RelayPayload(PayloadCodec.newId(), signal.time,
-                    TypingBody.format(signal)), contact.relayHints)
+                transport.send(recipient, RelayPayload(PayloadCodec.newId(), signal.time,
+                    TypingBody.format(signal)), relayHints)
             }
         }
     }
@@ -69,38 +72,29 @@ object TypingSignals {
             val stored = SharedGroups.get(db, groupId) ?: return
             val own = NostrIdentity.publicKeyHex(context)
             if (stored.hidden || stored.state.members.none { it.key == own }) return
-            val recipients = if (own == stored.state.owner) stored.state.members.filter { it.key != own }.map { it.key } else listOf(stored.state.owner)
             val signal = TypingBody.Signal(typing, now, stored.state.id, stored.state.owner, own)
-            recipients.forEach { repo.findByNostrPubkeySync(it)?.let { c -> deliver(context, c, signal) } }
+            SharedGroups.recipients(db, stored.state, own).forEach { deliver(context, it.key, it.relays, signal) }
         }
     }
-    fun handle(context: Context, contact: Contact, body: String): Boolean {
+    /** [contact] is the sender's contact row, if any. Group typing comes straight from the typing member, who
+     *  only needs to be on our roster; one-to-one typing needs a verified contact. */
+    fun handle(context: Context, sender: String, contact: Contact?, body: String): Boolean {
         if (!body.startsWith(TypingBody.PREFIX)) return false
-        if (!com.relay.app.util.RelayPreferences(context).typingIndicators || !GroupProtocol.eligible(contact)) return true
+        if (!com.relay.app.util.RelayPreferences(context).typingIndicators) return true
         val s = TypingBody.parse(body, System.currentTimeMillis()) ?: return true
         if (s.group.isEmpty()) {
-            update(direct(contact.id), contact.name, s)
+            if (contact != null && GroupProtocol.eligible(contact)) update(direct(contact.id), contact.name, s)
         } else {
             val db = MessagingDb.get(context)
             val own = NostrIdentity.publicKeyHex(context)
             val stored = db.readableDatabase.rawQuery("SELECT group_id FROM shared_groups WHERE owner=? AND shared_id=?", arrayOf(s.owner, s.group))
                 .use { if (it.moveToFirst()) SharedGroups.get(db, it.getLong(0)) else null } ?: return true
+            if (s.author != sender || s.author == own || contact?.trustLevel == ContactTrustLevel.BLOCKED) return true
             if (stored.hidden || stored.state.members.none { it.key == own } || stored.state.members.none { it.key == s.author }) {
                 return true
             }
-            if (own == s.owner) {
-                if (s.author != contact.nostrPubkey) return true
-                if (!update(group(s.owner, s.group, s.author), contact.name, s)) return true
-                val repo = com.relay.app.data.repository.ContactRepository(db)
-                stored.state.members.filter { it.key != own && it.key != s.author }.forEach {
-                    repo.findByNostrPubkeySync(it.key)?.let { c -> deliver(context, c, s) }
-                }
-            } else if (contact.nostrPubkey != s.owner) {
-                return true
-            }
-            if (s.author != own && own != s.owner) {
-                update(group(s.owner, s.group, s.author), stored.state.members.first { it.key == s.author }.name, s)
-            }
+            update(group(s.owner, s.group, s.author), com.relay.app.groups.GroupProfiles.display(db, stored.localId, s.author,
+                stored.state.members.first { it.key == s.author }.name), s)
         }
         return true
     }

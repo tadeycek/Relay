@@ -143,3 +143,50 @@ assert db.execute("SELECT emoji FROM reactions WHERE scope='direct:3' AND actor=
 db.execute('DELETE FROM groups WHERE _id=3')
 assert db.execute('SELECT count(*) FROM group_avatars').fetchone()==(0,)
 print('Host SQLite: v19 avatar/reaction revisions, removal replay rejection, actor/conversation isolation and avatar cascade pass.')
+
+# v19 -> v20: direct group delivery. Outbox entries may target a group member who isn't a contact, so the
+# table is rebuilt with an optional contact_id; queued entries must survive with ids, attempts and state.
+v19_outbox = '''CREATE TABLE outbox (
+    _id INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id INTEGER NOT NULL REFERENCES contacts(_id) ON DELETE CASCADE,
+    recipient_pubkey TEXT NOT NULL, payload_id TEXT NOT NULL, payload_json TEXT NOT NULL,
+    created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at INTEGER NOT NULL,
+    state INTEGER NOT NULL DEFAULT 0)'''
+db.execute("INSERT INTO contacts(_id,name,phone) VALUES (7,'Alice','nostr:alice')")
+db.execute(v19_outbox)
+db.execute(sql('Outbox', 'INDEX_DUE'))
+rows = [(1,7,'alice','p1','{"a":1}',10,3,99,0), (2,7,'alice','p2','{"b":2}',11,0,11,1)]
+db.executemany('INSERT INTO outbox VALUES (?,?,?,?,?,?,?,?,?)', rows)
+db.commit()
+helper = (ROOT / 'app/src/main/java/com/relay/app/data/db/RelayDbHelper.kt').read_text()
+block = re.search(r'if \(oldVersion < 20\) \{(.*?)\n        \}', helper, re.S).group(1)
+pending_create = re.search(r'const val CREATE_PENDING = """(.*?)"""', shared, re.S).group(1)
+statements = re.findall(r'db\.execSQL\(([\w.]+)\)', block)
+assert statements[-1].endswith('SharedGroups.CREATE_PENDING') and len(statements) == 6
+with db:
+    for stmt in statements:
+        db.execute(pending_create if stmt.endswith('CREATE_PENDING') else sql('Outbox', stmt.split('.')[-1]))
+assert db.execute('SELECT _id,contact_id,recipient_pubkey,payload_id,payload_json,created_at,attempts,next_attempt_at,state FROM outbox ORDER BY _id').fetchall() == rows
+assert db.execute("SELECT 1 FROM sqlite_master WHERE name='outbox_v19'").fetchone() is None
+assert db.execute("SELECT tbl_name FROM sqlite_master WHERE type='index' AND name='idx_outbox_due'").fetchone() == ('outbox',)
+db.execute("INSERT INTO outbox(contact_id,recipient_pubkey,payload_id,payload_json,created_at,next_attempt_at,relay_hints) VALUES (NULL,'bob','p3','{}',12,12,'wss://a.example')")
+assert db.execute("SELECT _id,relay_hints FROM outbox WHERE payload_id='p3'").fetchone() == (3,'wss://a.example')
+db.execute('DELETE FROM contacts WHERE _id=7')
+assert db.execute('SELECT payload_id FROM outbox').fetchall() == [('p3',)]
+print('Host SQLite: v20 outbox rebuild keeps queued entries, ids and the due index; member entries need no contact; contact cascade still applies.')
+
+# Events held until their roster arrives are bounded per group, overall, and by age.
+evict_group = re.search(r'const val PENDING_EVICT_GROUP = "(.*?)"\n', shared).group(1)
+evict_all = re.search(r'const val PENDING_EVICT_ALL = "(.*?)"\n', shared).group(1)
+db.execute("INSERT INTO shared_group_pending VALUES ('owner','g2','s','other',50)")
+for i in range(5):
+    db.execute(evict_group, ('owner', 'g1', 2))
+    db.execute(evict_all, (0, 99))
+    db.execute("INSERT INTO shared_group_pending VALUES ('owner','g1','s',?,?)", ('b%d' % i, 100 + i))
+assert [r[0] for r in db.execute("SELECT body FROM shared_group_pending WHERE shared_id='g1' ORDER BY received_at")] == ['b2','b3','b4']
+assert db.execute("SELECT body FROM shared_group_pending WHERE shared_id='g2'").fetchall() == [('other',)]
+db.execute(evict_all, (0, 2))
+assert [r[0] for r in db.execute('SELECT body FROM shared_group_pending ORDER BY received_at')] == ['b3','b4']
+db.execute(evict_all, (104, 99))
+assert [r[0] for r in db.execute('SELECT body FROM shared_group_pending')] == ['b4']
+print('Host SQLite: held group events are capped per group and overall, evict oldest first, and expire.')

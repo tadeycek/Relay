@@ -19,6 +19,8 @@ object ProfilePhotoSync {
 
     fun syncPending(context: Context) {
         MessagingRuntime.launchIo {
+            // Before announcing names: a roster we created may need members' new keys or relay hints.
+            com.relay.app.groups.SharedGroups.refreshOwnRosters(context)
             com.relay.app.groups.GroupProfiles.syncPending(context)
             val update = ContactPhotos.selfUpdate(context)
             for (contact in ContactRepository(MessagingDb.get(context)).getAllContacts()) {
