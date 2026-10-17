@@ -83,6 +83,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val app = LocalContext.current.applicationContext as android.app.Application
     val vm: ChatViewModel = viewModel(factory = ChatViewModelFactory(contactId, app))
     val messages by vm.messages.collectAsState()
+    val hasOlder by vm.hasOlder.collectAsState()
     val contact by vm.contact.collectAsState()
     val sending by vm.sending.collectAsState()
     val unreadAnchor by vm.unreadAnchorId.collectAsState()
@@ -143,6 +144,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     if (showAttachSheet) {
         AttachSheet(
             onDismiss = { showAttachSheet = false },
+            onGif = { showAttachSheet = false; mediaPicker.open(contactId, ChatMediaSource.GIF) },
             onPhoto = {
                 showAttachSheet = false
                 mediaPicker.open(contactId, ChatMediaSource.PHOTO)
@@ -225,9 +227,11 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                     contentPadding = PaddingValues(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.md),
                 ) {
                     items(items.reversed(), key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "", onReply = { message -> actionMessage = message } ) }
+                    if(hasOlder) item(key = "load_older") { androidx.compose.material3.TextButton(onClick=vm::loadOlder) { Text("Load older messages") } }
                 }
             }
 
+            ConversationCaptureNotice(contact = contactId)
             if (contact?.isDeleted == true) {
                 Text(
                     "You deleted this contact. You can't send new messages here.",
@@ -271,8 +275,9 @@ fun ChatScreen(contactId: Long, navController: NavController) {
 }
 
 @Composable
-internal fun AttachSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, onVideo: () -> Unit, onCamera: () -> Unit) {
+internal fun AttachSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, onVideo: () -> Unit, onCamera: () -> Unit, onGif: () -> Unit = onPhoto) {
     RelayBottomSheet(onDismiss = onDismiss) {
+        ListRow(headline = "Animated GIF / sticker", onClick = onGif, leading = { AttachIcon(Icons.Outlined.Image) })
         ListRow(headline = "Photo from gallery", onClick = onPhoto, leading = { AttachIcon(Icons.Outlined.Image) })
         ListRow(headline = "Video from gallery", onClick = onVideo, leading = { AttachIcon(Icons.Outlined.VideoLibrary) })
         ListRow(headline = "Take a photo", onClick = onCamera, leading = { AttachIcon(Icons.Outlined.CameraAlt) })

@@ -103,6 +103,7 @@ fun ManageGroupSheet(
 
     RelayBottomSheet(onDismiss) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
+        GroupAvatarEditor(group.id, canManage)
         Text(group.name, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
         Text("In this group", style = MaterialTheme.typography.titleSmall, color = TextPrimary, modifier = Modifier.padding(top = RelaySpacing.lg))
         if (group.members.isEmpty()) {

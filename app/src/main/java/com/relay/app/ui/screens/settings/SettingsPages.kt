@@ -230,25 +230,15 @@ private fun SecurityPage(vm: SettingsViewModel) {
 @Composable
 private fun ConnectionPage(vm: SettingsViewModel) {
     val context = LocalContext.current
-    ListRow(headline = "Hide connection notification", supporting = "In Android settings, turn off only the Relay connection channel. Keep Messages enabled for message previews. Android controls whether a foreground-service notice can be hidden.", onClick = {
-        com.relay.app.messaging.ConnectionService.ensureChannel(context)
-        context.startActivity(android.content.Intent(android.provider.Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
-            .putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, context.packageName)
-            .putExtra(android.provider.Settings.EXTRA_CHANNEL_ID, "relay_connection"))
-    })
     ListRow(
         headline = "Relay connection",
         supporting = connectionText(vm.connectionStatus),
         onClick = vm::reconnectNow,
         trailing = { Text("Reconnect", style = MaterialTheme.typography.labelLarge, color = Accent) },
     )
-    ToggleRow(
-        "Stay connected in the background",
-        vm.backgroundConnection,
-        vm::updateBackgroundConnection,
-        supporting = "Needed to receive messages while the app is closed. Uses some battery and shows a small notification. " +
-            "When off, messages arrive when you open the app or within about 15 minutes.",
-    )
+    Text("No running-in-background notification. Messages are received while the process is active or during Android's periodic background checks (15-minute minimum; battery restrictions can delay them longer). Open the app for prompt delivery.",
+        modifier = Modifier.padding(RelaySpacing.lg), color = TextSecondary)
+
 }
 
 @Composable

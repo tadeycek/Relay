@@ -119,7 +119,21 @@ fun GroupGlyph(
     modifier: Modifier = Modifier,
     size: Dp = 48.dp,
     description: String? = null,
+    groupId: Long? = null,
 ) {
+    val context = LocalContext.current
+    val revision by com.relay.app.groups.GroupAvatars.changes.collectAsState()
+    val photo by produceState<android.graphics.Bitmap?>(null, groupId, revision) {
+        value = groupId?.let { id -> withContext(Dispatchers.IO) {
+            com.relay.app.groups.GroupAvatars.load(context, id)?.let { BitmapFactoryBytes ->
+                android.graphics.BitmapFactory.decodeByteArray(BitmapFactoryBytes, 0, BitmapFactoryBytes.size)
+            }
+        } }
+    }
+    photo?.let {
+        Image(it.asImageBitmap(), description ?: "Group picture", modifier.size(size).clip(CircleShape), contentScale = ContentScale.Crop)
+        return
+    }
     val specs = remember(memberSeeds) { memberSeeds.take(4).map { GlyphGenerator.fromKey(it) } }
     val color = TextSecondary
     val background = Surface3

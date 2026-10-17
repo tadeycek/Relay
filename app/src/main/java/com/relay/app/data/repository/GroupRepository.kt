@@ -13,6 +13,13 @@ import kotlinx.coroutines.withContext
 
 class GroupRepository(private val dbHelper: RelayDbHelper) {
 
+    suspend fun getById(id: Long): Group? = withContext(Dispatchers.IO) {
+        val group = dbHelper.readableDatabase.rawQuery("SELECT _id,name FROM groups WHERE _id=?", arrayOf(id.toString())).use {
+            if(it.moveToFirst()) Group(id=it.getLong(0),name=it.getString(1)) else null
+        } ?: return@withContext null
+        com.relay.app.groups.SharedGroups.enrich(dbHelper,group.copy(members=getMembersSync(id)))
+    }
+
     suspend fun getAllGroups(): List<Group> = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
         val cursor = db.query(Groups.TABLE, null, null, null, null, null, "${Groups.COL_NAME} ASC")

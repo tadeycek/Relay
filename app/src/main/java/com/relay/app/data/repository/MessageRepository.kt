@@ -11,13 +11,11 @@ import net.sqlcipher.Cursor
 
 class MessageRepository(private val dbHelper: RelayDbHelper) {
 
-    suspend fun getMessages(contactId: Long): List<Message> = withContext(Dispatchers.IO) {
+    suspend fun getMessages(contactId: Long, limit: Int? = null, fromTimestamp: Long? = null, fromId: Long = 0): List<Message> = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            Messages.TABLE, null,
-            "${Messages.COL_CONTACT_ID} = ?", arrayOf(contactId.toString()),
-            null, null, "${Messages.COL_TIMESTAMP} ASC"
-        )
+        val cursor = if(fromTimestamp == null) db.rawQuery(HistoryWindow.query(false), arrayOf(contactId.toString(), (limit ?: -1).toString()))
+        else db.rawQuery("SELECT * FROM messages WHERE contact_id=? AND (timestamp>? OR (timestamp=? AND _id>=?)) ORDER BY timestamp ASC,_id ASC",
+            arrayOf(contactId.toString(),fromTimestamp.toString(),fromTimestamp.toString(),fromId.toString()))
         cursor.use { it.toMessageList() }
     }
 

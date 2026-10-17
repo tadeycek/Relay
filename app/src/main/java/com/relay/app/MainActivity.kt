@@ -119,11 +119,13 @@ class MainActivity : FragmentActivity() {
                     calculatorUnlocked.value = true
                 })
             } else if (calculatorSession.transitionUntil > android.os.SystemClock.elapsedRealtime()) {
-                com.relay.app.calculator.UnlockDance()
+                com.relay.app.calculator.UnlockDance(onSkip = calculatorSession::finishTransition)
             } else {
             privateScreenState.SaveableStateProvider("private_screens") {
             CompositionLocalProvider(LocalChatMediaPicker provides mediaPicker,
-                LocalProfilePhotoPicker provides profilePhotoPicker) {
+                LocalProfilePhotoPicker provides profilePhotoPicker,
+                com.relay.app.media.LocalPickerSession provides com.relay.app.media.PickerSession(
+                    { calculatorSession.pickerOpen = true }, { calculatorSession.pickerOpen = false })) {
             RelayTheme {
                 val prefs = remember { RelayPreferences(applicationContext) }
                 val locked = remember { prefs.appLock && deviceSupportsAppLock(this@MainActivity) }

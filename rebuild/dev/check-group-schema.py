@@ -122,3 +122,24 @@ with db:
     db.execute("INSERT INTO pending_attachments(id,target,is_group,row_id,path,mime,caption,created_at) VALUES ('job',3,1,1,'encrypted','image/jpeg','caption',1)")
 assert db.execute('SELECT id,next_at,attempts FROM pending_attachments').fetchone() == ('job',0,0)
 print('Host SQLite: durable attachment-job schema, commit/rollback, and restart-readable retry state pass.')
+
+# v19 group avatars and per-actor reaction revisions preserve older rows and removal high-water marks.
+avatars=(ROOT/'app/src/main/java/com/relay/app/groups/GroupAvatars.kt').read_text()
+reactions=(ROOT/'app/src/main/java/com/relay/app/messaging/ConversationEvents.kt').read_text()
+db.execute(re.search(r'const val CREATE = "(.*?)"',avatars).group(1))
+db.execute(re.search(r'const val CREATE = "(.*?)"',reactions).group(1))
+avatar_sql=re.search(r'execSQL\("(INSERT INTO group_avatars.*?)"',avatars).group(1)
+for revision,jpeg in [(2,b'new'),(1,b'old'),(3,None),(2,b'replay')]:
+    db.execute(avatar_sql,(3,revision,jpeg))
+assert db.execute('SELECT revision,jpeg FROM group_avatars').fetchone()==(3,None)
+reaction_sql=re.search(r'execSQL\("(INSERT INTO reactions.*?)"',reactions).group(1)
+for revision,emoji in [(2,'like'),(1,'old'),(3,''),(2,'replay')]:
+    db.execute(reaction_sql,('group:3','message','alice',revision,emoji))
+db.execute(reaction_sql,('group:3','message','bob',1,'other'))
+db.execute(reaction_sql,('direct:3','message','alice',1,'independent'))
+assert db.execute("SELECT revision,emoji FROM reactions WHERE scope='group:3' AND actor='alice'").fetchone()==(3,'')
+assert db.execute("SELECT emoji FROM reactions WHERE scope='group:3' AND actor='bob'").fetchone()==('other',)
+assert db.execute("SELECT emoji FROM reactions WHERE scope='direct:3' AND actor='alice'").fetchone()==('independent',)
+db.execute('DELETE FROM groups WHERE _id=3')
+assert db.execute('SELECT count(*) FROM group_avatars').fetchone()==(0,)
+print('Host SQLite: v19 avatar/reaction revisions, removal replay rejection, actor/conversation isolation and avatar cascade pass.')

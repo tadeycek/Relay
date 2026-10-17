@@ -59,6 +59,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val vm: GroupChatViewModel = viewModel(factory = GroupChatViewModelFactory(groupId, app))
     val group by vm.group.collectAsState()
     val messages by vm.messages.collectAsState()
+    val hasOlder by vm.hasOlder.collectAsState()
     val friends by vm.friends.collectAsState()
     val sending by vm.sending.collectAsState()
     val error by vm.error.collectAsState()
@@ -90,6 +91,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
         replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(context).myName.ifBlank { "Me" } else messages.firstOrNull { it.id == message.id }?.senderName ?: "Someone")
     }, onDismiss = { actionMessage = null })
     if (showAttach) AttachSheet(onDismiss = { showAttach = false },
+        onGif = { showAttach = false; picker.open(pickerId, com.relay.app.media.ChatMediaSource.GIF) },
         onPhoto = { showAttach = false; picker.open(pickerId, com.relay.app.media.ChatMediaSource.PHOTO) },
         onVideo = { showAttach = false; picker.open(pickerId, com.relay.app.media.ChatMediaSource.VIDEO) },
         onCamera = { showAttach = false; picker.open(pickerId, com.relay.app.media.ChatMediaSource.CAMERA) })
@@ -118,6 +120,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             GroupChatTopBar(
+                groupId = groupId,
                 name = group?.name.orEmpty(),
                 memberSeeds = group?.members.orEmpty().map { GlyphGenerator.seedFor(it.nostrPubkey, null, it.name) },
                 memberCount = group?.members?.size ?: 0,
@@ -136,11 +139,13 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 contentPadding = PaddingValues(horizontal = RelaySpacing.lg, vertical = RelaySpacing.md),
             ) {
                 items(items.reversed(), key = { it.key }) { item ->
-                    ChatItemRow(item, contactName = "Someone", senderName = { names[it] }, onReply = { message ->
+                    ChatItemRow(item, groupId = groupId, contactName = "Someone", senderName = { names[it] }, onReply = { message ->
                         actionMessage = message
                     })
                 }
+                if(hasOlder) item(key = "load_older") { androidx.compose.material3.TextButton(onClick=vm::loadOlder) { androidx.compose.material3.Text("Load older messages") } }
             }
+            ConversationCaptureNotice(group = groupId)
             if (canSend) {
                 ConversationTyping(inputText, groupId = groupId, revisionKey = group)
                 ReplyPreview(replyDraft) { draftRevision += 1; replyDraft = null }

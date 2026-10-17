@@ -33,6 +33,11 @@ class GroupChatViewModel(
     app: Application,
 ) : AndroidViewModel(app) {
 
+    private var historyLimit = com.relay.app.data.repository.HistoryWindow.PAGE_SIZE
+    private val _hasOlder = MutableStateFlow(false)
+    val hasOlder = _hasOlder.asStateFlow()
+    private var loadJob: kotlinx.coroutines.Job? = null
+    fun loadOlder() { historyLimit = maxOf(historyLimit, _messages.value.size) + com.relay.app.data.repository.HistoryWindow.PAGE_SIZE; loadData(older = true) }
     private val db = com.relay.app.messaging.MessagingDb.get(app)
     private val groupRepo = GroupRepository(db)
     private val groupMessageRepo = GroupMessageRepository(db)
@@ -66,7 +71,7 @@ class GroupChatViewModel(
         viewModelScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    val result = if (mime.startsWith("image/")) com.relay.app.mms.MediaCompressor.compressImage(context, uri, 3L*1024*1024, 2048)
+                    val result = if (mime.startsWith("image/")) com.relay.app.media.GifPreparation.image(context, uri, mime)
                         else com.relay.app.mms.MediaCompressor.prepareVideo(context, uri, 12L*1024*1024, 60000L)
                     when (result) {
                         is com.relay.app.mms.MediaCompressor.Result.Success -> {
@@ -94,12 +99,20 @@ class GroupChatViewModel(
 
     init { refresh() }
 
-    private fun loadData() {
-        viewModelScope.launch {
+    private suspend fun readWindow(older: Boolean = false): List<com.relay.app.data.model.GroupMessage> {
+        val first = if(older) null else _messages.value.firstOrNull()
+        return groupMessageRepo.getMessages(groupId,historyLimit,first?.timestamp,first?.id ?: 0)
+    }
+
+    private fun loadData(older: Boolean = false) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _friends.value = contactRepo.getAllContacts().filter(com.relay.app.groups.GroupProtocol::eligible)
-            val groups = groupRepo.getAllGroups()
-            _group.value = groups.find { it.id == groupId }
-            _messages.value = groupMessageRepo.getMessages(groupId)
+            _group.value = groupRepo.getById(groupId)
+            val firstLoad = _messages.value.isEmpty()
+            val loaded = readWindow(older)
+            if(firstLoad || older) _hasOlder.value = loaded.size == historyLimit
+            _messages.value = loaded
             markReadIfVisible()
         }
     }
@@ -146,7 +159,7 @@ class GroupChatViewModel(
                 runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.send(context, groupId, body) } }
                     .onSuccess { onQueued() }
                     .onFailure { _error.value = it.message ?: "Couldn't queue this message" }
-                _messages.value = groupMessageRepo.getMessages(groupId)
+                _messages.value = readWindow()
             } finally { _sending.value = false }
         }
     }

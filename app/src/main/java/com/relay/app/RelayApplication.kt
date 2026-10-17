@@ -11,7 +11,12 @@ import com.relay.app.messaging.PollWorker
 import com.relay.app.sms.KeyRotationReceiver
 import com.relay.app.sms.PinExpiryReceiver
 
-class RelayApplication : Application() {
+class RelayApplication : Application(), coil.ImageLoaderFactory {
+    override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this).components {
+        if (android.os.Build.VERSION.SDK_INT >= 28) add(coil.decode.ImageDecoderDecoder.Factory())
+        else add(coil.decode.GifDecoder.Factory())
+    }.build()
+
 
     override fun onCreate() {
         super.onCreate()
@@ -19,13 +24,14 @@ class RelayApplication : Application() {
             com.relay.app.calculator.CalculatorOnly.clean(this)
             return
         }
+        com.relay.app.messaging.ConnectionService.stop(this)
         // Remove view copies left behind if the previous process died while showing media.
         java.io.File(cacheDir, "private-media-view").listFiles()?.forEach { it.delete() }
         com.relay.app.calculator.OwnerSync.start(this)
         schedulePinExpiryAlarm()
         scheduleKeyRotationCheck()
         // Connect the internet transport, receive messages and drain the outbox for as long as the
-        // process lives (a foreground service keeps it alive in the background; see Phase 4).
+        // process lives. Android may suspend/kill it; ordinary periodic work reconnects later.
         MessagingRuntime.ensureStarted(this)
         PollWorker.schedule(this)
     }

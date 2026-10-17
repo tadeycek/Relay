@@ -36,6 +36,14 @@ object MessageDeletion {
         val paths = db.rawQuery("SELECT media_uri FROM $table WHERE $where", args).use { c ->
             buildList { while (c.moveToNext()) if (!c.isNull(0)) add(c.getString(0)) }
         }
+        val eventColumn = if(table == "messages") "msg_id" else "event_id"
+        val ownerColumn = if(table == "messages") "contact_id" else "group_id"
+        val prefix = if(table == "messages") "direct:" else "group:"
+        val targets = db.rawQuery("SELECT $eventColumn,$ownerColumn FROM $table WHERE $where",args).use { c ->
+            buildList { while(c.moveToNext()) if(!c.isNull(0)) add(c.getString(0) to c.getLong(1)) }
+        }
+        targets.forEach { (event,id) -> db.delete("reactions","scope=? AND target=?",arrayOf("$prefix$id",event)) }
+        ConversationEvents.changes.value += 1
         db.delete(table, where, args)
         paths.forEach { path ->
             // App-private media only; never remove external files or arbitrary sender paths.

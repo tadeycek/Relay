@@ -59,15 +59,42 @@ bouncing for four seconds after a valid code; disabled by default. It runs local
 animations are disabled, and does not extend the original ten-minute session. This animates the
 illustration as a whole, rather than generating a character-animation video.
 
-**Account → Connection → Hide connection notification** opens Android's channel settings. Turn off
-only **Relay connection**, leaving **Messages** enabled. Android controls channel visibility; the app
-cannot silently remove a required foreground-service notice while retaining the service.
-
-The connection-service notice is not started while the app is open and is removed when returning. Background delivery still uses Android’s required foreground-service notice when the activity is no longer visible. Rotation and dialogs that only pause the activity do not start that service.
+The continuous background connection service and its “running in the background” notice have been
+removed. Old settings and boot/background callbacks cannot start it. The app cancels its legacy
+connection notice/channel on startup. Normal message notifications still work. Messages arrive
+while the process is alive or during ordinary WorkManager checks (15-minute minimum, possibly
+much later under battery restrictions); reopen the app for prompt delivery after Android stops it.
+There is no hidden foreground-service workaround or instant closed-app-delivery guarantee.
 
 Message notifications use Android’s native conversation layout with the sender name, their profile photo (or generated avatar), and up to five unread messages kept separately for each conversation. The latest supplied purple phone image is registered as the application icon for Android’s app badge. The sender bitmap contains no painted badge, preventing a duplicate overlay. Tapping dismisses only the notification through a private receiver; it does not open the app, delete a message, or mark it read. There are no reply actions. Android attributes them to
 **Viber**. The application settings and installer also use that name; the launcher activity remains **Calculator** with its calculator icon. Previews expose message text to anyone allowed to see notifications on the device;
 system lock-screen settings also apply. The custom content layout from 1.6 has been removed because it added a separate app icon beside the sender photo on the reference phone. Android controls the final avatar mask, badge placement, header and spacing; exact pixel matching across phones is not guaranteed. This remains the Relay build (package `com.relay.app`), using its own messaging transport.
+
+Local preview 1.10 adds QR image import without camera permission and **Download my QR code**.
+The exported code retains its original nonce and 30-minute expiry; image imports use the same
+preview, confirmation and mutual pairing checks as scanning. Only unused, unexpired invitations
+work, and restarting the issuer process invalidates its unconsumed invitation.
+
+Tap the unlock illustration or **Skip animation** to finish only the cosmetic transition.
+The private code, app lock and original session deadline still apply. In **People → group → Edit**,
+the creator can choose/preview/save, replace or remove a **Group picture**. It is shared over
+private encrypted messages and stored in SQLCipher, with monotonic revisions and no public URL.
+
+Choose **Attach → Animated GIF / sticker** to send a local GIF (up to 3 MiB, 2048 px); its animation
+bytes are preserved in chats and the viewer. No external GIF-search provider is contacted.
+Hold a message to set/change an emoji reaction or remove your reaction. Reactions identify the
+participant and synchronize through authenticated, durable private controls. All participants
+need 1.10 for these features.
+
+On Android 14+, open chats show that screenshot notices are enabled. Supported system screenshot
+callbacks create an authenticated, timestamped chat event. Android cannot detect every capture
+method; ADB/instrumentation captures are not a device acceptance test. Android 8–13 shows an
+unavailable notice and does not monitor the gallery as a substitute. Notices are registered only
+while the conversation's activity is visible, and stop on exit/session expiry.
+
+Chats start with the newest 200 messages, then **Load older messages** expands history while
+retaining the reading anchor. See [the performance investigation](rebuild/PERFORMANCE-2026-10-17.md)
+for host-only benchmark results, current hosting comparisons and outstanding phone/relay tests.
 
 Preview 1.9 adds labelled **Mute / Unmute** controls with an enabled/muted bell icon in each contact/group header.
 Mute persists per conversation, cancels its existing preview and suppresses future message/media
@@ -150,7 +177,7 @@ installation access and manages recovery, with separately consented diagnostics.
 - `NostrTransport` wraps each message per NIP-17 (rumor → seal signed by you → gift wrap with a throwaway key) and publishes it to the recipient's inbox relays (their kind 10050 list, else relays from their QR code and your own list). Relays see an encrypted blob for a public key, not who sent it.
 - Incoming messages arrive over a long-lived relay subscription, are unwrapped and authenticated (the seal signature proves the sender's key), de-duplicated persistently, then stored.
 - **Offline delivery:** relays hold messages until the recipient reconnects. How long free public relays keep them is **unmeasured** (`rebuild/07-phases.md`, Phase 0, has a debug tool for it).
-- **Closed-app delivery:** a foreground service (`ConnectionService`) keeps the relay connection alive, with a 15-minute WorkManager poll as a safety net. Nostr relays cannot wake a sleeping phone, so this costs battery and shows a persistent low-priority notification; it can be turned off in Settings.
+- **Closed-app delivery:** the process receives while alive. Ordinary periodic WorkManager checks reconnect after Android kills/suspends it, with a 15-minute minimum that Android can delay much longer. No continuous foreground service or connection-status notification is used.
 
 ### Pairing and trust
 - Each install has a Nostr identity (secp256k1) plus the Tink keys below. **My code** shows a QR containing your name, Nostr key, Tink public keys and up to 3 relay hints — no phone number.
@@ -161,7 +188,7 @@ installation access and manages recovery, with separately consented diagnostics.
 There is no map screen. In a chat, **Share my location** sends your current position (it expires after the time set in Settings) and **Request location** asks for theirs; a shared location appears as a card with coordinates and **Tap to open in Maps**, which hands it to your own maps app. Requests can be answered automatically only for **Trusted** contacts, or for **verified** contacts if auto-approve is on; otherwise you get a Share/Decline notification. Do-Not-Disturb hours and "who can request my location" apply. Replying while the app is closed cannot read the location (no background location permission).
 
 ### Photos and video
-Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. If an upload fails the user must retry. The defaults are `blossom.ditto.pub` and `blossom.data.haus`; encrypted binary upload/download, hash verification, decryption and cleanup were tested at the 3 MiB photo limit. Availability and retention can change. Gallery access uses selected-URI grants and survives session expiry. Photos retain their aspect ratio and camera orientation. Tap a photo to view/zoom it, or a video to play it, inside the app. Playback stops on close, backgrounding or session expiry. Private plaintext view copies are removed when their bubbles leave composition and leftover copies are removed on process startup. A direct peer connection is not required.
+Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. Accepted uploads retry in the durable background queue for up to seven days; after final failure, delete the failed bubble and resubmit if needed. The defaults are `blossom.ditto.pub` and `blossom.data.haus`; encrypted binary upload/download, hash verification, decryption and cleanup were tested at the 3 MiB photo limit. Availability and retention can change. Gallery access uses selected-URI grants and survives session expiry. Photos retain their aspect ratio and camera orientation. Tap a photo to view/zoom it, or a video to play it, inside the app. Playback stops on close, backgrounding or session expiry. Private plaintext view copies are removed when their bubbles leave composition and leftover copies are removed on process startup. A direct peer connection is not required.
 
 ### Groups
 Shared groups use a creator-controlled roster and encrypted private fanout to up to sixteen verified friends. The creator checks submitting members and forwards their posts; members authenticate the creator rather than independently authenticating the original author. Creator connectivity is required for forwarding. See the group instructions above and rebuild/VERIFICATION.md for current test limits.
@@ -181,7 +208,7 @@ Layers, from outside in:
 Threat-model notes: metadata (who talks to whom, when, message size) is partly visible to relays; a compromised phone defeats all of it; scanning the wrong QR code securely connects you to the wrong person. This is a hobby/friends project, not an audited secure messenger.
 
 ### Known gaps
-- **Physical devices still need tests.** Two-emulator pairing and text replies work through public relays. Relay retention, physical-camera QR scanning, foreground-service survival through Doze/OEM killers, battery cost and real Tor behavior remain unmeasured.
+- **Physical devices still need tests.** Two-emulator pairing and text replies work through public relays. Relay retention, physical-camera QR scanning, periodic delivery through Doze/OEM killers, battery cost and real Tor behavior remain unmeasured.
 - Outgoing media is kept as a plaintext cache file (needed to display and to upload); only received media is encrypted at rest.
 - No chat-history export or backup: a phone swap loses history and identity (keys are Keystore-bound), and contacts must re-pair.
 - Media uploads are not retried automatically.
@@ -199,7 +226,7 @@ Threat-model notes: metadata (who talks to whom, when, message size) is partly v
 
 ## Project structure (`app/src/main/java/com/relay/app`)
 - `transport/` — `Transport` interface, `NostrTransport`, Nostr identity, payload codec, outbox policy, dedupe, Tor route policy
-- `messaging/` — runtime (connect, receive, drain outbox), incoming handler, outbox worker, foreground service, poll worker, notifiers, policies
+- `messaging/` — runtime (connect, receive, drain outbox), incoming handler, outbox worker, retired-service cleanup, poll worker, notifiers, policies
 - `media/` — encrypted media protocol, AES-GCM helper, Blossom client, send/receive
 - `crypto/` — Tink E2E layer and at-rest file crypto
 - `data/` — models, repositories, SQLCipher helper and schema (DB v13)

@@ -112,7 +112,9 @@ class IncomingMessageHandler(context: Context) {
             return
         }
         if (MessageDeletion.isDeleted(db, "direct:${contact.id}", envelope.senderPubkeyHex, payload.id, payload.ts)) return
+        if (ConversationEvents.handle(appContext, contact, body, payload.id, TimestampPolicy.resolve(payload.ts, now))) return
         if (com.relay.app.groups.SharedGroups.handle(appContext, contact, body)) return
+        if (com.relay.app.groups.GroupAvatars.handle(appContext, contact, body)) return
         if (com.relay.app.media.ProfilePhotoSync.handle(appContext, contact, body)) return
 
         com.relay.app.media.ProfilePhotoSync.requestProfile(appContext, contact)

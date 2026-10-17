@@ -195,9 +195,15 @@ object SharedGroups {
         }
         val staged = db.readableDatabase.rawQuery("SELECT _id FROM group_messages WHERE group_id=? AND event_id=? AND is_sent=1",
             arrayOf(id.toString(), packet.event)).use { it.moveToFirst() }
+        val event = com.relay.app.messaging.ConversationEventBody.parse(packet.text)
+        if (packet.text.startsWith(com.relay.app.messaging.ConversationEventBody.PREFIX) && event == null) return false
+        if (event?.kind == "reaction") {
+            com.relay.app.messaging.ConversationEvents.apply(context, "group:$id", packet.author, event)
+            return false
+        }
         val message = if (staged && packet.author == own) 1L else GroupMessageRepository(db).insertMessageSync(GroupMessage(groupId = id, body = com.relay.app.media.MediaBody.parse(packet.text)?.caption ?: packet.text,
             eventId = packet.event, mediaUri = mediaPath,
-            type = com.relay.app.media.MediaBody.parse(packet.text)?.let { if (it.isVideo) com.relay.app.data.model.MessageType.VIDEO else com.relay.app.data.model.MessageType.IMAGE } ?: com.relay.app.data.model.MessageType.TEXT,
+            type = if(event?.kind == "screenshot") com.relay.app.data.model.MessageType.SCREENSHOT else com.relay.app.media.MediaBody.parse(packet.text)?.let { if (it.isVideo) com.relay.app.data.model.MessageType.VIDEO else com.relay.app.data.model.MessageType.IMAGE } ?: com.relay.app.data.model.MessageType.TEXT,
             senderKey = packet.author, senderName = packet.state.members.first { it.key == packet.author }.name,
             timestamp = com.relay.app.messaging.TimestampPolicy.resolve(packet.time, System.currentTimeMillis()),
             isSent = packet.author == own, unread = packet.author != own))
@@ -234,7 +240,7 @@ object SharedGroups {
                 }
             }
             notify(context, existing.localId)
-            if (received) com.relay.app.messaging.GroupMessageNotifier.show(context, existing.localId, packet.copy(state = existing.state))
+            if (received && com.relay.app.messaging.ConversationEventBody.parse(packet.text) == null) com.relay.app.messaging.GroupMessageNotifier.show(context, existing.localId, packet.copy(state = existing.state))
         } else {
             if (!GroupProtocol.acceptOwner(sender.nostrPubkey!!, existing?.state, packet)) return true
             val effective = if (existing != null && existing.state.revision > packet.state.revision) existing.state else packet.state
@@ -246,8 +252,9 @@ object SharedGroups {
                 if (member && packet.kind in listOf("post", "delete", "purge")) received = store(context, db, id, packet, own)
                 id
             }
+            if(member && packet.kind == "sync") GroupAvatars.request(context,id,effective)
             notify(context, id)
-            if (received && packet.author != own) com.relay.app.messaging.GroupMessageNotifier.show(context, id, packet)
+            if (received && packet.author != own && com.relay.app.messaging.ConversationEventBody.parse(packet.text) == null) com.relay.app.messaging.GroupMessageNotifier.show(context, id, packet)
         }
         return true
     }

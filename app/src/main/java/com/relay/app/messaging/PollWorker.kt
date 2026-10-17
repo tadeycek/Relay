@@ -17,8 +17,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Safety net for when the foreground service is off or the OS killed it: every ~15 minutes (the
  * platform minimum for periodic work) the process is woken, the runtime is started, and it gets a
- * short window to connect and pull anything that arrived. Delivery through this path is delayed by
- * up to a quarter of an hour, which is why the foreground service is the primary mechanism.
+ * short window to connect and pull anything that arrived. Android may delay this work beyond its 15-minute minimum, especially in Doze.
+ * This uses ordinary background work without a foreground-service notification.
  */
 class PollWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 

@@ -11,18 +11,19 @@ import net.sqlcipher.Cursor
 
 class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
 
-    suspend fun getMessages(groupId: Long): List<GroupMessage> = withContext(Dispatchers.IO) {
+    suspend fun getMessages(groupId: Long, limit: Int? = null, fromTimestamp: Long? = null, fromId: Long = 0): List<GroupMessage> = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            GroupMessages.TABLE, null,
-            "${GroupMessages.COL_GROUP_ID} = ?", arrayOf(groupId.toString()),
-            null, null, "${GroupMessages.COL_TIMESTAMP} ASC"
-        )
-        cursor.use { it.toGroupMessageList() }.map { message ->
-            message.copy(
-                senderName = message.senderKey?.let { com.relay.app.groups.GroupProfiles.display(dbHelper, groupId, it, message.senderName.orEmpty()) } ?: message.senderName,
-                deliveryState = if (message.isSent) com.relay.app.groups.GroupDelivery.state(dbHelper, groupId, message.eventId) else com.relay.app.data.model.DeliveryState.NONE)
+        val cursor = if(fromTimestamp == null) db.rawQuery(HistoryWindow.query(true), arrayOf(groupId.toString(), (limit ?: -1).toString()))
+        else db.rawQuery("SELECT * FROM group_messages WHERE group_id=? AND (timestamp>? OR (timestamp=? AND _id>=?)) ORDER BY timestamp ASC,_id ASC",
+            arrayOf(groupId.toString(),fromTimestamp.toString(),fromTimestamp.toString(),fromId.toString()))
+        val loaded = cursor.use { it.toGroupMessageList() }
+        val names = loaded.mapNotNull { it.senderKey }.distinct().associateWith { key ->
+            com.relay.app.groups.GroupProfiles.display(dbHelper, groupId, key, loaded.first { it.senderKey == key }.senderName.orEmpty())
         }
+        val states = com.relay.app.groups.GroupDelivery.states(dbHelper, groupId, loaded.mapNotNull { it.eventId })
+        loaded.map { message -> message.copy(senderName = names[message.senderKey] ?: message.senderName,
+            deliveryState = if(message.isSent) states[message.eventId] ?: com.relay.app.data.model.DeliveryState.NONE else com.relay.app.data.model.DeliveryState.NONE) }
+
     }
 
     suspend fun insertMessage(msg: GroupMessage): Long = withContext(Dispatchers.IO) {

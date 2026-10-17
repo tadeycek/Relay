@@ -61,6 +61,7 @@ import com.relay.app.ui.theme.TextPrimary
 import com.relay.app.ui.theme.TextSecondary
 import com.relay.app.util.QrContactCode
 import com.relay.app.util.RelayPreferences
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -215,6 +216,7 @@ private fun MyCodeTab(
             // stall here would freeze at the worst moment). null bitmap after done = failure.
             var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
             var qrFailed by remember { mutableStateOf(false) }
+            var qrExpiry by remember { mutableStateOf(0L) }
             val invitation by PairingCoordinator.shownCode.collectAsState()
             var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
             // An unused code rotates, so a code someone photographed earlier stops working.
@@ -246,9 +248,28 @@ private fun MyCodeTab(
                     NfcPairing.payload = code // the same code, served to a phone that is held against this one
                     encodeQrBitmap(code, 800)
                 }
-                if (bmp == null) qrFailed = true else qrBitmap = bmp
+                if (bmp == null) qrFailed = true else { qrExpiry = active.expiresAtMs; qrBitmap = bmp }
             }
 
+            val pickerSession = com.relay.app.media.LocalPickerSession.current
+            val scope = androidx.compose.runtime.rememberCoroutineScope()
+            var exportImage by remember { mutableStateOf<Bitmap?>(null) }
+            var exportExpiry by remember { mutableStateOf(0L) }
+            val saveImage = androidx.activity.compose.rememberLauncherForActivityResult(
+                androidx.activity.result.contract.ActivityResultContracts.CreateDocument("image/png")
+            ) { uri ->
+                pickerSession.returned()
+                val expires = exportExpiry
+                val image = exportImage
+                exportImage = null
+                if (uri != null && image != null) scope.launch {
+                    val saved = withContext(Dispatchers.IO) { runCatching {
+                        context.contentResolver.openOutputStream(uri)?.use { check(image.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+                            ?: error("Could not open destination")
+                    }.isSuccess }
+                    android.widget.Toast.makeText(context, if (saved) "QR saved; original expiry: ${java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(expires))}. Saving does not extend it." else "Couldn't save QR image", android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
             val bmp = qrBitmap
             when {
                 bmp != null -> {
@@ -282,6 +303,12 @@ private fun MyCodeTab(
                             Text("Turn on NFC in your phone's settings to tap phones together.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
                         NfcPairing.Availability.NONE -> Unit
                     }
+                    SecondaryButton("Download my QR code", {
+                        exportImage = bmp
+                        exportExpiry = qrExpiry
+                        pickerSession.launch()
+                        saveImage.launch("Relay-invitation.png")
+                    })
                     SecondaryButton("Change name", { profileSet = false })
                 }
                 qrFailed -> Text("Couldn't make your code. Go back and try again.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
