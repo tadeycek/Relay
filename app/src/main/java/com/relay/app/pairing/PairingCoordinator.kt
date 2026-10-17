@@ -201,6 +201,7 @@ object PairingCoordinator {
             if (contact.qrVerified) PairingEvent.Verified(contact.id, contact.name) else PairingEvent.NeedsKeyReview(contact.name)
         )
         broadcastContactsChanged(context, contact.id)
+        com.relay.app.media.ProfilePhotoSync.afterPairing(context, contact)
     }
 
     // ---- both roles: messages from the transport -------------------------------------------------
@@ -295,6 +296,7 @@ object PairingCoordinator {
             _events.tryEmit(PairingEvent.NeedsKeyReview(contact.name))
         }
         broadcastContactsChanged(context, contact.id)
+        com.relay.app.media.ProfilePhotoSync.afterPairing(context, contact)
     }
 
     // ---- plumbing -------------------------------------------------------------------------------

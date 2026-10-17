@@ -1,108 +1,99 @@
-# Verification record: 2026-10-16
+# Calculator 1.1 preview verification — 2026-10-17
 
-Branch: `feat/rebuild`, based on `bb88bff`. This record describes test coverage, not
-a guarantee that the app has no bugs or cannot be compromised.
+Branch: `feat/rebuild`, based on `93825e1`. This records measured checks, not a guarantee
+that the app has no bugs or cannot be compromised. The previous preview's results are
+preserved in [VERIFICATION-2026-10-16.md](VERIFICATION-2026-10-16.md).
 
-## Completed checks
+## Completed automated checks
 
-- Debug build, Android test APK build, 229 JVM tests (zero failures, errors or skips).
-- Lint: zero errors, 13 warnings and 6 informational findings.
-- Nine Android tests passed with relay recovery configured: real Keystore
-  PIN verification, encrypted preferences, persistent lockout, owner recovery
-  policy, notification attribution/no tap action, diagnostic consent, immediate
-  Home/return relocking and calculator layout/arithmetic in landscape.
-- Seventeen Python owner/protocol tests passed: authentication, strict report fields,
-  expiry, revocation/deletion, bounded histories and database migration.
-- Native Control Panel UI check passed using a temporary database: correct title,
-  supplied icon, both tabs, individual diagnostic details and unblock action.
-- Linux shortcut has the new `com.relay.ControlPanel.desktop` identity, Control
-  Panel name and supplied figure icon. This checkout's obsolete shortcut was
-  backed up and removed; launching the new desktop entry succeeded.
-- Button-level emulator checks passed for decimal arithmetic, precedence,
-  parentheses, percentages, negative numbers, divide-by-zero and error recovery.
-  Three failures remained locked after a restart; calculator use continued; the
-  Control Panel sent a signed unblock over public relays and cleared the lockout and the original code worked.
-  Explicit diagnostic consent produced a report, and revocation deleted it.
-- Two independent Android 15 emulator installs connected to default public Nostr
-  relays, paired with approval on both devices, and exchanged text/emoji messages
-  and replies. The production ML Kit decoder read the actual displayed QR image;
-  decoded text was delivered through the production QR/NFC confirmation path.
-  This verifies image decoding and pairing, not optical camera-to-screen capture.
-- Invitation rules use a 30-minute maximum and single-use nonces. JVM tests cover
-  rejection exactly at expiry, replay, malformed expiry and legacy-code bypasses.
-  The issuer uses monotonic elapsed time, so changing its wall clock does not
-  extend a nonce. A process restart invalidates unused invitations sooner.
+- App and Android test APK build successfully. Version code 2, version name 1.1-preview.
+- 234 JVM tests passed, with no failures, errors or skips. New coverage includes the
+  exact 600,000 ms session deadline, no extension on return/use, bounded profile-photo
+  encoding, malformed inputs, removals and transport-size limits.
+- 14 Android tests passed on a dedicated Android 15 emulator. These cover real Keystore
+  state, lockout/recovery policy, diagnostic consent, calculator arithmetic/layout,
+  notification previews/history/avatars and contact-ID separation, Home/return and
+  activity recreation, expiry back to Calculator and reauthentication.
+- Media tests open received encrypted portrait and landscape images, verify preview
+  aspect ratios, open/close the internal photo viewer, and verify camera JPEG rotation.
+  A five-second portrait MP4 fixture actually plays and advances position; closing and
+  expiry stop playback. Expiry also removes private plaintext view files.
+- Profile-photo tests reject unapproved/blocked contacts, decrypt an approved sender's
+  photo, verify encrypted canonical storage, apply removal, and reject stale replay.
+- Lint has zero errors, 14 warnings and 7 informational findings. The new functional
+  warning recommends AndroidX ExifInterface instead of the platform implementation;
+  JPEG orientation behavior was checked on Android 15. Existing locale/deprecation
+  and other warnings remain.
 
-## Media and preview checks
+The UI expiry tests call the production expiry check at its deadline rather than
+waiting ten wall-clock minutes. JVM tests verify the full ten-minute elapsed-time
+policy. Native video popup controls are explicitly dismissed on disposal.
 
-The complete two-emulator flow passed: actual QR-image decoding, mutual approval,
-text/emoji messages and replies, and gallery photos in both directions. Each gallery
-return showed the Calculator lock; after entering the original code, the attachment
-remained selected. The recipient downloaded and decrypted the photo, and its SHA-256
-matched the sender's compressed JPEG. Both conversation screens were visually checked.
+## Live two-device checks
 
-Both default blob endpoints (`blossom.ditto.pub` and `blossom.data.haus`) also accepted
-3 MiB encrypted test blobs. Downloaded bytes matched their hashes and decrypted to the
-fixture; these separate endpoint-probe blobs were deleted successfully. No plaintext
-photo is uploaded. The APK signature and Calculator label/SDK metadata were checked.
+Two independent Android 15 emulator installations connected to public Nostr relays.
+The production ML Kit decoder read the displayed 30-minute invitation, both users
+approved the pairing, and verified contacts were created. Text/emoji and replies
+arrived in both directions (3.4 s and 9.9 s including UI automation).
 
-Live Control Panel recovery passed through public relays with no owner web server
-listening: three wrong codes locked messaging across a restart; an actually received
-command signed by an unauthorized key was rejected; the panel's signed command cleared
-failures; the original code still opened messaging. A stale authentic command left a
-newer lockout locked. Consented diagnostics reached the panel and were deleted after
-revocation; the stored address was explicitly not observed through relays.
+Both peers selected gallery photos, returned through the active session, uploaded
+encrypted media, and downloaded/decrypted matching JPEG hashes. Both selected their
+own profile photo through Account and the system picker; the approved other peer
+received identical photo bytes. Removing Alice's profile photo removed it on Bob.
+Both app databases and UI were checked. This verifies image decoding and the real
+QR/NFC confirmation path, not optical camera-to-screen scanning.
 
-## Fixes in this update
+After the final notification-history change, its two Android notification tests
+were repeated against the final APK and passed. The final APK was then used for
+the complete live two-device flow. Package signatures, archive checksums, uploaded
+asset digests and merged-source identity are checked during publication.
 
-The calculator adapts to landscape instead of overlapping/hiding middle key rows.
-Account's Show my code opens the display rather than the scanner. Invitations
-carry a versioned expiry and the display rotates expired/used codes.
+## Behavior and privacy
 
-Photo attachment no longer waits for a direct peer connection. The system picker
-grants access to the chosen URI without requiring full-gallery or camera access.
-Private navigation survives Calculator relocking, while the activity-level gallery/camera launchers
-remain registered outside the private-screen lifecycle. Media uses
-raw encrypted blobs with server-scoped Blossom authorization and blob-storage
-endpoints, retaining support for older received media containers. Opening a chat
-no longer probes direct peer IP candidates. Retired direct-transfer probes/offers are ignored,
-so contacts cannot trigger legacy IP discovery or a listening socket.
+A successful four-digit code plus + starts a fixed ten-minute session. Background
+and return do not extend it. A process restart ends it. Expiry closes private screens
+and any media viewer; the original code is needed again. Three wrong submissions
+still require the owner's signed relay recovery command. No owner web server is needed.
 
-The `relayPreview` build embeds only the owner's public key. The private owner key and local
-service credentials are excluded. Recovery reports use a separate phone identity and the same
-NIP-17 transport implementation; only a signed state from the pinned owner for the matching
-installation can clear a lockout. Diagnostic revocations and their revisions commit atomically,
-so an older opt-in report cannot restore deleted diagnostics. No IP address is inferred from
-relay traffic, and no owner HTTP server is opened.
+Photos fit their source aspect ratio. Photo/video taps open an internal secure viewer;
+no external app receives the decrypted file. Photos support pinch zoom. Videos use
+native playback controls. Temporary per-view plaintext copies are deleted when their
+bubble leaves composition, with leftovers removed at process startup. Existing outgoing
+compressed-media caches remain a plaintext-at-rest limitation.
+
+Account → Profile photo explicitly shares a JPEG of at most 128 px / 6 KiB with mutually
+approved contacts through the existing encrypted conversation. There is no public
+profile endpoint or extra avatar fetch. Photos are encrypted at rest and excluded from
+backup; revisions prevent stale updates from undoing removal. Recipients can save photos.
+Both peers must use the updated app for this new control-message protocol.
+
+Notifications provide sender name, received photo/generated avatar, this app's generic
+purple message badge and up to five unread messages per conversation. They have no tap
+intent or reply action. Android's app attribution remains Calculator; the badge is not
+Viber's logo. See [Android's notification anatomy](https://developer.android.com/develop/ui/compose/notifications)
+and [Viber's Android notification features](https://help.viber.com/hc/en-us/articles/9029767646237-Reply-search-and-customize-on-Android).
 
 ## Remaining limits
 
-The packaged preview is debug signed and intended for testing. Recovery needs the original
-Control Panel's private owner state and an available relay route on both sides. No private
-owner state is published. Stable production signing and independent security review remain.
+This is a debug-signed test preview. Physical-phone camera/NFC, real Orbot routing,
+Doze/OEM survival, battery usage, accessibility/font scaling and the full range of image
+and video codecs remain unverified. Real-network video transfer was not newly tested;
+received encrypted-video playback was. Public relays/blob servers can change availability
+or retention. The protocol has no Double Ratchet or independent security audit. Stable
+production signing remains necessary before a production release.
 
-Physical-phone camera/NFC exchange, video capture/delivery, offline retention,
-Doze/OEM background survival, battery usage, accessibility/font scaling and a real
-Orbot route have not been verified in this session. Public relay/blob-server
-availability and retention can change. Outgoing compressed media is still a
-plaintext cache; received canonical media is encrypted at rest. The protocol has
-no Double Ratchet and has not had an independent security audit.
+## Reproduce
 
-## Reproduction
-
-Use dedicated emulators and fresh app data; these tests set fixture names and PIN
-4826 and send non-personal test text/images through public services.
+Use dedicated emulator data only. These tests use code 4826 and synthetic fixtures,
+and the two-device harness sends fixture messages/images through public relays/storage.
 
 ```sh
 rebuild/dev/build.sh -PrelayPreview=true assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug
-python3 -m unittest discover -s owner -p 'test_*.py'
-# Install app-debug.apk and app-debug-androidTest.apk on both emulators first.
-adb -s emulator-5554 shell am instrument -w -e class com.relay.app.calculator.CalculatorSecurityTest com.relay.app.test/androidx.test.runner.AndroidJUnitRunner
+# Install both generated APKs on the dedicated emulators first.
+adb -s emulator-5554 shell am instrument -w -e class com.relay.app.calculator.CalculatorSecurityTest,com.relay.app.calculator.MediaViewerTest,com.relay.app.calculator.ProfilePhotoTest com.relay.app.test/androidx.test.runner.AndroidJUnitRunner
 python3 rebuild/dev/test-two-emulators.py
 ```
 
-The packaged APK is the final debug build. The test emulators retain fixture contacts and
-use 4826 followed by +; a fresh installation chooses its own code.
-
-Source tests and scripts are included. Local screenshots/logs, fixture databases,
-tokens, phone identities, toolchain caches and signing keys are not distributed.
+The included test clip is synthetic: FFmpeg testsrc2, 160x320, 15 fps, five seconds,
+MPEG-4 Part 2 in MP4. No personal photos, local databases, private owner state, credentials,
+SDK/JDK installations or signing keys are distributed.

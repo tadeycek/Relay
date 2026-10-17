@@ -78,7 +78,12 @@ object MessagingRuntime {
 
         scope.launch {
             // A reconnect is the moment queued messages can finally go out.
-            transport.status.collect { if (it == TransportStatus.ONLINE) kick() }
+            transport.status.collect {
+                if (it == TransportStatus.ONLINE) {
+                    kick()
+                    com.relay.app.media.ProfilePhotoSync.syncPending(appContext)
+                }
+            }
         }
 
         watchNetwork(appContext, transport)

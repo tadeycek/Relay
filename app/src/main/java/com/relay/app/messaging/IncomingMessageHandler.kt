@@ -96,6 +96,7 @@ class IncomingMessageHandler(context: Context) {
 
         // Retired direct-transfer offers never start a listening socket.
         if (P2pOfferMessages.parse(body) != null) return
+        if (com.relay.app.media.ProfilePhotoSync.handle(appContext, contact, body)) return
 
         val sentAt = TimestampPolicy.resolve(payload.ts, now)
 

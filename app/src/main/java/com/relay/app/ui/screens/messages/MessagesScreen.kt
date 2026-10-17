@@ -189,6 +189,7 @@ private fun ConversationAvatar(c: ConversationSummary) {
             description = "${c.name}, group of ${c.memberCount}",
         )
     } else {
+        if (com.relay.app.ui.components.contactPhoto(c.id, size = AvatarSize, description = "${c.name}, profile photo")) return
         val state = GlyphState.forContact(hasNostrKey = c.hasKey, verifiedInPerson = c.verified)
         val trust = when (state) {
             GlyphState.VERIFIED -> "verified in person"

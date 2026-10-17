@@ -67,6 +67,7 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
     fun deleteContact(id: Long) {
         viewModelScope.launch {
             repo.deleteContact(id)
+            withContext(Dispatchers.IO) { com.relay.app.media.ContactPhotos.remove(getApplication(), id) }
             _contacts.value = repo.getAllContacts()
             notifyConversationsChanged(id)
         }
@@ -76,6 +77,7 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
     fun softDeleteContact(id: Long) {
         viewModelScope.launch {
             repo.softDeleteContact(id)
+            withContext(Dispatchers.IO) { com.relay.app.media.ContactPhotos.remove(getApplication(), id) }
             _contacts.value = repo.getAllContacts()
             notifyConversationsChanged(id)
         }

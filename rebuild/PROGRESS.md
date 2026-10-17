@@ -1,5 +1,21 @@
 # Rebuild progress log
 
+## 2026-10-17: Ten-minute sessions and media viewing
+
+A successful code entry now starts a fixed ten-minute elapsed-time session. It survives
+background/return and rotation without extending the deadline, expires while the app is
+open, and is never restored after process death. Photos/video open in an internal secure
+viewer; image previews fit the real aspect ratio, compression applies EXIF rotation, and
+videos have playback controls. Closing/backgrounding/expiry stops playback. Per-view
+plaintext copies are cleaned up, including leftovers on process startup.
+
+Profile photos are chosen under Account and shared only with mutually approved contacts over
+the encrypted conversation channel. Small JPEGs are bounded, cached encrypted, versioned against
+replay/removal and excluded from backup. Notifications use the received photo (or generated avatar)
+with this app's purple message badge, and keep a bounded unread preview per conversation with no tap/reply actions.
+Conversation tags avoid collisions for contact IDs separated by 1000. Android's source
+label remains Calculator. Current checks and limits are recorded in VERIFICATION.md.
+
 ## 2026-10-16: Calculator, Control Panel, expiring invitations and media repair
 
 Current behavior and measured checks are in [VERIFICATION.md](VERIFICATION.md). This

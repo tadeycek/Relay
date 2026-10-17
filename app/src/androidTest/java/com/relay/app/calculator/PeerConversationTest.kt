@@ -64,8 +64,12 @@ class PeerConversationTest {
         fun unlockRoot() {
             device.pressHome()
             context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            tap("C")
-            for (key in listOf("4", "8", "2", "6", "+")) tap(key)
+            assertTrue("App finishes drawing before unlock/navigation", device.findObject(
+                UiSelector().packageName(context.packageName).className("android.widget.TextView")).waitForExists(15_000))
+            if (device.findObject(UiSelector().text("C")).exists()) {
+                tap("C")
+                for (key in listOf("4", "8", "2", "6", "+")) tap(key)
+            }
             for (attempt in 0 until 5) {
                 if (device.findObject(UiSelector().text("Account")).waitForExists(1_000)) break
                 device.pressBack()
@@ -80,10 +84,15 @@ class PeerConversationTest {
                 .put("pubkey", NostrIdentity.publicKeyHex(context))
                 .put("incomingPair", PairingCoordinator.incoming.value?.name ?: JSONObject.NULL)
                 .put("ownerRecoveryPubkey", CalculatorAccessStore.get(context).ownerRelayKeys().publicKey().toHex())
+                .put("selfPhotoHash", com.relay.app.media.ContactPhotos.selfUpdate(context).jpeg?.let { MediaCrypto.sha256Hex(it) } ?: JSONObject.NULL)
                 .put("outgoingPair", PairingCoordinator.outgoing.value?.name ?: JSONObject.NULL)
                 .put("contacts", JSONArray().apply {
                     for (contact in records) put(JSONObject().put("name", contact.name).put("id", contact.id)
                         .put("verified", contact.qrVerified).put("hasKey", contact.publicKey != null)
+                        .put("photoHash", runCatching {
+                            MediaCrypto.sha256Hex(RelayFileCrypto.readDecrypted(context,
+                                File(context.filesDir, "contact-photos/${contact.id}.enc")))
+                        }.getOrNull() ?: JSONObject.NULL)
                         .put("messages", JSONArray().apply {
                             for (message in MessageRepository(MessagingDb.get(context)).getMessages(contact.id)) {
                                 put(JSONObject().put("body", message.body).put("sent", message.isSent)
@@ -179,12 +188,36 @@ class PeerConversationTest {
                             if (!image.waitForExists(4_000)) device.dumpWindowHierarchy(File(directory, "picker.xml"))
                             assertTrue("Gallery displays the inserted photo", image.exists())
                             image.click()
-                            assertTrue("Picker return is protected by Calculator", device.findObject(UiSelector().text("C")).waitForExists(8_000))
-                            for (key in listOf("4", "8", "2", "6", "+")) tap(key)
-                            assertTrue("Chosen attachment survives privacy relock", device.findObject(UiSelector().description("Attachment preview")).waitForExists(10_000))
+                            if (device.findObject(UiSelector().text("C")).waitForExists(800)) {
+                                for (key in listOf("4", "8", "2", "6", "+")) tap(key)
+                            }
+                            assertTrue("Chosen attachment survives picker return", device.findObject(UiSelector().description("Attachment preview")).waitForExists(10_000))
                             val entry = device.findObject(UiSelector().className("android.widget.EditText"))
                             entry.setText(command.getString("text"))
                             device.findObject(UiSelector().description("Send")).click()
+                        }
+                        "set_profile" -> {
+                            val fixture = File(directory, "fixture-photo.png")
+                            val values = ContentValues().apply {
+                                put(MediaStore.Images.Media.DISPLAY_NAME, "profile-${role}-${System.currentTimeMillis()}.png")
+                                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Calculator QA")
+                            }
+                            val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)!!
+                            context.contentResolver.openOutputStream(uri)!!.use { output -> fixture.inputStream().use { it.copyTo(output) } }
+                            unlockRoot(); tap("Account"); tap("Profile photo"); tap("Choose photo and share")
+                            val image = device.findObject(UiSelector().descriptionStartsWith("Photo taken on").instance(0))
+                            assertTrue("Profile picker shows the fixture", image.waitForExists(10_000))
+                            image.click()
+                            val end = SystemClock.elapsedRealtime() + 10_000
+                            while (!com.relay.app.media.ContactPhotos.hasPhoto(context, 0) && SystemClock.elapsedRealtime() < end) SystemClock.sleep(100)
+                            assertTrue("Own profile photo is saved", com.relay.app.media.ContactPhotos.hasPhoto(context, 0))
+                        }
+                        "remove_profile" -> {
+                            unlockRoot(); tap("Account"); tap("Profile photo"); tap("Remove profile photo")
+                            val end = SystemClock.elapsedRealtime() + 5_000
+                            while (com.relay.app.media.ContactPhotos.hasPhoto(context, 0) && SystemClock.elapsedRealtime() < end) SystemClock.sleep(50)
+                            assertFalse(com.relay.app.media.ContactPhotos.hasPhoto(context, 0))
                         }
                         "send" -> {
                             val entry = device.findObject(UiSelector().className("android.widget.EditText"))

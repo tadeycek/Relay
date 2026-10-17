@@ -238,6 +238,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                     value = inputText,
                     onValueChange = { inputText = it },
                     pendingMediaUri = pendingMediaUri,
+                    pendingMediaMime = pendingMimeType,
                     onClearMedia = { mediaPicker.clear(contactId) },
                     onAttach = { showAttachSheet = true },
                     onSend = {
@@ -278,6 +279,7 @@ internal fun Composer(
     onValueChange: (String) -> Unit,
     onSend: () -> Unit,
     pendingMediaUri: Uri? = null,
+    pendingMediaMime: String = "",
     onClearMedia: () -> Unit = {},
     onAttach: (() -> Unit)? = null,
     placeholder: String = "Message",
@@ -294,10 +296,14 @@ internal fun Composer(
     ) {
         if (pendingMediaUri != null) {
             Box(modifier = Modifier.size(72.dp)) {
-                AsyncImage(
+                if (pendingMediaMime.startsWith("video/")) {
+                    Box(Modifier.size(72.dp).background(Surface2), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Outlined.VideoLibrary, contentDescription = "Attachment preview", tint = Accent)
+                    }
+                } else AsyncImage(
                     model = pendingMediaUri,
                     contentDescription = "Attachment preview",
-                    contentScale = ContentScale.Crop,
+                    contentScale = ContentScale.Fit,
                     modifier = Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),
                 )
                 IconButton(

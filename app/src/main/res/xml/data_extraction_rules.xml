@@ -11,6 +11,8 @@
         <exclude domain="sharedpref" path="relay_media_keyset_prefs.xml" />
         <exclude domain="sharedpref" path="relay_nostr_identity.xml" />
         <exclude domain="file" path="media/" />
+        <exclude domain="file" path="contact-photos/" />
+        <exclude domain="sharedpref" path="profile_photo_state.xml" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="calculator_access.xml" />
@@ -23,5 +25,7 @@
         <exclude domain="sharedpref" path="relay_media_keyset_prefs.xml" />
         <exclude domain="sharedpref" path="relay_nostr_identity.xml" />
         <exclude domain="file" path="media/" />
+        <exclude domain="file" path="contact-photos/" />
+        <exclude domain="sharedpref" path="profile_photo_state.xml" />
     </device-transfer>
 </data-extraction-rules>

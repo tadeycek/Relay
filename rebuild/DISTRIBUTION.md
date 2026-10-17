@@ -1,4 +1,4 @@
-Calculator preview package
+Calculator 1.1 preview package
 ==========================
 
 00-Calculator-preview.apk is the Android installer. The numbered names put it first
@@ -7,8 +7,11 @@ from the app you use to open this APK if Android asks. This is a debug-signed te
 build, not an audited production release; keep it on test devices.
 
 First launch: enter four digits and press + to choose your private entry code.
-Later, press C, enter those four digits and press + to open messaging. Leaving the
-private screens returns to the calculator. Use ordinary calculations normally.
+Later, press C, enter those four digits and press + to open messaging. An unlock
+lasts 10 minutes from code entry, including time spent outside the app. Returning
+within that window resumes messaging. Expiry closes messaging and any open media
+viewer; enter the code again. Rotation retains the deadline, but restarting the
+app process ends the session. Use ordinary calculations normally.
 
 Pairing: set a display name under Account if needed, then choose Show my code.
 The invitation is valid for at most 30 minutes and one accepted request. Add the
@@ -17,11 +20,21 @@ after expiry. Closing the app process also invalidates an unused invitation.
 Existing contacts continue working after their invitation expires.
 
 Photos: open a verified contact's conversation, attach a photo from the system
-picker, re-enter the Calculator code on return, then send. Only the selected photo
+picker, then send. If the session expires, re-enter the code first. Tap a photo
+to open/zoom it or a video to play it inside the app. Photos keep their original
+aspect ratio and camera orientation. Only the selected photo
 is shared with this app; full-gallery permission is not needed. Photos are
 compressed and encrypted before uploading. Public storage services can see the
 connection address, ciphertext size and timing. They cannot read the photo from
 those encrypted bytes. Optional Orbot routing requires a separate working setup.
+
+Profile photos: open Account, then Profile photo, then Choose photo and share.
+Your photo is sent privately to mutually approved contacts who use the updated
+app. It is reduced to at most 128 px / 6 KiB and carried inside encrypted messages,
+not hosted as a public profile. Removing it sends a newer removal update. Contacts
+can save anything you share. Notifications show their name and received photo,
+with a generated-avatar fallback and this app's purple message badge. Android's
+source attribution remains Calculator; the badge is not the Viber logo.
 
 Control Panel recovery needs no separately hosted web server. It receives encrypted
 access reports and sends signed unblock commands through the public relay network.

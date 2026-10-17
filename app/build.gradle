@@ -21,8 +21,8 @@ android {
         applicationId 'com.relay.app'
         minSdk 26
         targetSdk 36
-        versionCode 1
-        versionName previewBuild ? '1.0-preview' : '1.0'
+        versionCode 2
+        versionName previewBuild ? '1.1-preview' : '1.1'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         buildConfigField 'String', 'OWNER_PUBLIC_KEY', groovy.json.JsonOutput.toJson(ownerPublicKey)
         buildConfigField 'String', 'OWNER_SERVICE_URL', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('url', ''))

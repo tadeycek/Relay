@@ -11,6 +11,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.core.app.Person
+import androidx.core.graphics.drawable.IconCompat
 import com.relay.app.MainActivity
 import com.relay.app.data.model.Contact
 import com.relay.app.data.model.MessageType
@@ -43,26 +44,43 @@ object MessageNotifier {
             MessageType.VIDEO -> if (clean.isEmpty()) "Video" else "Video: $clean"
             else -> clean.ifEmpty { "New message" }
         }
-        val sender = Person.Builder().setName(contact.name).setKey(contact.id.toString()).build()
+        val photo = com.relay.app.media.ContactPhotos.load(context, contact.id)
+        val avatar = NotificationAvatar.forContact(contact, photo)
+        photo?.recycle()
+        val sender = Person.Builder().setName(contact.name).setKey(contact.id.toString())
+            .setIcon(IconCompat.createWithBitmap(avatar)).build()
+        // Keep a short conversation preview, instead of replacing every notification with one line.
+        val tag = "conversation:${contact.id}"
+        val previous = nm.activeNotifications.firstOrNull { it.id == NOTIF_BASE && it.tag == tag }?.notification
+            ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+        val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
+            .setGroupConversation(false)
+        previous?.messages?.takeLast(4)?.forEach { old ->
+            style.addMessage(old.text, old.timestamp, sender)
+        }
+        style.addMessage(text, System.currentTimeMillis(), sender)
         val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
             .setSmallIcon(com.relay.app.R.drawable.ic_message_notification)
-            .setColor(0xFF7360F2.toInt())
+            .setColor(0xFF8E4BC4.toInt())
+            .setLargeIcon(avatar)
             .setContentTitle(contact.name)
             .setContentText(text)
-            .setStyle(NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
-                .addMessage(text, System.currentTimeMillis(), sender))
+            .setStyle(style)
+            .setAllowSystemGeneratedContextualActions(false)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(false)
             .setContentIntent(null)
             .build()
-        nm.notify(NOTIF_BASE + (contact.id % 1000).toInt(), notification)
+        nm.cancel(NOTIF_BASE + (contact.id % 1000).toInt()) // retire the previous app version's ID
+        nm.notify(tag, NOTIF_BASE, notification)
     }
 
     /** Removes the notification for a conversation once the user has opened it. */
     fun cancel(context: Context, contactId: Long) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.cancel("conversation:$contactId", NOTIF_BASE)
         nm.cancel(NOTIF_BASE + (contactId % 1000).toInt())
     }
 
