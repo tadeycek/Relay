@@ -73,7 +73,7 @@ class ProfilePhotoTest {
             assertEquals(1, style.messages.size)
             assertNotNull(style.messages.last().person!!.icon)
             assertEquals("conversation:${contact.id}", notification.shortcutId)
-            assertNull(notification.contentIntent)
+            assertFalse(notification.contentIntent.isActivity)
             device.openNotification()
             device.waitForIdle()
             assertTrue(device.takeScreenshot(File(context.filesDir, "shared-profile-notification.png")))

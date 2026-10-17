@@ -94,7 +94,7 @@ class CalculatorSecurityTest {
         assertTrue(store.state().locked)
     }
 
-    @Test fun messageNotificationHasPreviewAndNoTapOrReplyAction() {
+    @Test fun messageNotificationTapDismissesWithoutOpeningAppOrReplyAction() {
         if (Build.VERSION.SDK_INT >= 33) {
             InstrumentationRegistry.getInstrumentation().uiAutomation
                 .grantRuntimePermission(context.packageName, Manifest.permission.POST_NOTIFICATIONS)
@@ -117,13 +117,32 @@ class CalculatorSecurityTest {
             .dynamicShortcuts.firstOrNull { it.id == notification.shortcutId }
         assertNotNull("A published conversation shortcut supplies the compact avatar", shortcut)
         assertEquals("Preview test", shortcut!!.shortLabel.toString())
-        assertNull(notification.contentIntent)
+        assertFalse("Preview taps cannot launch an activity", notification.contentIntent.isActivity)
         assertTrue(notification.actions.isNullOrEmpty())
         assertEquals("Hello from the test", notification.extras.getCharSequence("android.text").toString())
         assertEquals("android.app.Notification\$MessagingStyle", notification.extras.getString("android.template"))
         assertNotNull("Contact avatar is supplied to the OS", notification.getLargeIcon())
         val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
         assertNotNull("Sender has an avatar", style.messages.last().person?.icon)
+        val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+        device.pressHome()
+        val underlyingPackage = device.currentPackageName
+        device.openNotification()
+        val preview = device.findObject(UiSelector().textContains("Hello from the test"))
+        assertTrue("The preview is visible in Android's shade", preview.waitForExists(5_000))
+        preview.click()
+        val dismissedAt = SystemClock.elapsedRealtime() + 5_000
+        while (manager.activeNotifications.any { it.tag == "conversation:999" } &&
+            SystemClock.elapsedRealtime() < dismissedAt) SystemClock.sleep(30)
+        assertFalse("A real tap removes the notification", manager.activeNotifications.any { it.tag == "conversation:999" })
+        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            assertTrue("A notification tap never resumes Calculator",
+                androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                    .none { it is MainActivity })
+        }
+        device.pressHome()
+        assertEquals(underlyingPackage, device.currentPackageName)
     }
 
     @Test fun lateProfileRefreshUpdatesVisibleNameAndAvatarWithoutAddingMessages() {
@@ -142,7 +161,7 @@ class CalculatorSecurityTest {
         assertEquals("Exion", style.messages.last().person!!.name.toString())
         assertEquals("Keep this preview", style.messages.last().text.toString())
         assertTrue(notification.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
-        assertNull(notification.contentIntent)
+        assertFalse("Preview taps cannot launch an activity", notification.contentIntent.isActivity)
         assertTrue(notification.actions.isNullOrEmpty())
         MessageNotifier.cancel(context, contact.id)
     }
@@ -168,7 +187,14 @@ class CalculatorSecurityTest {
         val history = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(
             posted.first { it.tag == "conversation:999" }.notification)!!.messages
         assertEquals(listOf("Message 3", "Message 4", "Message 5", "Message 6", "Message 7"), history.map { it.text.toString() })
-        assertNull(posted.first { it.tag == "conversation:999" }.notification.contentIntent)
+        val firstPreview = posted.first { it.tag == "conversation:999" }.notification
+        assertFalse(firstPreview.contentIntent.isActivity)
+        firstPreview.contentIntent.send()
+        val dismissDeadline = SystemClock.elapsedRealtime() + 5_000
+        while (manager.activeNotifications.any { it.tag == "conversation:999" } &&
+            SystemClock.elapsedRealtime() < dismissDeadline) SystemClock.sleep(30)
+        assertFalse(manager.activeNotifications.any { it.tag == "conversation:999" })
+        assertTrue("Another conversation is not dismissed", manager.activeNotifications.any { it.tag == "conversation:1999" })
     }
 
     @Test fun landscapeCalculatorKeepsEveryKeyVisibleAndCalculates() {

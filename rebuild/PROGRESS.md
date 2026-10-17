@@ -1,3 +1,10 @@
+## Calculator 1.3 preview — notification appearance and dismissal
+
+- Rounded-square avatar, replacement flat purple badge, and preserved badge-image proportions.
+- Phone foreground enlarged 40% inside Android's fixed notification/status-bar icon viewport.
+- Taps and swipes dismiss only the corresponding preview through a private immutable
+  broadcast PendingIntent. No activity starts, and chat messages/read state remain intact.
+
 ## Calculator 1.2 preview — profile notification fixes
 
 - Private versioned display-name updates, placeholder-name repair at QR completion,
