@@ -8,7 +8,8 @@ import android.media.MediaMetadataRetriever
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,7 +32,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import com.relay.app.messaging.ReplyBody
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -150,6 +150,7 @@ private fun SystemNote(message: Message, contactName: String) {
 private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((Message) -> Unit)? = null) {
     val message = item.message
     val shape = bubbleShape(message.isSent, item.startsGroup)
+    val replyTo: (() -> Unit)? = onReply?.let { callback -> { callback(message) } }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -159,22 +160,19 @@ private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((
     ) {
         if (sender != null) Text(sender, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
         val reply = ReplyBody.parse(message.body)
-        if (reply != null) Column(Modifier.widthIn(max = MaxBubbleWidth).padding(vertical = 4.dp)) {
+        if (reply != null) Column(Modifier.widthIn(max = MaxBubbleWidth).messageGestures(replyTo).padding(vertical = 4.dp)) {
             Text("↪ ${reply.name}", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
             Text(reply.quote, maxLines = 3, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
         }
         when (message.type) {
-            MessageType.TEXT -> TextBubble(message, shape)
-            MessageType.LOCATION -> LocationCard(message, shape)
-            MessageType.IMAGE -> ImageBubble(message, shape)
-            MessageType.VIDEO -> VideoBubble(message, shape)
+            MessageType.TEXT -> TextBubble(message, shape, replyTo)
+            MessageType.LOCATION -> LocationCard(message, shape, replyTo)
+            MessageType.IMAGE -> ImageBubble(message, shape, replyTo)
+            MessageType.VIDEO -> VideoBubble(message, shape, replyTo)
             // Requests and replies are notes and never reach here.
             MessageType.LOCATION_REQUEST, MessageType.LOCATION_DECLINED -> Unit
         }
         if (item.endsGroup) MessageMeta(message)
-        if (onReply != null) TextButton(onClick = { onReply(message) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
-            Text("Reply", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
-        }
     }
 }
 
@@ -219,7 +217,7 @@ private fun MessageMeta(message: Message) {
 }
 
 @Composable
-private fun TextBubble(message: Message, shape: Shape) {
+private fun TextBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) {
     val sent = message.isSent
     Text(
         text = ReplyBody.preview(message.body),
@@ -229,12 +227,13 @@ private fun TextBubble(message: Message, shape: Shape) {
             .widthIn(max = MaxBubbleWidth)
             .clip(shape)
             .background(if (sent) Accent else Surface2)
+            .messageGestures(onReply)
             .padding(horizontal = RelaySpacing.md + 2.dp, vertical = RelaySpacing.sm + 2.dp),
     )
 }
 
 @Composable
-private fun LocationCard(message: Message, shape: Shape) {
+private fun LocationCard(message: Message, shape: Shape, onReply: (() -> Unit)?) {
     val lat = message.lat ?: return
     val lng = message.lng ?: return
     val context = LocalContext.current
@@ -247,7 +246,7 @@ private fun LocationCard(message: Message, shape: Shape) {
             .widthIn(max = MaxMediaWidth)
             .clip(shape)
             .background(Surface2)
-            .clickable { openInMaps(context, lat, lng, message.pinLabel) }
+            .messageGestures(onReply, onClick = { openInMaps(context, lat, lng, message.pinLabel) }, onClickLabel = "Open in Maps")
             .padding(RelaySpacing.md + 2.dp),
         verticalArrangement = Arrangement.spacedBy(RelaySpacing.xs),
     ) {
@@ -288,7 +287,7 @@ private fun openInMaps(context: Context, lat: Double, lng: Double, label: String
 }
 
 @Composable
-private fun ImageBubble(message: Message, shape: Shape) {
+private fun ImageBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) {
     val uri = message.mediaUri ?: return
     val displayFile = rememberDisplayFile(uri)
     var ratio by remember(uri) { mutableStateOf(1f) }
@@ -296,7 +295,7 @@ private fun ImageBubble(message: Message, shape: Shape) {
     if (viewing && displayFile != null) MediaViewer(displayFile, isVideo = false, onDismiss = { viewing = false })
 
     Column(modifier = Modifier.widthIn(max = MaxMediaWidth).clip(shape).background(Surface2)
-        .clickable(enabled = displayFile != null, onClickLabel = "Open photo") { viewing = true }) {
+        .messageGestures(onReply, onClick = if (displayFile != null) ({ viewing = true }) else null, onClickLabel = "Open photo")) {
         AsyncImage(
             model = displayFile,
             contentDescription = "Open photo",
@@ -312,7 +311,7 @@ private fun ImageBubble(message: Message, shape: Shape) {
 }
 
 @Composable
-private fun VideoBubble(message: Message, shape: Shape) {
+private fun VideoBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) {
     val path = message.mediaUri ?: return
     val displayFile = rememberDisplayFile(path)
     var viewing by remember(path) { mutableStateOf(false) }
@@ -339,7 +338,7 @@ private fun VideoBubble(message: Message, shape: Shape) {
 
     val ratio = thumbnail?.let { it.width.toFloat() / it.height } ?: (16f / 9f)
     Column(modifier = Modifier.widthIn(max = MaxMediaWidth).clip(shape).background(Surface2)
-        .clickable(enabled = displayFile != null, onClickLabel = "Play video") { viewing = true }) {
+        .messageGestures(onReply, onClick = if (displayFile != null) ({ viewing = true }) else null, onClickLabel = "Play video")) {
         Box(modifier = Modifier.width(minOf(260f, 340f * ratio).dp).aspectRatio(ratio), contentAlignment = Alignment.Center) {
             val bitmap = thumbnail
             if (bitmap != null) {
@@ -370,3 +369,16 @@ private fun MediaCaption(text: String) {
         modifier = Modifier.padding(horizontal = RelaySpacing.md, vertical = RelaySpacing.sm),
     )
 }
+
+/** One gesture owner preserves media/location taps while making hold-to-reply accessible. */
+@OptIn(ExperimentalFoundationApi::class)
+private fun Modifier.messageGestures(
+    onReply: (() -> Unit)?,
+    onClick: (() -> Unit)? = null,
+    onClickLabel: String? = null,
+): Modifier = if (onReply == null && onClick == null) this else combinedClickable(
+    onClick = onClick ?: {},
+    onClickLabel = if (onClick != null) onClickLabel else null,
+    onLongClick = onReply,
+    onLongClickLabel = if (onReply != null) "Reply" else null,
+)

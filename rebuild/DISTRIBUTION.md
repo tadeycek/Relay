@@ -1,9 +1,11 @@
-Calculator 1.5 preview package
+Calculator 1.6 preview package
 ==========================
 
-New in 1.5: picker handoff repair, shared groups with verified friends, quoted replies,
-and short-lived typing indicators. These new Android interactions have not yet been
-checked on a phone; this is a test preview. Install 1.5 on every participating phone.
+New in 1.6: hold a message to reply; the separate connection notice no longer starts
+while the app is open, and returning removes the background-service notice. Android
+still requires a notice for background delivery when the app is no longer visible.
+These Android interactions need phone testing; this is a test preview. Group and
+typing features remain compatible with 1.5-preview.
 
 00-Calculator-preview.apk is the Android installer. The numbered names put it first
 when sorting this folder by name. Android 8 or newer is required. Allow installation
@@ -102,7 +104,7 @@ This first group version supports text and quoted replies, not group attachments
 location requests. It trusts the creator to attribute and forward other members'
 posts; it does not independently authenticate each original author to every member.
 
-Tap Reply beneath a message, type, and send. Cancel reply clears the quote.
+Touch and hold a text, photo, video or location message, type, and send. Cancel reply clears the quote.
 Typing indicators stop after a pause/send/exit and expire within eight seconds if
 interrupted. They use the existing encrypted transport and are not stored in chat
 history or the durable send queue; encrypted relay events can still be retained by

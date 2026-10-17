@@ -183,8 +183,8 @@ class MainActivity : FragmentActivity() {
         super.onStart()
         calculatorSession.expireIfNeeded()
         calculatorUnlocked.value = calculatorSession.isActive()
-        // The activity is visible, which is when Android allows starting a foreground service.
-        if (RelayPreferences(applicationContext).backgroundConnection) ConnectionService.start(this)
+        // The UI itself keeps messaging alive; don't show a connection-service notice on startup.
+        ConnectionService.onAppForeground(this)
     }
 
     override fun onResume() {
@@ -192,6 +192,7 @@ class MainActivity : FragmentActivity() {
         // A quick Home/return can pause and resume without ever reaching onStop/onStart.
         calculatorSession.expireIfNeeded()
         calculatorUnlocked.value = calculatorSession.isActive()
+        ConnectionService.onAppForeground(this)
     }
 
     private fun closePrivateScreens() {
@@ -220,6 +221,8 @@ class MainActivity : FragmentActivity() {
 
     override fun onStop() {
         if (!calculatorSession.keepChatForPicker()) closePrivateScreens()
+        // Only start when leaving the visible UI, not for permission dialogs or rotation.
+        if (!isChangingConfigurations) ConnectionService.onAppBackground(this)
         super.onStop()
     }
 }
