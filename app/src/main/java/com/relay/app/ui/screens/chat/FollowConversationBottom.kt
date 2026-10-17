@@ -18,7 +18,7 @@ internal fun FollowConversationBottom(state: LazyListState, newestKey: String?) 
                 if (scrolling) following = index == 0 && offset <= tolerance
             }
     }
-    val height = state.layoutInfo.viewportEndOffset
+    val height by remember(state) { derivedStateOf { state.layoutInfo.viewportEndOffset } }
     LaunchedEffect(newestKey, height) {
         if (following && !state.isScrollInProgress && newestKey != null) state.scrollToItem(0)
     }
