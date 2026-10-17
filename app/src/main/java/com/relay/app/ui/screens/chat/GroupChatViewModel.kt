@@ -68,6 +68,7 @@ class GroupChatViewModel(
 
     fun registerUpdates(context: Context) {
         ActiveChat.groupId = groupId
+        com.relay.app.messaging.GroupMessageNotifier.cancel(context, groupId)
         viewModelScope.launch { markReadIfVisible() }
         receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
@@ -89,47 +90,17 @@ class GroupChatViewModel(
         receiver = null
     }
 
-    fun sendText(body: String, context: Context) {
-        val members = _group.value?.members ?: return
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+    fun clearError() { _error.value = null }
+    fun sendText(body: String, context: Context, onQueued: () -> Unit = {}) {
         viewModelScope.launch {
-            val ts = System.currentTimeMillis()
-            withContext(Dispatchers.IO) {
-                for (member in members) {
-                    RelaySecureSend.send(context, contactRepo, member, body)
-                }
-            }
-            groupMessageRepo.insertMessage(GroupMessage(
-                groupId = groupId,
-                contactId = null,
-                body = body,
-                type = MessageType.TEXT,
-                isSent = true,
-                timestamp = ts,
-            ))
+            runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.send(context, groupId, body) } }
+                .onSuccess { onQueued() }
+                .onFailure { _error.value = it.message ?: "Couldn't queue this message" }
             _messages.value = groupMessageRepo.getMessages(groupId)
         }
     }
-
-    fun sendLocationRequest(context: Context) {
-        val members = _group.value?.members ?: return
-        viewModelScope.launch {
-            val body = SmsMessageParser.LOCATION_REQUEST_MSG
-            for (member in members) {
-                RelaySecureSend.send(context, contactRepo, member, body)
-            }
-            groupMessageRepo.insertMessage(GroupMessage(
-                groupId = groupId,
-                contactId = null,
-                body = body,
-                type = MessageType.LOCATION_REQUEST,
-                isSent = true,
-            ))
-            _messages.value = groupMessageRepo.getMessages(groupId)
-        }
-    }
-
-    suspend fun getMemberName(contactId: Long): String? =
-        contactRepo.getById(contactId)?.name
 }
 
 class GroupChatViewModelFactory(

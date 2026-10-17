@@ -113,12 +113,14 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
             LEFT JOIN group_messages m ON m._id = (
                 SELECT _id FROM group_messages WHERE group_id = g._id ORDER BY timestamp DESC, _id DESC LIMIT 1
             )
+            WHERE NOT EXISTS (SELECT 1 FROM shared_groups s WHERE s.group_id = g._id AND s.hidden = 1)
             """.trimIndent(),
             null,
         )
         return cursor.use { c ->
             val list = mutableListOf<ConversationSummary>()
             while (c.moveToNext()) {
+                val shared = com.relay.app.groups.SharedGroups.get(dbHelper, c.getLong(0))
                 val hasMessage = !c.isNull(2)
                 list.add(
                     ConversationSummary(
@@ -132,9 +134,9 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
                         lastDeliveryState = 0,
                         lastReadAt = null,
                         unread = c.getInt(6),
-                        memberCount = c.getInt(7),
+                        memberCount = shared?.state?.members?.size ?: c.getInt(7),
                         glyphSeed = c.getString(1),
-                        memberSeeds = memberSeeds[c.getLong(0)].orEmpty(),
+                        memberSeeds = shared?.state?.members?.take(4)?.map { it.key } ?: memberSeeds[c.getLong(0)].orEmpty(),
                     )
                 )
             }

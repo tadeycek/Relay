@@ -42,6 +42,10 @@ class RelayPreferences(context: Context) {
         get() = prefs.getString(KEY_DEFAULT_PIN_EXPIRY, "never") ?: "never"
         set(v) { prefs.edit().putString(KEY_DEFAULT_PIN_EXPIRY, v).apply() }
 
+    var typingIndicators: Boolean
+        get() = prefs.getBoolean("typing_indicators", true)
+        set(v) { prefs.edit().putBoolean("typing_indicators", v).apply() }
+
     var readReceipts: Boolean
         get() = prefs.getBoolean(KEY_READ_RECEIPTS, true)
         set(v) { prefs.edit().putBoolean(KEY_READ_RECEIPTS, v).apply() }

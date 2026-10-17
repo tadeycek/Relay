@@ -56,6 +56,11 @@ class IncomingMessageHandler(context: Context) {
 
         var contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
 
+        // Typing uses the authenticated NIP-17 encrypted transport directly, without durable replay rows.
+        if (payload.body.startsWith(TypingBody.PREFIX)) {
+            if (contact != null) TypingSignals.handle(appContext, contact, payload.body)
+            return
+        }
         if (!seenRepo.markIfNewSync(payload.id, now)) return
 
         // Pairing messages are plain control messages. They are handled before an unknown sender would be
@@ -72,7 +77,7 @@ class IncomingMessageHandler(context: Context) {
 
         // Profile controls must never create a placeholder before mutual pairing completes.
         if (contact == null && (com.relay.app.media.ProfilePhotoBody.isControl(payload.body) ||
-                com.relay.app.media.ProfileNameBody.isControl(payload.body))) return
+                com.relay.app.media.ProfileNameBody.isControl(payload.body) || com.relay.app.groups.GroupProtocol.isControl(payload.body))) return
         if (contact == null) {
             if (!unknownSenders.tryAcquire(now)) {
                 Log.w(TAG, "unknown-sender flood limit hit; dropping")
@@ -86,19 +91,16 @@ class IncomingMessageHandler(context: Context) {
         }
         if (contact.trustLevel == ContactTrustLevel.BLOCKED) return
 
-        var body = payload.body
-        if (SmsMessageParser.isEncryptedMessage(body)) {
-            val opened = InnerEnvelope.open(appContext, body)
-            if (opened == null) {
-                storeReceived(contact, "[Unable to decrypt message]", MessageType.TEXT, payload.id, now, now)
-                notifyUpdated(contact.id)
-                return
-            }
-            body = opened
+        val body = if (SmsMessageParser.isEncryptedMessage(payload.body)) InnerEnvelope.open(appContext, payload.body) else payload.body
+        if (body == null) {
+            storeReceived(contact, "[Unable to decrypt message]", MessageType.TEXT, payload.id, now, now)
+            notifyUpdated(contact.id)
+            return
         }
 
         // Retired direct-transfer offers never start a listening socket.
         if (P2pOfferMessages.parse(body) != null) return
+        if (com.relay.app.groups.SharedGroups.handle(appContext, contact, body)) return
         if (com.relay.app.media.ProfilePhotoSync.handle(appContext, contact, body)) return
 
         com.relay.app.media.ProfilePhotoSync.requestProfile(appContext, contact)
@@ -135,7 +137,6 @@ class IncomingMessageHandler(context: Context) {
                     contact, body, MessageType.LOCATION, payload.id, sentAt, now,
                     lat = kind.lat, lng = kind.lng, pinLabel = kind.label, expiryAt = expiryAt,
                 )
-                routeToGroups(contact, body, MessageType.LOCATION, sentAt, kind.lat, kind.lng, kind.label, expiryAt)
                 notifyUpdated(contact.id)
                 MessageNotifier.notifyIncoming(appContext, contact, MessageType.LOCATION)
             }
@@ -147,7 +148,6 @@ class IncomingMessageHandler(context: Context) {
 
             Classified.Text -> {
                 storeReceived(contact, body, MessageType.TEXT, payload.id, sentAt, now)
-                routeToGroups(contact, body, MessageType.TEXT, sentAt, null, null, null, null)
                 notifyUpdated(contact.id)
                 MessageNotifier.notifyIncoming(appContext, contact, MessageType.TEXT, body)
             }
@@ -184,52 +184,6 @@ class IncomingMessageHandler(context: Context) {
                 unread = type != MessageType.LOCATION_DECLINED,
             )
         )
-    }
-
-    /** Mirrors a message into every group the sender belongs to, as SmsReceiver did. */
-    private fun routeToGroups(
-        contact: Contact,
-        body: String,
-        type: MessageType,
-        timestamp: Long,
-        lat: Double?,
-        lng: Double?,
-        pinLabel: String?,
-        expiryAt: Long?,
-    ) {
-        val groupIds = runCatching {
-            val cursor = db.readableDatabase.rawQuery(
-                "SELECT g._id FROM groups g INNER JOIN group_members gm ON g._id = gm.group_id WHERE gm.contact_id = ?",
-                arrayOf(contact.id.toString()),
-            )
-            cursor.use { c ->
-                val ids = mutableListOf<Long>()
-                while (c.moveToNext()) ids.add(c.getLong(0))
-                ids
-            }
-        }.getOrDefault(emptyList())
-
-        for (groupId in groupIds) {
-            groupMessageRepo.insertMessageSync(
-                GroupMessage(
-                    groupId = groupId,
-                    contactId = contact.id,
-                    body = body,
-                    type = type,
-                    lat = lat,
-                    lng = lng,
-                    isSent = false,
-                    timestamp = timestamp,
-                    pinLabel = pinLabel,
-                    expiryAt = expiryAt,
-                    unread = type != MessageType.LOCATION_DECLINED,
-                )
-            )
-            appContext.sendBroadcast(Intent("com.relay.app.NEW_GROUP_MESSAGE").apply {
-                putExtra("group_id", groupId)
-                setPackage(appContext.packageName)
-            })
-        }
     }
 
     /**

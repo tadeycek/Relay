@@ -42,7 +42,7 @@ object MessageNotifier {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         ensureChannel(nm)
 
-        val clean = body.replace(Regex("[\\p{Cc}\\p{Cf}]"), " ").trim().take(240)
+        val clean = ReplyBody.preview(body).replace(Regex("[\\p{Cc}\\p{Cf}]"), " ").trim().take(240)
         val text = when (type) {
             MessageType.LOCATION -> "Shared a location"
             MessageType.IMAGE -> if (clean.isEmpty()) "Photo" else "Photo: $clean"

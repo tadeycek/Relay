@@ -13,6 +13,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -50,6 +52,11 @@ fun ContactsScreen(navController: NavController) {
     val vm: ContactsViewModel = viewModel()
     val contacts by vm.contacts.collectAsState()
     val groups by vm.groups.collectAsState()
+    val error by vm.error.collectAsState()
+    val context = LocalContext.current
+    val own = remember { com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }
+    LaunchedEffect(error) { error?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show(); vm.clearError() } }
+    val verifiedFriends = contacts.filter { com.relay.app.groups.GroupProtocol.eligible(it) }
     var showNewGroup by remember { mutableStateOf(false) }
     var contactSheetId by remember { mutableStateOf<Long?>(null) }
     var manageGroupId by remember { mutableStateOf<Long?>(null) }
@@ -58,9 +65,7 @@ fun ContactsScreen(navController: NavController) {
 
     Column(modifier = Modifier.fillMaxSize().background(Background)) {
         ScreenHeader(title = "People") {
-            IconButton(onClick = { showNewGroup = true }) {
-                Icon(Icons.Outlined.Group, contentDescription = "New group", tint = TextSecondary)
-            }
+            TextButton(onClick = { showNewGroup = true }) { Text("New group") }
             IconButton(onClick = { pair() }) {
                 Icon(Icons.Outlined.Add, contentDescription = "Add a person by scanning their code", tint = TextSecondary)
             }
@@ -100,8 +105,11 @@ fun ContactsScreen(navController: NavController) {
 
     if (showNewGroup) {
         NewGroupSheet(
-            contacts = contacts,
-            onCreate = { name, ids -> vm.createGroup(name, ids); showNewGroup = false },
+            contacts = verifiedFriends,
+            onCreate = { name, ids -> vm.createGroup(name, ids) { id ->
+                showNewGroup = false
+                navController.navigate(Screen.GroupChat.routeFor(id))
+            } },
             onDismiss = { showNewGroup = false },
         )
     }
@@ -109,7 +117,9 @@ fun ContactsScreen(navController: NavController) {
     groups.find { it.id == manageGroupId }?.let { group ->
         ManageGroupSheet(
             group = group,
-            allContacts = contacts,
+            allContacts = verifiedFriends,
+            canManage = group.sharedOwner == own,
+            ownKey = own,
             onRemove = { vm.removeMemberFromGroup(group.id, it) },
             onAdd = { vm.addMemberToGroup(group.id, it) },
             onDeleteGroup = { vm.deleteGroup(group.id); manageGroupId = null },

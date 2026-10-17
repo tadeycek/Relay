@@ -156,6 +156,8 @@ private fun LocationPage(vm: SettingsViewModel) {
 
 @Composable
 private fun PrivacyPage(vm: SettingsViewModel) {
+    ToggleRow("Typing indicators", vm.typingIndicators, vm::updateTypingIndicators,
+        supporting = "Let verified friends see when you type. Indicators disappear automatically.")
     ToggleRow(
         "Hide my IP address from relays",
         vm.torEnabled,

@@ -1,5 +1,7 @@
 package com.relay.app.ui.screens.contacts
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -35,25 +37,27 @@ import com.relay.app.ui.theme.TextSecondary
 fun NewGroupSheet(contacts: List<Contact>, onCreate: (String, List<Long>) -> Unit, onDismiss: () -> Unit) {
     var name by remember { mutableStateOf("") }
     val selected = remember { mutableStateListOf<Long>() }
-    val canCreate = name.isNotBlank() && selected.isNotEmpty()
+    val selectedIds = selected.filter { id -> contacts.any { it.id == id } }
+    val canCreate = name.trim().length in 1..30 && selectedIds.size in 1 until com.relay.app.groups.GroupProtocol.MAX_MEMBERS
 
     RelayBottomSheet(onDismiss) {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
         Text("New group", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
         RelayTextField(
             value = name,
-            onValueChange = { name = it },
+            onValueChange = { name = it.take(30) },
             label = "Group name",
             modifier = Modifier.fillMaxWidth().padding(top = RelaySpacing.lg),
         )
         if (contacts.isEmpty()) {
             Text(
-                "Add a person first, then you can put them in a group.",
+                "Scan a friend’s QR code to verify them before adding them.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
                 modifier = Modifier.padding(top = RelaySpacing.lg),
             )
         } else {
-            Text("Who is in it", style = MaterialTheme.typography.titleSmall, color = TextPrimary, modifier = Modifier.padding(top = RelaySpacing.lg))
+            Text("Verified friends (up to 16)", style = MaterialTheme.typography.titleSmall, color = TextPrimary, modifier = Modifier.padding(top = RelaySpacing.lg))
             Column(modifier = Modifier.padding(top = RelaySpacing.xs)) {
                 contacts.forEach { contact ->
                     val checked = contact.id in selected
@@ -74,10 +78,11 @@ fun NewGroupSheet(contacts: List<Contact>, onCreate: (String, List<Long>) -> Uni
         }
         PrimaryButton(
             "Create group",
-            { onCreate(name.trim(), selected.toList()) },
+            { onCreate(name.trim(), selectedIds) },
             Modifier.fillMaxWidth().padding(top = RelaySpacing.lg),
             enabled = canCreate,
         )
+        }
     }
 }
 
@@ -85,16 +90,19 @@ fun NewGroupSheet(contacts: List<Contact>, onCreate: (String, List<Long>) -> Uni
 fun ManageGroupSheet(
     group: Group,
     allContacts: List<Contact>,
+    canManage: Boolean,
+    ownKey: String,
     onRemove: (Long) -> Unit,
     onAdd: (Long) -> Unit,
     onDeleteGroup: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
-    val memberIds = group.members.map { it.id }.toSet()
-    val others = allContacts.filter { it.id !in memberIds }
+    val memberKeys = group.members.mapNotNull { it.nostrPubkey }.toSet()
+    val others = allContacts.filter { it.nostrPubkey !in memberKeys }
 
     RelayBottomSheet(onDismiss) {
+        Column(Modifier.verticalScroll(rememberScrollState())) {
         Text(group.name, style = MaterialTheme.typography.titleLarge, color = TextPrimary)
         Text("In this group", style = MaterialTheme.typography.titleSmall, color = TextPrimary, modifier = Modifier.padding(top = RelaySpacing.lg))
         if (group.members.isEmpty()) {
@@ -105,13 +113,13 @@ fun ManageGroupSheet(
                 headline = member.name,
                 leading = { ContactGlyph(member, size = 40.dp) },
                 trailing = {
-                    TextButton(onClick = { onRemove(member.id) }) {
+                    if (canManage && member.nostrPubkey != ownKey) TextButton(onClick = { onRemove(member.id) }) {
                         Text("Remove", color = Danger, style = MaterialTheme.typography.labelLarge)
                     }
                 },
             )
         }
-        if (others.isNotEmpty()) {
+        if (canManage && others.isNotEmpty() && group.members.size < com.relay.app.groups.GroupProtocol.MAX_MEMBERS) {
             Text("Add someone", style = MaterialTheme.typography.titleSmall, color = TextPrimary, modifier = Modifier.padding(top = RelaySpacing.lg))
             others.forEach { contact ->
                 ListRow(
@@ -123,12 +131,13 @@ fun ManageGroupSheet(
             }
         }
         DangerButton("Delete group", { confirmDelete = true }, Modifier.fillMaxWidth().padding(top = RelaySpacing.xl))
+        }
     }
 
     if (confirmDelete) {
         ConfirmDialog(
             title = "Delete ${group.name}?",
-            message = "The group disappears from this phone. The people in it are not affected.",
+            message = if (canManage) "Close this group for everyone and delete its messages on this phone?" else "Delete this group and its messages from this phone?",
             confirmLabel = "Delete group",
             destructive = true,
             onConfirm = { confirmDelete = false; onDeleteGroup() },

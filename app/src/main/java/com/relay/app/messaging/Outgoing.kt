@@ -21,7 +21,7 @@ object Outgoing {
         val now = System.currentTimeMillis()
         val body = if (seal) InnerEnvelope.seal(contact.publicKey, plainBody) else plainBody
         val payload = RelayPayload(id = PayloadCodec.newId(), ts = now, body = body)
-        OutboxRepository(MessagingDb.get(context)).enqueueSync(
+        val stored = OutboxRepository(MessagingDb.get(context)).enqueueSync(
             OutboxEntry(
                 contactId = contact.id,
                 recipientPubkeyHex = recipient,
@@ -30,6 +30,7 @@ object Outgoing {
                 createdAt = now,
             )
         )
+        if (stored == -1L) return null
         MessagingRuntime.kick()
         return payload.id
     }

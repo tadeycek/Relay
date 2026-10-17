@@ -101,17 +101,21 @@ val LocalProfilePhotoPicker = staticCompositionLocalOf<ProfilePhotoPicker> { err
 
 /** Activity-root registration survives backgrounding, navigation and Calculator session expiry. */
 @Composable
-fun rememberProfilePhotoPicker(): ProfilePhotoPicker {
+fun rememberProfilePhotoPicker(onLaunch: () -> Unit = {}, onReturn: () -> Unit = {}): ProfilePhotoPicker {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        onReturn()
         if (uri != null) scope.launch {
             val saved = withContext(Dispatchers.IO) { runCatching { ContactPhotos.importSelfPhoto(context, uri) }.getOrDefault(false) }
             Toast.makeText(context, if (saved) "Profile photo saved; sharing queued" else "Couldn't use this profile photo", Toast.LENGTH_SHORT).show()
         }
     }
     return ProfilePhotoPicker(
-        choose = { launcher.launch("image/*") },
+        choose = {
+            onLaunch()
+            try { launcher.launch("image/*") } catch (e: Exception) { onReturn(); Toast.makeText(context, "Couldn’t open the photo picker", Toast.LENGTH_LONG).show() }
+        },
         remove = { scope.launch { withContext(Dispatchers.IO) { ContactPhotos.removeSelf(context) } } },
     )
 }

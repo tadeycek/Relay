@@ -1,3 +1,15 @@
+## Calculator 1.5 preview — pickers and shared conversations
+
+- Explicit gallery, camera and profile picker handoffs retain private navigation only
+  inside the existing fixed session. Normal backgrounding and expiry keep the gate.
+- Creator-mediated shared groups replace local mirroring of individual messages.
+  Invitations are limited to verified active friends with accepted keys. Versioned
+  membership, event deduplication and durable fanout are stored transactionally.
+- Quoted replies render as quotes, including bounded encoded media captions.
+- Typing indicators travel as encrypted, expiring, best-effort signals and can be
+  disabled under Privacy and Tor. No durable typing outbox/history entries.
+- The current verification report separates host checks from pending phone tests.
+
 ## Calculator 1.4 preview — application source name
 
 - Registered Android application label is Viber, using the supplied purple phone icon.

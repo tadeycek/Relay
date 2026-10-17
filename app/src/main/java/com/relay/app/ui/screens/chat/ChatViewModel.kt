@@ -225,7 +225,7 @@ class ChatViewModel(
         }
         // Public/mobile NATs often prevent direct connections, even when both contacts are online.
         // Encrypted uploads also work with the app's Tor route and do not reveal our IP to the peer.
-        sendMediaOverInternet(uri, mimeType, textBody, contact, context)
+        sendMediaOverInternet(uri, mimeType, com.relay.app.media.MediaBody.normalizeCaption(textBody), contact, context)
     }
 }
 
