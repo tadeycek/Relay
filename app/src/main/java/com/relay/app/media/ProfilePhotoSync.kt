@@ -19,6 +19,7 @@ object ProfilePhotoSync {
 
     fun syncPending(context: Context) {
         MessagingRuntime.launchIo {
+            com.relay.app.groups.GroupProfiles.syncPending(context)
             val update = ContactPhotos.selfUpdate(context)
             for (contact in ContactRepository(MessagingDb.get(context)).getAllContacts()) {
                 if (eligible(contact)) {
@@ -85,6 +86,7 @@ object ProfilePhotoSync {
                     if (update.revision > prefs(context).getLong("name_received_${contact.id}", -1)) {
                         ContactRepository(MessagingDb.get(context)).setProfileNameSync(contact.id, update.name)
                         check(prefs(context).edit().putLong("name_received_${contact.id}", update.revision).commit())
+                        com.relay.app.groups.GroupProfiles.syncPending(context)
                         refresh(context, contact.id)
                     }
                 }

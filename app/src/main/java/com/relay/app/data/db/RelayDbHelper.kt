@@ -46,6 +46,9 @@ class RelayDbHelper(context: Context) :
         db.execSQL(DatabaseContract.GroupMessages.INDEX_UNREAD)
         createSharedGroups(db)
         createMessageActions(db)
+        db.execSQL(com.relay.app.groups.GroupProfiles.CREATE)
+        db.execSQL(com.relay.app.groups.GroupDelivery.CREATE)
+        db.execSQL(com.relay.app.media.PendingAttachments.CREATE)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -116,6 +119,11 @@ class RelayDbHelper(context: Context) :
         }
         if (oldVersion < 16) createSharedGroups(db)
         if (oldVersion < 17) createMessageActions(db)
+        if (oldVersion < 18) {
+            db.execSQL(com.relay.app.groups.GroupProfiles.CREATE)
+            db.execSQL(com.relay.app.groups.GroupDelivery.CREATE)
+            db.execSQL(com.relay.app.media.PendingAttachments.CREATE)
+        }
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.

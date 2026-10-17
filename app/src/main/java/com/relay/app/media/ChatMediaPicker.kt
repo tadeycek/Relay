@@ -17,7 +17,7 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 enum class ChatMediaSource { PHOTO, VIDEO, CAMERA }
-data class PickedChatMedia(val uri: Uri, val mime: String)
+data class PickedChatMedia(val uri: Uri, val mime: String, val selectionId: String = "")
 class ChatMediaPicker(
     val draftFor: (Long) -> PickedChatMedia?,
     val open: (Long, ChatMediaSource) -> Unit,
@@ -31,9 +31,11 @@ fun rememberChatMediaPicker(onLaunch: () -> Unit = {}, onReturn: () -> Unit = {}
     val context = LocalContext.current
     var target by rememberSaveable { mutableStateOf(-1L) }
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectionId by rememberSaveable { mutableStateOf("") }
     var selectedMime by rememberSaveable { mutableStateOf("") }
     var cameraUri by rememberSaveable { mutableStateOf<String?>(null) }
     fun selected(uri: Uri, fallback: String) {
+        selectionId = java.util.UUID.randomUUID().toString()
         selectedUri = uri.toString()
         selectedMime = runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: fallback
     }
@@ -60,7 +62,7 @@ fun rememberChatMediaPicker(onLaunch: () -> Unit = {}, onReturn: () -> Unit = {}
     }
     return ChatMediaPicker(
         draftFor = { contact ->
-            if (contact == target) selectedUri?.let { PickedChatMedia(Uri.parse(it), selectedMime) } else null
+            if (contact == target) selectedUri?.let { PickedChatMedia(Uri.parse(it), selectedMime, selectionId) } else null
         },
         open = { contact, source ->
             if (target != contact) { selectedUri = null; selectedMime = "" }

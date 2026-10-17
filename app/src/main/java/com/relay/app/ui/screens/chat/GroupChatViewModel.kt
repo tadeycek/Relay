@@ -40,6 +40,7 @@ class GroupChatViewModel(
 
     private val _friends = MutableStateFlow<List<com.relay.app.data.model.Contact>>(emptyList())
     val friends = _friends.asStateFlow()
+    internal val acceptedDraft = MutableStateFlow<AcceptedDraft?>(null)
     private val _sending = MutableStateFlow(false)
     val sending = _sending.asStateFlow()
     fun refresh() {
@@ -69,13 +70,10 @@ class GroupChatViewModel(
                         else com.relay.app.mms.MediaCompressor.prepareVideo(context, uri, 12L*1024*1024, 60000L)
                     when (result) {
                         is com.relay.app.mms.MediaCompressor.Result.Success -> {
-                            var copy: java.io.File? = null
                             try {
-                                val ref = com.relay.app.media.MediaSender.upload(context, result.file, result.mimeType, com.relay.app.media.MediaBody.normalizeCaption(caption))
-                                copy = com.relay.app.media.MediaSender.keepEncryptedCopy(context, result.file)
-                                com.relay.app.groups.SharedGroups.send(context, groupId, com.relay.app.media.MediaBody.format(ref), copy.absolutePath)
-                            } catch (e: Exception) { copy?.delete(); throw e }
-                            finally { result.file.delete() }
+                                com.relay.app.media.PendingAttachments.stage(context, groupId, true, result.file, result.mimeType,
+                                    com.relay.app.media.MediaBody.normalizeCaption(caption))
+                            } finally { result.file.delete() }
                         }
                         is com.relay.app.mms.MediaCompressor.Result.TooLarge -> error(result.message)
                         else -> error("Couldn't prepare attachment")
@@ -141,11 +139,15 @@ class GroupChatViewModel(
     val error: StateFlow<String?> = _error.asStateFlow()
     fun clearError() { _error.value = null }
     fun sendText(body: String, context: Context, onQueued: () -> Unit = {}) {
+        if (_sending.value) return
+        _sending.value = true
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.send(context, groupId, body) } }
-                .onSuccess { onQueued() }
-                .onFailure { _error.value = it.message ?: "Couldn't queue this message" }
-            _messages.value = groupMessageRepo.getMessages(groupId)
+            try {
+                runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.send(context, groupId, body) } }
+                    .onSuccess { onQueued() }
+                    .onFailure { _error.value = it.message ?: "Couldn't queue this message" }
+                _messages.value = groupMessageRepo.getMessages(groupId)
+            } finally { _sending.value = false }
         }
     }
 }

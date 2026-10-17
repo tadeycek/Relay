@@ -18,7 +18,11 @@ class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
             "${GroupMessages.COL_GROUP_ID} = ?", arrayOf(groupId.toString()),
             null, null, "${GroupMessages.COL_TIMESTAMP} ASC"
         )
-        cursor.use { it.toGroupMessageList() }
+        cursor.use { it.toGroupMessageList() }.map { message ->
+            message.copy(
+                senderName = message.senderKey?.let { com.relay.app.groups.GroupProfiles.display(dbHelper, groupId, it, message.senderName.orEmpty()) } ?: message.senderName,
+                deliveryState = if (message.isSent) com.relay.app.groups.GroupDelivery.state(dbHelper, groupId, message.eventId) else com.relay.app.data.model.DeliveryState.NONE)
+        }
     }
 
     suspend fun insertMessage(msg: GroupMessage): Long = withContext(Dispatchers.IO) {
