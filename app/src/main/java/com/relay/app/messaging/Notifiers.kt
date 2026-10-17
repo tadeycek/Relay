@@ -27,10 +27,10 @@ object MessageNotifier {
     private const val NOTIF_BASE = 5000
     private val shortcutFingerprints = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
-    fun notifyIncoming(context: Context, receivedContact: Contact, type: MessageType, body: String = "") {
+    fun notifyIncoming(context: Context, receivedContact: Contact, type: MessageType, body: String = "", alertToken: Long? = ConversationNotifications.token(context, receivedContact.id)) {
         val contact = com.relay.app.data.repository.ContactRepository(MessagingDb.get(context))
             .getByIdSync(receivedContact.id) ?: receivedContact
-        if (contact.id == ActiveChat.contactId) return
+        if (contact.id == ActiveChat.contactId || ConversationNotifications.muted(context, contact.id)) return
         val prefs = RelayPreferences(context)
         val wanted = when (type) {
             MessageType.LOCATION -> prefs.incomingPinNotification
@@ -49,7 +49,7 @@ object MessageNotifier {
             MessageType.VIDEO -> if (clean.isEmpty()) "Video" else "Video: $clean"
             else -> clean.ifEmpty { "New message" }
         }
-        post(context, contact, text, refresh = false)
+        post(context, contact, text, refresh = false, alertToken = alertToken)
     }
 
     /** Refresh an already visible preview after encrypted profile data arrives, without another alert. */
@@ -57,7 +57,7 @@ object MessageNotifier {
         if (canPostNotifications(context)) post(context, contact, null, refresh = true)
     }
 
-    private fun post(context: Context, contact: Contact, text: String?, refresh: Boolean) {
+    private fun post(context: Context, contact: Contact, text: String?, refresh: Boolean, alertToken: Long? = ConversationNotifications.token(context, contact.id)) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val tag = "conversation:${contact.id}"
         val previousNotification = nm.activeNotifications.firstOrNull { it.id == NOTIF_BASE && it.tag == tag }?.notification
@@ -116,7 +116,7 @@ object MessageNotifier {
             .setDeleteIntent(dismiss)
             .build()
         nm.cancel(NOTIF_BASE + (contact.id % 1000).toInt()) // retire the previous app version's ID
-        nm.notify(tag, NOTIF_BASE, notification)
+        ConversationNotifications.postIfAllowed(context, contact.id, token = alertToken) { nm.notify(tag, NOTIF_BASE, notification) }
     }
 
     /** Removes the notification for a conversation once the user has opened it. */
@@ -224,6 +224,6 @@ object LocationRequestNotifier {
             .addAction(android.R.drawable.ic_menu_mylocation, "Share", share)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Decline", decline)
             .build()
-        nm.notify(NOTIF_BASE + (contact.id % 1000).toInt(), notification)
+        ConversationNotifications.postIfAllowed(context, contact.id) { nm.notify(NOTIF_BASE + (contact.id % 1000).toInt(), notification) }
     }
 }

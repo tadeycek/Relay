@@ -37,7 +37,7 @@ object SharedGroups {
         val stored = get(db, group.id) ?: return group
         if (stored.hidden) return null
         return group.copy(name = stored.state.name, sharedOwner = stored.state.owner, members = stored.state.members.map {
-            Contact(id = GroupProtocol.memberId(it.key), name = it.name, phone = Contact.placeholderPhoneFor(it.key), nostrPubkey = it.key)
+            Contact(id = GroupProtocol.memberId(it.key), name = GroupProfiles.display(db, group.id, it.key, it.name), phone = Contact.placeholderPhoneFor(it.key), nostrPubkey = it.key)
         })
     }
     private fun save(db: RelayDbHelper, state: GroupProtocol.State, existing: Stored?): Long {
@@ -58,7 +58,13 @@ object SharedGroups {
     }
     private fun queue(context: Context, contact: Contact, packet: GroupProtocol.Packet) {
         check(GroupProtocol.eligible(contact)) { "Pair with this friend again before adding them" }
-        check(Outgoing.enqueue(context, contact, GroupProtocol.format(packet)) != null) { "Couldn't queue group update" }
+        val payload = Outgoing.enqueue(context, contact, GroupProtocol.format(packet)) ?: error("Couldn't queue group update")
+        if (packet.kind in listOf("post", "submit")) {
+            val db = MessagingDb.get(context)
+            val group = find(db, packet.state) ?: error("Group no longer exists")
+            db.writableDatabase.execSQL("INSERT INTO group_delivery(group_id,event,payload_id) VALUES(?,?,?)",
+                arrayOf(group.localId, packet.event, payload))
+        }
     }
     private fun contacts(context: Context, state: GroupProtocol.State): List<Contact> {
         val repo = ContactRepository(MessagingDb.get(context))
@@ -79,12 +85,13 @@ object SharedGroups {
         require(friends.isNotEmpty() && friends.size < GroupProtocol.MAX_MEMBERS && friends.all { GroupProtocol.eligible(it) && it.nostrPubkey != own })
         val state = GroupProtocol.State(UUID.randomUUID().toString(), own, name.trim(), 1,
             listOf(GroupProtocol.Member(own, RelayPreferences(context).myName.ifBlank { "Group creator" })) +
-                friends.map { GroupProtocol.Member(it.nostrPubkey!!, it.name.take(30)) })
+                friends.map { GroupProtocol.Member(it.nostrPubkey!!, (it.originalName ?: it.name).take(30)) })
         GroupProtocol.format(GroupProtocol.Packet("sync", state)) // validate before writing
         val id = transaction(context) { db ->
             val id = save(db, state, null)
             friends.forEach { queue(context, it, GroupProtocol.Packet("sync", state)) }; id
         }
+        GroupProfiles.syncPending(context)
         notify(context, id); return id
     }
     @Synchronized fun changeMember(context: Context, id: Long, contactId: Long, add: Boolean) {
@@ -97,7 +104,7 @@ object SharedGroups {
             require(GroupProtocol.eligible(contact)) { "Only verified friends can be added" }
             require(old.members.none { it.key == contact.nostrPubkey }) { "Already a member" }
             require(old.members.size < GroupProtocol.MAX_MEMBERS) { "Group is full" }
-            old.members + GroupProtocol.Member(contact.nostrPubkey!!, contact.name.take(30))
+            old.members + GroupProtocol.Member(contact.nostrPubkey!!, (contact.originalName ?: contact.name).take(30))
         } else old.members.filterNot { GroupProtocol.memberId(it.key) == contactId && it.key != old.owner }
         val next = old.copy(revision = old.revision + 1, members = members)
         GroupProtocol.format(GroupProtocol.Packet("sync", next))
@@ -108,6 +115,7 @@ object SharedGroups {
                 repo.findByNostrPubkeySync(m.key)?.takeIf { GroupProtocol.eligible(it) }?.let { queue(context, it, GroupProtocol.Packet("sync", next)) }
             }
         }
+        GroupProfiles.syncPending(context)
         notify(context, id)
     }
     @Synchronized fun delete(context: Context, id: Long) {
@@ -128,12 +136,12 @@ object SharedGroups {
         com.relay.app.messaging.GroupMessageNotifier.cancel(context, id)
         notify(context, id)
     }
-    @Synchronized fun send(context: Context, id: Long, text: String, mediaPath: String? = null) {
+    @Synchronized fun send(context: Context, id: Long, text: String, mediaPath: String? = null, event: String = UUID.randomUUID().toString()) {
         val db = MessagingDb.get(context); val stored = get(db, id) ?: error("This is a legacy local group; create a new shared group")
         val own = NostrIdentity.publicKeyHex(context); val state = stored.state
         require(!stored.hidden && state.members.any { it.key == own }) { "You are no longer in this group" }
         val packet = GroupProtocol.Packet(if (own == state.owner) "post" else "submit", state,
-            UUID.randomUUID().toString(), own, text, System.currentTimeMillis())
+            event, own, text, System.currentTimeMillis())
         GroupProtocol.format(packet)
         transaction(context) {
             if (own == state.owner) contacts(context, state).forEach { queue(context, it, packet) }
@@ -185,7 +193,9 @@ object SharedGroups {
             com.relay.app.messaging.MessageDeletion.applyGroup(context, id, packet.author, packet.text)
             return false
         }
-        val message = GroupMessageRepository(db).insertMessageSync(GroupMessage(groupId = id, body = com.relay.app.media.MediaBody.parse(packet.text)?.caption ?: packet.text,
+        val staged = db.readableDatabase.rawQuery("SELECT _id FROM group_messages WHERE group_id=? AND event_id=? AND is_sent=1",
+            arrayOf(id.toString(), packet.event)).use { it.moveToFirst() }
+        val message = if (staged && packet.author == own) 1L else GroupMessageRepository(db).insertMessageSync(GroupMessage(groupId = id, body = com.relay.app.media.MediaBody.parse(packet.text)?.caption ?: packet.text,
             eventId = packet.event, mediaUri = mediaPath,
             type = com.relay.app.media.MediaBody.parse(packet.text)?.let { if (it.isVideo) com.relay.app.data.model.MessageType.VIDEO else com.relay.app.data.model.MessageType.IMAGE } ?: com.relay.app.data.model.MessageType.TEXT,
             senderKey = packet.author, senderName = packet.state.members.first { it.key == packet.author }.name,
@@ -207,6 +217,10 @@ object SharedGroups {
         val db = MessagingDb.get(context); val own = NostrIdentity.publicKeyHex(context)
         val existing = find(db, packet.state)
         if (existing?.hidden == true) return true
+        if (packet.kind in listOf("profile", "profile-submit")) {
+            GroupProfiles.handle(context, sender.nostrPubkey!!, existing, packet)
+            return true
+        }
         if (packet.kind in listOf("submit", "delete-submit", "purge-submit")) {
             if (existing == null || existing.state.owner != own ||
                 !GroupProtocol.acceptSubmit(sender.nostrPubkey!!, existing.state, packet)) return true

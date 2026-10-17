@@ -120,22 +120,34 @@ class ChatViewModel(
         smsUpdateReceiver = null
     }
 
-    fun sendText(body: String, context: Context) {
+    internal val acceptedDraft = MutableStateFlow<AcceptedDraft?>(null)
+    private val _sending = MutableStateFlow(false)
+    val sending = _sending.asStateFlow()
+
+    fun sendText(body: String, context: Context, onQueued: () -> Unit = {}) {
+        if (_sending.value) return
         val contact = _contact.value ?: return
+        _sending.value = true
         viewModelScope.launch {
-            val ok = withContext(Dispatchers.IO) {
-                val sql = db.writableDatabase
-                sql.beginTransaction()
-                try {
-                    val handle = RelaySecureSend.sendWithId(context, contactRepo, contact, body)
-                    check(messageRepo.insertMessageSync(Message(contactId = contactId, body = body,
-                        isSent = true, msgId = handle.msgId, deliveryState = initialDeliveryState(contact, handle))) != -1L)
-                    sql.setTransactionSuccessful()
-                    handle.ok
-                } finally { sql.endTransaction(); com.relay.app.messaging.MessagingRuntime.kick() }
-            }
-            if (!ok) _toastMessage.emit("Message failed to queue")
-            _messages.value = messageRepo.getMessages(contactId)
+            try {
+                withContext(Dispatchers.IO) {
+                    val current = contactRepo.getByIdSync(contactId) ?: error("Contact no longer exists")
+                    check(!current.isDeleted && current.trustLevel != com.relay.app.data.model.ContactTrustLevel.BLOCKED && current.pendingPublicKey == null) { "Review this contact before sending" }
+                    val sql = db.writableDatabase
+                    sql.beginTransaction()
+                    try {
+                        val handle = RelaySecureSend.sendWithId(context, contactRepo, current, body)
+                        check(handle.ok) { "Couldn't queue message. Check this contact's pairing and try again." }
+                        check(messageRepo.insertMessageSync(Message(contactId = contactId, body = body,
+                            isSent = true, msgId = handle.msgId, deliveryState = DeliveryState.QUEUED)) != -1L)
+                        sql.setTransactionSuccessful()
+                    } finally { sql.endTransaction() }
+                }
+                onQueued()
+                _messages.value = messageRepo.getMessages(contactId)
+                com.relay.app.messaging.MessagingRuntime.kick()
+            } catch (e: Exception) { _toastMessage.emit(e.message ?: "Couldn't queue message; draft kept. Try again.") }
+            finally { _sending.value = false }
         }
     }
 
@@ -174,62 +186,37 @@ class ChatViewModel(
         }
     }
 
-    /** Compress, encrypt, upload to a media server, then queue the reference like any other message. */
-    private fun sendMediaOverInternet(uri: Uri, mimeType: String, caption: String, contact: Contact, context: Context) {
+    /** Accept the encrypted local attachment before background upload/dispatch. */
+    fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context, onQueued: () -> Unit = {}) {
+        if (_sending.value) return
+        val contact = _contact.value ?: return
+        _sending.value = true
         viewModelScope.launch {
-            _toastMessage.emit("Sending...")
-            val outcome = try { withContext(Dispatchers.IO) {
-                val prepared = if (mimeType.startsWith("image")) {
-                    MediaCompressor.compressImage(context, uri, INTERNET_IMAGE_MAX_BYTES, INTERNET_IMAGE_MAX_DIM)
-                } else {
-                    MediaCompressor.prepareVideo(context, uri, INTERNET_VIDEO_MAX_BYTES, INTERNET_VIDEO_MAX_MS)
+            try {
+                withContext(Dispatchers.IO) {
+                    check(contact.canUseInternetTransport) { "Scan this contact's QR code to message them" }
+                    val prepared = if (mimeType.startsWith("image/"))
+                        MediaCompressor.compressImage(context, uri, INTERNET_IMAGE_MAX_BYTES, INTERNET_IMAGE_MAX_DIM)
+                    else MediaCompressor.prepareVideo(context, uri, INTERNET_VIDEO_MAX_BYTES, INTERNET_VIDEO_MAX_MS)
+                    when (prepared) {
+                        is MediaCompressor.Result.Success -> {
+                            try {
+                                com.relay.app.media.PendingAttachments.stage(context, contactId, false, prepared.file, prepared.mimeType,
+                                    com.relay.app.media.MediaBody.normalizeCaption(textBody))
+                            } finally { prepared.file.delete() }
+                        }
+                        is MediaCompressor.Result.TooLarge -> error(prepared.message)
+                        else -> error("Couldn't prepare attachment; try another file")
+                    }
                 }
-                when (prepared) {
-                    is MediaCompressor.Result.TooLarge -> Pair(null, prepared.message)
-                    is MediaCompressor.Result.Error -> Pair(null, "Failed to process media")
-                    is MediaCompressor.Result.Success -> try { when (
-                        val sent = MediaSender.send(context, contact, prepared.file, prepared.mimeType, caption)
-                    ) {
-                        is MediaSender.Result.Failed -> Pair(null, sent.reason)
-                        is MediaSender.Result.Sent -> Pair(Triple(sent.msgId, MediaSender.keepEncryptedCopy(context, prepared.file), prepared.mimeType), null)
-                    } } finally { prepared.file.delete() }
-                }
-            }
-            } catch (e: Exception) {
-                _toastMessage.emit(e.message ?: "Couldn't prepare attachment")
-                return@launch
-            }
-            val (ok, error) = outcome
-            if (ok == null) {
-                _toastMessage.emit(error ?: "Failed to send")
-                return@launch
-            }
-            val (msgId, file, mime) = ok
-            messageRepo.insertMessage(
-                Message(
-                    contactId = contactId,
-                    body = caption,
-                    type = if (mime.startsWith("image")) MessageType.IMAGE else MessageType.VIDEO,
-                    isSent = true,
-                    mediaUri = file.absolutePath,
-                    msgId = msgId,
-                    deliveryState = DeliveryState.QUEUED,
-                )
-            )
-            _messages.value = messageRepo.getMessages(contactId)
+                onQueued()
+                _messages.value = messageRepo.getMessages(contactId)
+                com.relay.app.messaging.MessagingRuntime.kick()
+            } catch (e: Exception) { _toastMessage.emit(e.message ?: "Couldn't queue attachment; draft kept. Try again.") }
+            finally { _sending.value = false }
         }
     }
 
-    fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context) {
-        val contact = _contact.value ?: return
-        if (!contact.canUseInternetTransport) {
-            viewModelScope.launch { _toastMessage.emit("Scan this contact's QR code to message them") }
-            return
-        }
-        // Public/mobile NATs often prevent direct connections, even when both contacts are online.
-        // Encrypted uploads also work with the app's Tor route and do not reveal our IP to the peer.
-        sendMediaOverInternet(uri, mimeType, com.relay.app.media.MediaBody.normalizeCaption(textBody), contact, context)
-    }
 }
 
 // Internet sends are no longer bound by carrier MMS caps, but stay modest: the file is encrypted and

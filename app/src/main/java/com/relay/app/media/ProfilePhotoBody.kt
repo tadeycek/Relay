@@ -4,8 +4,8 @@ import java.util.Base64
 
 /** Tiny JPEGs travel inside existing encrypted messages; no public avatar URL or extra fetch. */
 object ProfilePhotoBody {
-    const val MAX_BYTES = 6 * 1024
-    const val MAX_DIM = 128
+    const val MAX_BYTES = 8 * 1024
+    const val MAX_DIM = 256
     const val REQUEST = "TYPE:PROFILE_PHOTO_REQUEST|V:1"
     private const val PREFIX = "TYPE:PROFILE_PHOTO|"
     data class Update(val revision: Long, val jpeg: ByteArray?)
@@ -18,7 +18,7 @@ object ProfilePhotoBody {
     }
 
     fun parse(body: String): Update? = runCatching {
-        require(body.length <= 8_300 && body.startsWith(PREFIX))
+        require(body.length <= ((MAX_BYTES + 2) / 3 * 4 + 128) && body.startsWith(PREFIX))
         val parts = body.removePrefix(PREFIX).split('|')
         require(parts.size == 2 && parts[0].startsWith("REV:") && parts[1].startsWith("JPEG:"))
         val revision = parts[0].removePrefix("REV:").toLong()

@@ -55,17 +55,29 @@ object MediaCompressor {
                 ExifInterface.ORIENTATION_ROTATE_270 -> setRotate(270f)
             }
         }
-        val bitmap = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
-        if (bitmap !== decoded) decoded.recycle()
+        val oriented = Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+        if (oriented !== decoded) decoded.recycle()
 
-        var quality = 85
+        val scale = minOf(1f, maxDim.toFloat() / maxOf(oriented.width, oriented.height))
+        var bitmap = if (scale < 1f) Bitmap.createScaledBitmap(oriented,
+            (oriented.width * scale).toInt().coerceAtLeast(1), (oriented.height * scale).toInt().coerceAtLeast(1), true) else oriented
+        if (bitmap !== oriented) oriented.recycle()
+        var quality = 90
         var bytes: ByteArray
         do {
             val baos = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)
             bytes = baos.toByteArray()
-            quality -= 10
-        } while (bytes.size > maxBytes && quality > 20)
+            if (bytes.size > maxBytes) {
+                if (quality > 60) quality -= 10
+                else {
+                    if (bitmap.width <= 1 || bitmap.height <= 1) break
+                    val smaller = Bitmap.createScaledBitmap(bitmap, (bitmap.width * 0.8f).toInt().coerceAtLeast(1),
+                        (bitmap.height * 0.8f).toInt().coerceAtLeast(1), true)
+                    bitmap.recycle(); bitmap = smaller; quality = 90
+                }
+            }
+        } while (bytes.size > maxBytes)
 
         bitmap.recycle()
 
@@ -117,7 +129,7 @@ object MediaCompressor {
 
     private fun calculateSampleSize(width: Int, height: Int, maxDim: Int): Int {
         var size = 1
-        while ((width / size) > maxDim || (height / size) > maxDim) size *= 2
+        while ((width / (size * 2)) >= maxDim || (height / (size * 2)) >= maxDim) size *= 2
         return size
     }
 }

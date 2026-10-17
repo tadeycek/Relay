@@ -95,6 +95,14 @@ object MessagingRuntime {
         com.relay.app.p2p.P2pListener.ensureListening(appContext)
 
         scope.launch {
+            while (true) {
+                runCatching { com.relay.app.media.PendingAttachments.drain(appContext) }
+                    .onFailure { Log.e(TAG, "attachment queue failed", it) }
+                delay(1_000L)
+            }
+        }
+
+        scope.launch {
             val worker = OutboxWorker(appContext, transport)
             val outbox = OutboxRepository(MessagingDb.get(appContext))
             while (true) {

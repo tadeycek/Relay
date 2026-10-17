@@ -30,8 +30,8 @@ object GroupProtocol {
             s.members.map { it.key }.distinct().size == s.members.size && s.members.any { it.key == s.owner } &&
             when (p.kind) {
                 "sync" -> p.event.isEmpty() && p.author.isEmpty() && p.text.isEmpty()
-                "purge", "purge-submit", "delete", "delete-submit", "post", "submit" -> runCatching { UUID.fromString(p.event).toString() == p.event }.getOrDefault(false) &&
-                    s.members.any { it.key == p.author } && p.text.isNotBlank() && (!com.relay.app.media.MediaBody.isMedia(p.text) || com.relay.app.media.MediaBody.parse(p.text) != null) && p.text.length <= 4000 && (p.kind !in listOf("delete", "delete-submit") || runCatching { UUID.fromString(p.text).toString() == p.text }.getOrDefault(false)) && (p.kind !in listOf("purge", "purge-submit") || (p.text.toLongOrNull() ?: 0) > 0) && p.time > 0
+                "profile", "profile-submit", "purge", "purge-submit", "delete", "delete-submit", "post", "submit" -> runCatching { UUID.fromString(p.event).toString() == p.event }.getOrDefault(false) &&
+                    s.members.any { it.key == p.author } && p.text.isNotBlank() && (!com.relay.app.media.MediaBody.isMedia(p.text) || com.relay.app.media.MediaBody.parse(p.text) != null) && p.text.length <= 4000 && (p.kind !in listOf("delete", "delete-submit") || runCatching { UUID.fromString(p.text).toString() == p.text }.getOrDefault(false)) && (p.kind !in listOf("purge", "purge-submit") || (p.text.toLongOrNull() ?: 0) > 0) && p.time > 0 && (p.kind !in listOf("profile", "profile-submit") || com.relay.app.media.ProfileNameBody.parse(p.text) != null)
                 else -> false
             }
     }

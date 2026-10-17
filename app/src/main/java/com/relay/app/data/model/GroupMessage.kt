@@ -18,4 +18,5 @@ data class GroupMessage(
     val expiryAt: Long? = null,
     /** True for a received group message the user has not opened the group to see yet. */
     val unread: Boolean = false,
+    val deliveryState: Int = DeliveryState.NONE,
 )

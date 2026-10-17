@@ -22,6 +22,22 @@ class ProfilePhotoBodyTest {
         assertNull(ProfilePhotoBody.parse(ProfilePhotoBody.REQUEST))
     }
 
+    @Test fun realHpkeEnvelopeAtMaximumPhotoSizeRoundTripsWithinExistingLimit() {
+        com.google.crypto.tink.config.TinkConfig.register()
+        val keys = com.google.crypto.tink.KeysetHandle.generateNew(com.google.crypto.tink.KeyTemplates.get(
+            "DHKEM_X25519_HKDF_SHA256_HKDF_SHA256_AES_256_GCM"))
+        val photo = ByteArray(ProfilePhotoBody.MAX_BYTES).apply { this[0] = -1; this[1] = -40; this[2] = -1 }
+        val body = ProfilePhotoBody.format(ProfilePhotoBody.Update(Long.MAX_VALUE, photo))
+        val cipher = keys.publicKeysetHandle.getPrimitive(com.google.crypto.tink.HybridEncrypt::class.java).encrypt(body.toByteArray(), null)
+        val sealed = com.relay.app.util.SmsMessageParser.formatEncrypted(java.util.Base64.getEncoder().encodeToString(cipher))
+        assertTrue(sealed.length <= com.relay.app.transport.PayloadCodec.MAX_BODY_LENGTH)
+        val payload = com.relay.app.transport.RelayPayload("photo", 123, sealed)
+        assertEquals(payload, com.relay.app.transport.PayloadCodec.decode(com.relay.app.transport.PayloadCodec.encode(payload)))
+        val plain = keys.getPrimitive(com.google.crypto.tink.HybridDecrypt::class.java).decrypt(cipher, null)
+        assertEquals(body, String(plain))
+        assertArrayEquals(photo, ProfilePhotoBody.parse(String(plain))!!.jpeg)
+    }
+
     @Test fun largestPhotoStillFitsInsideAnEncryptedTransportMessage() {
         val photo = ByteArray(ProfilePhotoBody.MAX_BYTES).apply { this[0] = -1; this[1] = -40; this[2] = -1 }
         val body = ProfilePhotoBody.format(ProfilePhotoBody.Update(Long.MAX_VALUE, photo))

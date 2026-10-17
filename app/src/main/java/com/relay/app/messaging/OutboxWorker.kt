@@ -39,6 +39,7 @@ class OutboxWorker(context: Context, private val transport: Transport) {
                 is SendResult.Sent -> {
                     outbox.markSentSync(entry.id)
                     messages.setDeliveryStateSync(entry.payloadId, DeliveryState.SENT)
+                    com.relay.app.groups.GroupDelivery.update(appContext, entry.payloadId, DeliveryState.SENT)
                     broadcast(entry.contactId)
                     accepted++
                 }
@@ -60,6 +61,7 @@ class OutboxWorker(context: Context, private val transport: Transport) {
     private fun fail(entryId: Long, payloadId: String, contactId: Long) {
         outbox.markFailedSync(entryId)
         messages.setDeliveryStateSync(payloadId, DeliveryState.FAILED)
+        com.relay.app.groups.GroupDelivery.update(appContext, payloadId, DeliveryState.FAILED)
         broadcast(contactId)
     }
 

@@ -1,10 +1,26 @@
-Calculator 1.8 preview package
-==========================
+Calculator 1.9 preview — installation and release notes
+======================================================
 
-New in 1.8: group photos/videos, quoted replies and member management inside group
-chats; hold a message for Reply, Copy and Delete; author-scoped remote deletion;
-four-recipient concurrent dispatch without reordering a recipient's queue; and an
-optional four-second illustration dance under Account → Appearance.
+Install 00-Calculator-preview.apk first. Android 8/API 26 or newer is required.
+Allow installation from the app used to open the APK. The app is installed as Viber;
+its Calculator launcher and existing private-entry code behavior are unchanged.
+This is a debug-signed preview, not a production/security-audited release. An in-place
+update requires the same signing certificate; do not uninstall to work around a
+signature mismatch without backing up anything you need (uninstall erases app data).
+
+Upgrade all peers and group creators to 1.9 for group profile-name forwarding and the
+larger profile photos. Reselect your original profile photo to gain quality; existing
+128 px compressed copies cannot recover discarded detail. No public avatar URL is used.
+
+The folder contains the APK first, these instructions, measured verification/remaining
+phone checks, source, and SHA-256 checksums. On Linux run sha256sum -c 04-SHA256SUMS.txt.
+Source excludes private owner state, signing keys, local SDK paths and credentials.
+A fresh source checkout creates a different recovery owner unless you securely reuse
+this computer's private owner configuration. Never publish that private configuration.
+
+Read 02-TEST-RESULTS.txt before testing. No connected phone was available; timing,
+scrolling and notification behavior still require device acceptance tests. Issues
+#19/#20/#21/#26 intentionally remain open. Use disposable test data.
 
 Account → Connection → Hide connection notification opens Android's channel settings.
 Turn off only Relay connection and leave Messages on. Android controls visibility;

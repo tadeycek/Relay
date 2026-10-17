@@ -69,11 +69,24 @@ Message notifications use Android’s native conversation layout with the sender
 **Viber**. The application settings and installer also use that name; the launcher activity remains **Calculator** with its calculator icon. Previews expose message text to anyone allowed to see notifications on the device;
 system lock-screen settings also apply. The custom content layout from 1.6 has been removed because it added a separate app icon beside the sender photo on the reference phone. Android controls the final avatar mask, badge placement, header and spacing; exact pixel matching across phones is not guaranteed. This remains the Relay build (package `com.relay.app`), using its own messaging transport.
 
+Preview 1.9 adds labelled **Mute / Unmute** controls with an enabled/muted bell icon in each contact/group header.
+Mute persists per conversation, cancels its existing preview and suppresses future message/media
+alerts; messages and unread counts still update. Unmute enables future alerts without replay.
+Both chat types open at the newest message. Scrolling away from the bottom stops following;
+returning within 48 dp enables following again. Stable row keys retain the older reading position.
+Text is accepted by a local transaction before the composer clears. Attachments first commit an
+encrypted local copy, queued bubble and persistent upload job; upload/dispatch retries run in the
+background for up to seven days. Failed local preparation leaves the draft available to retry.
+Queued means local acceptance; sent means relay acceptance, never proof of recipient delivery.
+Group names use separate monotonic profile revisions, leaving membership/permissions unchanged.
+Current names apply to historical sender labels; saved reply quotes retain their original snapshot.
+All participants, including the creator, need 1.9 for group-name forwarding; the creator must reconnect.
+
 Choose **Account → Profile photo → Choose photo and share** to share your own avatar with
-mutually approved contacts. Photos are reduced to a JPEG of at most 128 px / 6 KiB, sent inside the
+mutually approved contacts. Photos are reduced to a JPEG of at most 256 px / 8 KiB, sent inside the
 existing encrypted conversation, and stored encrypted at rest. There is no public avatar URL or
 additional image-server request. New profile sharing requires an unblocked, mutually approved contact with no pending key review. Removing the photo sends a newer removal update; stale updates cannot restore it.
-Recipients can still save any photo you share. Both peers need this updated app for profile photos.
+Existing reduced photos cannot regain detail: select the original photo again to share the higher-quality version. Older clients may ignore a photo exceeding their previous 128 px / 6 KiB limits; upgrade both peers. Recipients can still save any photo you share. Both peers need this updated app for profile photos.
 
 Run `owner/run.sh` to open the native Linux **Control Panel**, with the supplied figure icon in
 `owner/assets/control-panel.png`. The helper installs the pinned rust-nostr Python SDK in an ignored

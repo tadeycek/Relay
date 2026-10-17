@@ -41,11 +41,10 @@ object MediaSender {
     }
 
     fun upload(context: Context, file: File, mime: String, caption: String): MediaRef {
-        val plain = try {
-            file.readBytes()
-        } catch (e: Exception) {
-            error("Couldn’t read the file")
-        }
+        return uploadBytes(context, file.readBytes(), mime, caption)
+    }
+
+    fun uploadBytes(context: Context, plain: ByteArray, mime: String, caption: String): MediaRef {
         if (plain.isEmpty() || plain.size > MediaBody.MAX_MEDIA_BYTES) error("File is too large")
 
         val client = blossomClientFor(context) ?: error(TOR_UNAVAILABLE_MESSAGE)
@@ -82,6 +81,7 @@ object MediaReceiver {
 
     fun receive(context: Context, contact: Contact, payloadId: String, ref: MediaRef, sentAt: Long) {
         val repo = MessageRepository(MessagingDb.get(context))
+        val alertToken = com.relay.app.messaging.ConversationNotifications.token(context, contact.id)
 
         // Fetching a URL a sender chose reveals our IP to that host, so only do it for contacts whose
         // QR code we scanned in person. Anyone else (a stranger who knows our key can announce any
@@ -119,7 +119,7 @@ object MediaReceiver {
             val type = if (ref.isVideo) MessageType.VIDEO else MessageType.IMAGE
             synchronized(MessageDeletion) {
                 if (store(context, repo, contact, payloadId, sentAt, type, ref.caption, file.absolutePath))
-                    MessageNotifier.notifyIncoming(context, contact, type, ref.caption)
+                    MessageNotifier.notifyIncoming(context, contact, type, ref.caption, alertToken)
             }
         } catch (e: Exception) {
             Log.w(TAG, "media receive failed: ${e.message}")

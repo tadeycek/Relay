@@ -79,3 +79,46 @@ assert db.execute("SELECT before_ms FROM message_purges WHERE scope='group:2' AN
 assert db.execute("SELECT 1 FROM message_purges WHERE scope=? AND author=? AND before_ms>=?", ('group:2','alice',99)).fetchone()
 assert db.execute("SELECT 1 FROM message_purges WHERE scope=? AND author=? AND before_ms>=?", ('group:2','alice',101)).fetchone() is None
 print('Host SQLite: history purge cutoff is monotonic; late old messages stay deleted while newer messages remain admissible.')
+
+# v18 profiles are independent of membership and have a monotonic revision high-water mark.
+profiles = (ROOT / 'app/src/main/java/com/relay/app/groups/GroupProfiles.kt').read_text()
+delivery = (ROOT / 'app/src/main/java/com/relay/app/groups/GroupDelivery.kt').read_text()
+for code in [profiles, delivery]:
+    db.execute(re.search(r'const val CREATE = """(.*?)"""', code, re.S).group(1))
+upsert = re.search(r'execSQL\("""(INSERT INTO group_profiles.*?)"""', profiles, re.S).group(1)
+for revision, name in [(2,'New'), (1,'Old'), (2,'Duplicate old'), (3,'Newest')]:
+    db.execute(upsert, (2,'alice',revision,name))
+    expected = (2,'New') if revision <= 2 else (3,'Newest')
+    assert db.execute('SELECT revision,name FROM group_profiles WHERE group_id=2 AND member_key="alice"').fetchone() == expected
+assert db.execute('SELECT name FROM groups WHERE _id=2').fetchone() == ('New group',)
+assert db.execute('SELECT body FROM group_messages WHERE group_id=2').fetchall() == [('Bob',)]
+db.execute("INSERT INTO group_delivery VALUES (2,'event','payload',1)")
+db.commit()
+try:
+    with db:
+        db.execute("INSERT INTO group_delivery VALUES (2,'rolled-back','another',1)")
+        raise RuntimeError('Queue rollback')
+except RuntimeError:
+    pass
+assert db.execute('SELECT count(*) FROM group_delivery').fetchone() == (1,)
+db.execute('DELETE FROM groups WHERE _id=2')
+for table in ['group_profiles','group_delivery']:
+    assert db.execute('SELECT count(*) FROM '+table).fetchone() == (0,)
+print('Host SQLite: v18 additive migration, stale/duplicate profile rejection, membership/history preservation, delivery rollback and cascades pass.')
+
+pending = (ROOT / 'app/src/main/java/com/relay/app/media/PendingAttachments.kt').read_text()
+db.execute(re.search(r'const val CREATE = """(.*?)"""', pending, re.S).group(1))
+db.execute("INSERT INTO groups(_id,name) VALUES (3,'Pending media')")
+db.execute("INSERT INTO group_messages(group_id,body,timestamp,event_id) VALUES (3,'caption',1,'pending-event')")
+db.commit()
+try:
+    with db:
+        db.execute("INSERT INTO pending_attachments(id,target,is_group,row_id,path,mime,caption,created_at) VALUES ('job',3,1,1,'encrypted','image/jpeg','caption',1)")
+        raise RuntimeError('Acceptance rollback')
+except RuntimeError:
+    pass
+assert db.execute('SELECT count(*) FROM pending_attachments').fetchone() == (0,)
+with db:
+    db.execute("INSERT INTO pending_attachments(id,target,is_group,row_id,path,mime,caption,created_at) VALUES ('job',3,1,1,'encrypted','image/jpeg','caption',1)")
+assert db.execute('SELECT id,next_at,attempts FROM pending_attachments').fetchone() == ('job',0,0)
+print('Host SQLite: durable attachment-job schema, commit/rollback, and restart-readable retry state pass.')

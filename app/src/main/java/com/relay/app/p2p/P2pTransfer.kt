@@ -151,6 +151,7 @@ object P2pListener {
             val contact = ContactRepository(MessagingDb.get(context)).getByIdSync(contactId)
             if (contact == null || contact.isDeleted) return
 
+            val alertToken = com.relay.app.messaging.ConversationNotifications.token(context, contact.id)
             val blob = P2pWire.readBlob(socket.getInputStream(), offer.size, MAX_CIPHERTEXT_BYTES)
             if (blob == null || MediaCrypto.sha256Hex(blob) != offer.sha256Hex) {
                 Log.w(TAG, "P2P transfer failed hash/size check")
@@ -185,7 +186,7 @@ object P2pListener {
                 putExtra("contact_id", contact.id)
                 setPackage(context.packageName)
             })
-            MessageNotifier.notifyIncoming(context, contact, type, offer.caption)
+            MessageNotifier.notifyIncoming(context, contact, type, offer.caption, alertToken)
         }
     }
 }

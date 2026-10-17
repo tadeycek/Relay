@@ -1,86 +1,94 @@
-# Calculator 1.8 preview verification — 2026-10-17
+# Calculator 1.9 preview verification — 2026-10-17
 
-## Implemented behavior
+## Scope
 
-- Shared groups send encrypted photo/video references using the existing upload route.
-  Received blobs are hash-verified, decrypted and stored encrypted at rest; membership
-  and the creator are authenticated before any download. Pending group downloads
-  survive process death and retry on reconnect/group reopen, with two download slots.
-  Group attachment pickers reuse the session-preserving activity launcher. A Members
-  button exposes creator-only additions/removals of eligible verified friends.
-- Long press opens Reply, Copy and Delete in individual/group chats, preserving media
-  short-tap viewing. Copy uses readable text/captions and marks the Android clipboard
-  as sensitive where supported. Authored messages with UUID ids can request remote
-  deletion; incoming requests cannot erase another author's messages. Tombstones and
-  author-scoped history cutoffs prevent late delivery from resurrecting deleted rows.
-  Old group rows lack event ids and support only local per-message deletion.
-- Dispatch permits four recipients concurrently and preserves per-recipient order.
-  QR relay hints/cached inbox lists avoid blocking on discovery; contacts without hints
-  still perform discovery for correct routing. Fresh inbox discovery runs in parallel
-  when hints exist. The worker's artificial 50 ms delay is removed. Text row/outbox
-  insertion is transactional; fast relay acknowledgements also survive media insertion.
-  Real network latency is not measured or guaranteed. Creator forwarding still limits
-  group availability; this change does not replace the group protocol with a mesh.
-- Connection settings open the dedicated Android notification channel. Only the user
-  can hide that channel; Messages remains separate. The required background service
-  and its foreground notification are retained. No unsupported notification hiding.
-- Emergency mode requires the existing four-digit code and explicit destructive
-  confirmation. Rejected codes use existing lockout counters. It attempts bulk deletion
-  of the original author's histories for up to 15 seconds, then marks calculator-only
-  mode, stops background work, disables messaging receivers/services, clears previews,
-  shortcuts, app media/data/preferences and app Keystore keys, and ends the process.
-  Startup checks the non-backup marker before messaging initialization and repeats
-  cleanup before showing a calculator whose unlock gate/store are disabled.
-- Optional dance uses the supplied JPG locally with Compose sway/bob/zoom for four
-  seconds; off by default and skipped when system animations are disabled. No generated
-  video or articulated character animation is claimed. The session deadline is unchanged.
-- DB schema 17 adds group event ids, pending media references and deletion/purge tables.
-  Existing group rows are preserved. Existing application/launcher labels/icons and
-  native MessagingStyle notification layout are retained.
+Related issues: #19, #20, #21 and #26. These remain open because device acceptance
+criteria have not been verified. This is a preview, not an audited or bug-free build.
 
-## Verification
+- Direct/group button and keyboard sends share a synchronous busy guard. A submitted
+  composer generation is captured once; durable acceptance is retained in the ViewModel
+  across recreation. Only that generation and that attachment selection can clear.
+  Local rejection preserves the draft and reports an error. Accepted text commits
+  bubble/outbox atomically. Attachments commit an encrypted, synced local file, queued
+  bubble and durable upload job before network work. Upload retries survive restart,
+  use backoff and expire after seven days. Deleting a pending bubble cancels dispatch.
+- Group fanout legs track queued/sent/failed states. Sent means acceptance by a relay,
+  not recipient receipt/read or completion of creator forwarding. Existing direct read
+  receipts remain unchanged. No new group recipient-delivery guarantee is provided.
+- Reversed timelines open at newest without an unread-anchor jump. Stable keys anchor
+  older reading positions; a reader-controlled 48 dp tolerance enables following.
+  Status changes/history insertion cannot themselves re-enable following.
+- Per-contact/group mute persists locally, cancels existing cards and gates the final
+  Android notification post under a shared lock. Alert generation tokens suppress media
+  downloads that span mute/unmute. Storage and unread tracking do not depend on mute.
+  Global settings and Android permissions still apply. Security key-change alerts remain
+  security alerts; conversation mute is not a way to hide a key-change warning.
+- Group profile records have independent monotonic revisions. Current members submit
+  only their own profile to the creator, who forwards it over approved encrypted links.
+  Recipients cannot use profile packets to edit membership or permissions. Old group
+  state snapshots cannot overwrite newer profile records. Current names resolve for
+  members, historical sender labels and future notification previews. Local aliases
+  remain local. Saved quoted reply snapshots intentionally retain their original name.
+- Profile JPEG maximum rises from 128 px / 6 KiB to 256 px / 8 KiB. Compression starts
+  at JPEG quality 90, lowers to 60 then reduces dimensions if needed. EXIF orientation
+  is applied; aspect ratio is preserved; small images are never enlarged. The original
+  power-of-two-only decode could exceed the intended bound; exact proportional scaling
+  now enforces it. Images still travel inside encrypted messages and remain encrypted
+  at rest: no public avatar URL or new image-fetch service. Both peers must upgrade;
+  old clients may reject larger photos. Reselect the original to improve an existing
+  avatar: the app retains only its previously reduced encrypted copy.
+- Schema 18 adds profiles, delivery legs and attachment jobs without rebuilding existing
+  tables. Existing identity, membership, history and recovery controls are preserved.
 
-- Final command: `rebuild/dev/build.sh -PrelayPreview=true assembleDebug
-  assembleDebugAndroidTest testDebugUnitTest lintDebug` — successful (1m 25s).
-- All 264 JVM tests passed: zero failures, errors or skips. New checks cover group
-  media/quoted captions, authenticated delete/purge packets, malformed control rejection,
-  slow-recipient isolation, four-recipient concurrency and per-recipient ordering.
-- Lint: zero errors, 19 warnings and 7 informational findings. Existing Android Gradle
-  plugin compileSdk support and deprecated API warnings remain.
-- Host SQLite regression passes: additive v16/v17 migration, legacy row preservation,
-  duplicate suppression, transaction rollback, foreign-key cleanup, author/group deletion
-  isolation, and monotonic history cutoffs. This does not exercise Android SQLCipher.
-- APK identifies com.relay.app, version 1.8-preview, code 9, minimum Android 8/API 26.
-  Signature verified; SHA-256 signing certificate remains
-  `06a3d4109ba2322fcb2251f4c4ad97fed523eac1db00dc8bedb3201201de2da9`.
-- Android integration tests compile but have not been run: adb reports no connected
-  devices, and no emulator profiles were recreated following the user's deletion request.
-  Four-second visual timing, actual send latency, cross-phone deletion and emergency
-  cleanup/restart have not been verified on a phone.
+## Verification results
 
-## Limits and required phone checks
+- Final command: `rebuild/dev/build.sh -PrelayPreview=true assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug` — successful in 1m 37s.
+- 269 JVM tests passed: zero failures, errors or skips. Android application and
+  integration-test APKs compiled successfully. The Android tests were not executed.
+- Lint: zero errors, 19 warnings and 9 informational findings. Android Gradle plugin
+  compileSdk support, deprecated API and existing resource/platform warnings remain.
+- Control Panel: `python3 -m unittest discover -s owner -p 'test_*.py'` — all 17 tests passed.
+- `python3 rebuild/dev/check-group-schema.py` — all host SQLite regression checks passed.
+- APK signature verified with Android apksigner. Package com.relay.app, version
+  1.9-preview, code 10, minimum API 26, target API 36. SHA-256 signing certificate:
+  `06a3d4109ba2322fcb2251f4c4ad97fed523eac1db00dc8bedb3201201de2da9`
+  (matches the previous preview). Preview BuildConfig service URL and enrollment
+  token are empty. Packaging scans source/APK DEX for configured local credentials.
+- Package SHA-256 checksums and source-commit provenance accompany the APK.
 
-This is a preview, not an audited or bug-free production build. Install 1.8 on all
-participants. Test on disposable data before relying on emergency mode:
+Host SQLite: additive v16/v17/v18 migration, legacy preservation, duplicate/stale
+profile rejection, membership/history isolation, transaction rollback, foreign-key
+cleanup and persistent attachment-job defaults pass. This is not Android SQLCipher.
 
-1. Three phones: create a group, add another verified friend from Members, send photos,
-   video, quoted text/media replies, remove a member and verify refusal to send.
-2. Interrupt a download and reopen/reconnect; verify its attachment appears at its
-   original ratio and opens. Check picker cancellation and session expiry in a picker.
-3. Compare send latency with a slow/unreachable different recipient; verify queued/sent
-   state and no duplicate rows. Confirm disconnected delivery after reconnect.
-4. Hold text/photo/video for the menu; copy readable contents; delete an authored message
-   on both phones, including delete-before-delivery and deletion while viewing media.
-5. Hide only Relay connection through Android settings and receive a Messages preview.
-6. Enable/disable dance, verify four-second duration, rotation/background/expiry, and
-   disabled-system-animation behavior.
-7. On disposable data only, reject a wrong emergency code, cancel the dialog, then use
-   the correct code. Verify local data/key removal, calculator-only restarts, no boot/
-   work/relay reconnection, and remote author-only history removal on compatible devices.
+JVM regression coverage includes authenticated group profile routing/spoof rejection,
+malformed profile packets, maximum-photo roundtrip through real Tink HPKE and the
+existing 16 KiB payload decoder. Android integration tests include direct/group duplicate submission and acceptance timing, mute cancellation,
+independence, delayed-media suppression and local attachment acceptance with timing
+logs. Compiling an integration test does not establish that it passes on a phone.
 
-Remote deletion is best effort. Offline devices, old versions, blocked/removed contacts,
-creator unavailability, unknown old ids, saved copies, screenshots, forwarded messages,
-quoted snapshots, and relay ciphertext retention prevent a permanent-erasure guarantee.
-Local reset cannot uninstall part of an APK; clearing app data/reinstalling can reset
-calculator-only mode. Filesystem-level forensic erasure is not claimed. If the process
-crashes after its marker is saved, cleanup repeats on the next launch.
+## Required device verification
+
+adb reports no connected devices. No emulator profiles were recreated. Android tests
+have not run; no phone screenshots, send-latency measurements or visual claims are made.
+
+1. Record event-to-local-acceptance and acceptance-to-visible-bubble times for direct and
+   group text, replies, photos/video; button and IME sends; rapid repeated submission;
+   offline/reconnect, process restart, rotation, new text and replacement attachments.
+   Verify no duplicates, retained rejected drafts and truthful queued/sent/failed states.
+2. Open/reopen long individual/group histories, including unread messages. Test bursts,
+   older history, delivery-state updates, late image sizing, IME/inset changes, scrolling
+   away and back to within 48 dp. Confirm no unwanted jump while reading older content.
+3. Mute one contact and one group; verify cancellation and no cards, sounds, vibration
+   or heads-up alerts for text/media. Restart, receive while muted, check unread counts,
+   then unmute: only subsequent arrivals should alert. Include a download spanning mute.
+4. Three upgraded phones: owner/member rename, aliases, existing groups, historical
+   labels, future notifications, stale/duplicate packets, offline member and creator
+   reconnects. Confirm keys, membership, permissions and ownership remain unchanged.
+5. Reselect portrait/landscape/rotated/small/detailed photos. Check pixel bounds, aspect
+   ratio, encrypted synchronization/removal, legacy-peer behavior and visual quality.
+6. Exercise existing calculator session expiry, media viewer, group deletion, recovery,
+   background delivery and emergency cleanup on disposable data.
+
+Free-relay retention, Android background restrictions and creator availability still
+limit delivery. Failed uploads remain queued during retry and become failed at expiry;
+there is no manual upload-retry UI. Delete a pending/failed bubble and resubmit if needed.

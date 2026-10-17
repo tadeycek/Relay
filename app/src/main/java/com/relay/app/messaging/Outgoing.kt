@@ -16,11 +16,12 @@ object Outgoing {
      * null if the contact has no Nostr address. Delivery is asynchronous: the outbox worker sends it
      * and retries with backoff until it is accepted or gives up.
      */
-    fun enqueue(context: Context, contact: Contact, plainBody: String, seal: Boolean = true): String? {
+    fun enqueue(context: Context, contact: Contact, plainBody: String, seal: Boolean = true, payloadId: String = PayloadCodec.newId()): String? {
         val recipient = contact.nostrPubkey ?: return null
         val now = System.currentTimeMillis()
         val body = if (seal) InnerEnvelope.seal(contact.publicKey, plainBody) else plainBody
-        val payload = RelayPayload(id = PayloadCodec.newId(), ts = now, body = body)
+        require(body.length <= PayloadCodec.MAX_BODY_LENGTH) { "Message is too large; shorten it and try again" }
+        val payload = RelayPayload(id = payloadId, ts = now, body = body)
         val stored = OutboxRepository(MessagingDb.get(context)).enqueueSync(
             OutboxEntry(
                 contactId = contact.id,

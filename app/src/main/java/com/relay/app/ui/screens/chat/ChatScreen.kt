@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -85,15 +84,20 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val vm: ChatViewModel = viewModel(factory = ChatViewModelFactory(contactId, app))
     val messages by vm.messages.collectAsState()
     val contact by vm.contact.collectAsState()
+    val sending by vm.sending.collectAsState()
     val unreadAnchor by vm.unreadAnchorId.collectAsState()
     var actionMessage by remember { mutableStateOf<com.relay.app.data.model.Message?>(null) }
     var replyDraft by rememberSaveable { mutableStateOf<String?>(null) }
+    val acceptedDraft by vm.acceptedDraft.collectAsState()
+    val composerId = rememberSaveable { java.util.UUID.randomUUID().toString() }
+    var draftRevision by rememberSaveable { mutableStateOf(0L) }
     var inputText by rememberSaveable { mutableStateOf("") }
     MessageActions(actionMessage, onReply = { message ->
+        draftRevision += 1
         replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(app).myName.ifBlank { "Me" } else contact?.name ?: "Someone")
     }, onDismiss = { actionMessage = null })
     val context = LocalContext.current
-    val listState = rememberLazyListState()
+    val listState = remember(contactId) { androidx.compose.foundation.lazy.LazyListState() }
 
     val items = remember(messages, unreadAnchor) {
         ChatTimeline.build(messages, unreadAnchor, System.currentTimeMillis())
@@ -103,6 +107,13 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val mediaDraft = mediaPicker.draftFor(contactId)
     val pendingMediaUri = mediaDraft?.uri
     val pendingMimeType = mediaDraft?.mime.orEmpty()
+    LaunchedEffect(acceptedDraft) {
+        acceptedDraft?.takeIf { it.composerId == composerId }?.let { accepted ->
+            if (draftRevision == accepted.revision) { inputText = ""; replyDraft = null }
+            if (accepted.mediaSelectionId != null && mediaPicker.draftFor(contactId)?.selectionId == accepted.mediaSelectionId)
+                mediaPicker.clear(contactId)
+        }
+    }
     var showAttachSheet by remember { mutableStateOf(false) }
     // Both fire something the other person sees; confirming first means a stray tap never sends it.
     var confirmShareLocation by remember { mutableStateOf(false) }
@@ -122,18 +133,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
         onDispose { vm.unregisterSmsUpdates(context) }
     }
 
-    // First open: jump to where the new messages begin (or the bottom); afterwards follow new messages.
-    var initialScrollDone by remember { mutableStateOf(false) }
-    LaunchedEffect(items.size) {
-        if (items.isEmpty()) return@LaunchedEffect
-        if (!initialScrollDone) {
-            val divider = items.indexOfFirst { it is ChatItem.UnreadDivider }
-            listState.scrollToItem(if (divider >= 0) divider else items.lastIndex)
-            initialScrollDone = true
-        } else {
-            listState.animateScrollToItem(items.lastIndex)
-        }
-    }
+    FollowConversationBottom(listState, items.lastOrNull()?.key)
 
     val lastReceivedTs = messages.filter { !it.isSent }.maxOfOrNull { it.timestamp } ?: 0L
     LaunchedEffect(lastReceivedTs) {
@@ -196,6 +196,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 contact = contact,
                 onBack = { navController.popBackStack() },
                 actions = {
+                    ConversationMute(contactId)
                     if (contact?.isDeleted != true) {
                         IconButton(onClick = { confirmShareLocation = true }) {
                             Icon(Icons.Outlined.MyLocation, contentDescription = "Share my location", tint = TextSecondary)
@@ -219,10 +220,11 @@ fun ChatScreen(contactId: Long, navController: NavController) {
             } else {
                 LazyColumn(
                     state = listState,
+                    reverseLayout = true,
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.md),
                 ) {
-                    items(items, key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "", onReply = { message -> actionMessage = message } ) }
+                    items(items.reversed(), key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "", onReply = { message -> actionMessage = message } ) }
                 }
             }
 
@@ -240,25 +242,26 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 )
             } else {
                 ConversationTyping(inputText, contactId = contactId)
-                ReplyPreview(replyDraft) { replyDraft = null }
+                ReplyPreview(replyDraft) { draftRevision += 1; replyDraft = null }
                 Composer(
                     value = inputText,
-                    onValueChange = { inputText = it.take(8000) },
+                    placeholder = if (sending) "Preparing message…" else "Message",
+                    onValueChange = { draftRevision += 1; inputText = it.take(8000) },
                     pendingMediaUri = pendingMediaUri,
                     pendingMediaMime = pendingMimeType,
                     onClearMedia = { mediaPicker.clear(contactId) },
                     onAttach = { showAttachSheet = true },
+                    sending = sending,
                     onSend = {
-                        val uri = pendingMediaUri
-                        if (uri != null) {
-                            vm.sendMedia(uri, pendingMimeType, com.relay.app.messaging.ReplyBody.withText(replyDraft, inputText.trim()), context)
-                            replyDraft = null
-                            mediaPicker.clear(contactId)
-                            inputText = ""
-                        } else if (inputText.isNotBlank()) {
-                            vm.sendText(com.relay.app.messaging.ReplyBody.withText(replyDraft, inputText.trim()), context)
-                            replyDraft = null
-                            inputText = ""
+                        if (!sending && vm.acceptedDraft.value != AcceptedDraft(composerId, draftRevision, mediaDraft?.selectionId) && (inputText.isNotBlank() || mediaDraft != null)) {
+                            val revision = draftRevision
+                            val submittedMedia = mediaDraft
+                            val body = com.relay.app.messaging.ReplyBody.withText(replyDraft, inputText.trim())
+                            val accepted = {
+                                vm.acceptedDraft.value = AcceptedDraft(composerId, revision, submittedMedia?.selectionId)
+                            }
+                            if (submittedMedia != null) vm.sendMedia(submittedMedia.uri, submittedMedia.mime, body, context, accepted)
+                            else vm.sendText(body, context, accepted)
                         }
                     },
                 )
@@ -292,8 +295,9 @@ internal fun Composer(
     onClearMedia: () -> Unit = {},
     onAttach: (() -> Unit)? = null,
     placeholder: String = "Message",
+    sending: Boolean = false,
 ) {
-    val canSend = pendingMediaUri != null || value.isNotBlank()
+    val canSend = !sending && (pendingMediaUri != null || value.isNotBlank())
 
     Column(
         modifier = Modifier
@@ -349,7 +353,7 @@ internal fun Composer(
                 maxLines = 5,
                 shape = RoundedCornerShape(24.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSend() }),
+                keyboardActions = KeyboardActions(onSend = { if (canSend) onSend() }),
             )
             Box(
                 contentAlignment = Alignment.Center,
