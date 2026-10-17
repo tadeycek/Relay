@@ -53,6 +53,7 @@ object QrContactExchange {
             return contactRepo.getByIdSync(contact.id) ?: contact
         }
 
+        if (scanned.name.isNotBlank()) contactRepo.setProfileNameSync(contact.id, scanned.name)
         contactRepo.setPublicKeySync(contact.id, scanned.publicKeyBase64)
         contactRepo.rejectPendingPublicKeySync(contact.id)
         contactRepo.markAsRelayUserSync(contact.id)

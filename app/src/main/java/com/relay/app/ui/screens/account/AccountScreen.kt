@@ -166,7 +166,7 @@ private fun Profile(status: TransportStatus, onShowCode: () -> Unit) {
             RelayTextField(
                 value = draft,
                 onValueChange = { draft = it.take(30) },
-                label = "Shown next to your code",
+                label = "Shared with approved contacts",
                 modifier = Modifier.fillMaxWidth().padding(top = RelaySpacing.lg),
             )
             PrimaryButton(

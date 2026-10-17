@@ -1,4 +1,4 @@
-Calculator 1.1 preview package
+Calculator 1.2 preview package
 ==========================
 
 00-Calculator-preview.apk is the Android installer. The numbered names put it first
@@ -28,13 +28,22 @@ compressed and encrypted before uploading. Public storage services can see the
 connection address, ciphertext size and timing. They cannot read the photo from
 those encrypted bytes. Optional Orbot routing requires a separate working setup.
 
+Both devices should install 1.2-preview for the name-sync fix. Existing paired contacts
+are retained when updating. Profile names and photos are refreshed on reconnect and
+on incoming messages; late profile data updates an already-visible notification.
+Locally chosen contact aliases remain local. Android controls the exact notification
+layout and app attribution; a supported conversation template shows the sender avatar.
+Conversation previews also publish a temporary Android conversation shortcut, so your
+launcher may show the sender name/photo when you long-press Calculator. Opening the
+chat or deleting its contact removes that shortcut. Notification taps have no action.
+
 Profile photos: open Account, then Profile photo, then Choose photo and share.
 Your photo is sent privately to mutually approved contacts who use the updated
 app. It is reduced to at most 128 px / 6 KiB and carried inside encrypted messages,
 not hosted as a public profile. Removing it sends a newer removal update. Contacts
 can save anything you share. Notifications show their name and received photo,
-with a generated-avatar fallback and this app's purple message badge. Android's
-source attribution remains Calculator; the badge is not the Viber logo.
+with a generated-avatar fallback and the supplied purple phone badge. Android's
+source attribution remains Calculator; the supplied decorative badge does not change the app identity.
 
 Control Panel recovery needs no separately hosted web server. It receives encrypted
 access reports and sends signed unblock commands through the public relay network.

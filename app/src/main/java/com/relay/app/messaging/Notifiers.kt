@@ -10,6 +10,8 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.pm.ShortcutInfoCompat
+import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.core.app.Person
 import androidx.core.graphics.drawable.IconCompat
 import com.relay.app.MainActivity
@@ -23,8 +25,11 @@ object MessageNotifier {
     const val CHANNEL_MESSAGES = "relay_messages"
     const val EXTRA_OPEN_CHAT = "open_chat_contact_id"
     private const val NOTIF_BASE = 5000
+    private val shortcutFingerprints = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
-    fun notifyIncoming(context: Context, contact: Contact, type: MessageType, body: String = "") {
+    fun notifyIncoming(context: Context, receivedContact: Contact, type: MessageType, body: String = "") {
+        val contact = com.relay.app.data.repository.ContactRepository(MessagingDb.get(context))
+            .getByIdSync(receivedContact.id) ?: receivedContact
         if (contact.id == ActiveChat.contactId) return
         val prefs = RelayPreferences(context)
         val wanted = when (type) {
@@ -44,27 +49,60 @@ object MessageNotifier {
             MessageType.VIDEO -> if (clean.isEmpty()) "Video" else "Video: $clean"
             else -> clean.ifEmpty { "New message" }
         }
+        post(context, contact, text, refresh = false)
+    }
+
+    /** Refresh an already visible preview after encrypted profile data arrives, without another alert. */
+    fun refreshContact(context: Context, contact: Contact) {
+        if (canPostNotifications(context)) post(context, contact, null, refresh = true)
+    }
+
+    private fun post(context: Context, contact: Contact, text: String?, refresh: Boolean) {
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val tag = "conversation:${contact.id}"
+        val previousNotification = nm.activeNotifications.firstOrNull { it.id == NOTIF_BASE && it.tag == tag }?.notification
+        val previous = previousNotification?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+        if (refresh && previous?.messages.isNullOrEmpty()) return
         val photo = com.relay.app.media.ContactPhotos.load(context, contact.id)
-        val avatar = NotificationAvatar.forContact(contact, photo)
+        val badge = android.graphics.BitmapFactory.decodeResource(context.resources, com.relay.app.R.drawable.notification_avatar_badge)
+        val avatar = NotificationAvatar.forContact(contact, photo, badge)
+        badge?.recycle()
         photo?.recycle()
         val sender = Person.Builder().setName(contact.name).setKey(contact.id.toString())
             .setIcon(IconCompat.createWithBitmap(avatar)).build()
-        // Keep a short conversation preview, instead of replacing every notification with one line.
-        val tag = "conversation:${contact.id}"
-        val previous = nm.activeNotifications.firstOrNull { it.id == NOTIF_BASE && it.tag == tag }?.notification
-            ?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
+        val shortcutId = "conversation:${contact.id}"
+        val pixels = IntArray(avatar.width * avatar.height)
+        avatar.getPixels(pixels, 0, avatar.width, 0, 0, avatar.width, avatar.height)
+        val fingerprint = 31 * contact.name.hashCode() + pixels.contentHashCode()
+        val existing = ShortcutManagerCompat.getDynamicShortcuts(context).any { it.id == shortcutId }
+        val unchanged = existing && shortcutFingerprints[shortcutId] == fingerprint
+        // Avoid spending Android's background shortcut-update quota on every message.
+        val published = unchanged || runCatching {
+            ShortcutManagerCompat.pushDynamicShortcut(context, ShortcutInfoCompat.Builder(context, shortcutId)
+                .setShortLabel(contact.name.ifBlank { "Contact" })
+                .setIcon(IconCompat.createWithBitmap(avatar))
+                .setPerson(sender).setLongLived(true)
+                .setIntent(Intent(context, MainActivity::class.java).setAction(Intent.ACTION_VIEW))
+                .build())
+        }.getOrDefault(false)
+        if (published) shortcutFingerprints[shortcutId] = fingerprint
         val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
             .setGroupConversation(false)
-        previous?.messages?.takeLast(4)?.forEach { old ->
+        previous?.messages?.takeLast(if (refresh) 5 else 4)?.forEach { old ->
             style.addMessage(old.text, old.timestamp, sender)
         }
-        style.addMessage(text, System.currentTimeMillis(), sender)
+        if (!refresh) style.addMessage(text!!, System.currentTimeMillis(), sender)
+        val last = style.messages.last()
         val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
             .setSmallIcon(com.relay.app.R.drawable.ic_message_notification)
             .setColor(0xFF8E4BC4.toInt())
             .setLargeIcon(avatar)
             .setContentTitle(contact.name)
-            .setContentText(text)
+            .setContentText(last.text)
+            .setWhen(last.timestamp)
+            .setOnlyAlertOnce(refresh)
+            .setShortcutId(if (published || existing) shortcutId else null)
+            .addPerson(sender)
             .setStyle(style)
             .setAllowSystemGeneratedContextualActions(false)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
@@ -80,6 +118,9 @@ object MessageNotifier {
     /** Removes the notification for a conversation once the user has opened it. */
     fun cancel(context: Context, contactId: Long) {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        shortcutFingerprints.remove("conversation:$contactId")
+        ShortcutManagerCompat.removeDynamicShortcuts(context, listOf("conversation:$contactId"))
+        ShortcutManagerCompat.removeLongLivedShortcuts(context, listOf("conversation:$contactId"))
         nm.cancel("conversation:$contactId", NOTIF_BASE)
         nm.cancel(NOTIF_BASE + (contactId % 1000).toInt())
     }

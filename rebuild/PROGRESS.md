@@ -1,3 +1,15 @@
+## Calculator 1.2 preview — profile notification fixes
+
+- Private versioned display-name updates, placeholder-name repair at QR completion,
+  and profile refresh on reconnect/incoming messages recover missed profile updates.
+- Late name/photo updates refresh an existing notification without another alert.
+- Published conversation shortcuts provide Android with sender identity/avatar;
+  unchanged avatars avoid repeated shortcut updates. Opening/deleting the chat
+  removes its shortcut. See DISTRIBUTION.md for launcher visibility.
+- The supplied picture is composited at the avatar’s bottom right. A traced white
+  foreground also supplies Android’s own small notification badge; source attribution
+  remains Calculator. Notification taps and reply actions remain inactive.
+
 # Rebuild progress log
 
 ## 2026-10-17: Ten-minute sessions and media viewing
@@ -12,7 +24,7 @@ plaintext copies are cleaned up, including leftovers on process startup.
 Profile photos are chosen under Account and shared only with mutually approved contacts over
 the encrypted conversation channel. Small JPEGs are bounded, cached encrypted, versioned against
 replay/removal and excluded from backup. Notifications use the received photo (or generated avatar)
-with this app's purple message badge, and keep a bounded unread preview per conversation with no tap/reply actions.
+with the supplied purple phone badge, and keep a bounded unread preview per conversation with no tap/reply actions.
 Conversation tags avoid collisions for contact IDs separated by 1000. Android's source
 label remains Calculator. Current checks and limits are recorded in VERIFICATION.md.
 

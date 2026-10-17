@@ -67,7 +67,7 @@ checksums = []
 for path in sorted(output.iterdir()):
     checksums.append(f'{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}')
 (output / '04-SHA256SUMS.txt').write_text('\n'.join(checksums) + '\n')
-bundle = output.with_suffix('.zip')
+bundle = Path(str(output) + '.zip')
 if bundle.exists():
     raise SystemExit('Folder created, but bundle archive already exists; it was preserved.')
 with zipfile.ZipFile(bundle, 'w', zipfile.ZIP_DEFLATED) as archive:

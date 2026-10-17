@@ -11,9 +11,9 @@ import com.relay.app.ui.glyph.Corner
 import com.relay.app.ui.glyph.GlyphGenerator
 import com.relay.app.ui.glyph.GlyphSpec
 
-/** Local avatar with this app's purple message badge, not a third-party service logo. */
+/** Sender avatar with the supplied decorative badge; Android retains the actual app attribution. */
 object NotificationAvatar {
-    fun forContact(contact: Contact, photo: Bitmap? = null): Bitmap {
+    fun forContact(contact: Contact, photo: Bitmap? = null, badge: Bitmap? = null): Bitmap {
         val size = 192
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -52,6 +52,13 @@ object NotificationAvatar {
         paint.style = Paint.Style.FILL
         paint.color = Color.WHITE
         canvas.drawCircle(158f, 158f, 34f, paint)
+        if (badge != null) {
+            canvas.save()
+            canvas.clipPath(Path().apply { addCircle(158f, 158f, 30f, Path.Direction.CW) })
+            canvas.drawBitmap(badge, null, RectF(128f, 128f, 188f, 188f), paint)
+            canvas.restore()
+            return bitmap
+        }
         paint.color = 0xFF8E4BC4.toInt()
         canvas.drawCircle(158f, 158f, 30f, paint)
         paint.color = Color.WHITE

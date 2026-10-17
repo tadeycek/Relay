@@ -1,99 +1,73 @@
-# Calculator 1.1 preview verification — 2026-10-17
+# Calculator 1.2 preview verification — 2026-10-17
 
-Branch: `feat/rebuild`, based on `93825e1`. This records measured checks, not a guarantee
-that the app has no bugs or cannot be compromised. The previous preview's results are
-preserved in [VERIFICATION-2026-10-16.md](VERIFICATION-2026-10-16.md).
+Branch: `feat/rebuild`, based on `d69bfe4`. This is measured verification, not a
+claim that the app is free of bugs. The previous release record is preserved in
+[VERIFICATION-1.1-preview.md](VERIFICATION-1.1-preview.md).
 
-## Completed automated checks
+## Changes checked
 
-- App and Android test APK build successfully. Version code 2, version name 1.1-preview.
-- 234 JVM tests passed, with no failures, errors or skips. New coverage includes the
-  exact 600,000 ms session deadline, no extension on return/use, bounded profile-photo
-  encoding, malformed inputs, removals and transport-size limits.
-- 14 Android tests passed on a dedicated Android 15 emulator. These cover real Keystore
-  state, lockout/recovery policy, diagnostic consent, calculator arithmetic/layout,
-  notification previews/history/avatars and contact-ID separation, Home/return and
-  activity recreation, expiry back to Calculator and reauthentication.
-- Media tests open received encrypted portrait and landscape images, verify preview
-  aspect ratios, open/close the internal photo viewer, and verify camera JPEG rotation.
-  A five-second portrait MP4 fixture actually plays and advances position; closing and
-  expiry stop playback. Expiry also removes private plaintext view files.
-- Profile-photo tests reject unapproved/blocked contacts, decrypt an approved sender's
-  photo, verify encrypted canonical storage, apply removal, and reject stale replay.
-- Lint has zero errors, 14 warnings and 7 informational findings. The new functional
-  warning recommends AndroidX ExifInterface instead of the platform implementation;
-  JPEG orientation behavior was checked on Android 15. Existing locale/deprecation
-  and other warnings remain.
+- QR completion repairs a pre-existing generated contact name. Encrypted versioned
+  profile updates follow a peer's display-name changes while preserving local aliases.
+- Reconnects and incoming messages request profiles again with a cooldown, recovering
+  profile data that arrived before mutual pairing completed. Unapproved/blocked peers
+  cannot set a name or avatar. Old revisions cannot undo newer names or photo removals.
+- Late photo/name arrivals refresh an existing notification without adding a message
+  or another alert. Notification history stays bounded and separated by contact.
+- Android conversation shortcuts supply the sender's name/avatar to the compact
+  notification template. Unchanged shortcut icons are not pushed on every message;
+  existing shortcuts remain usable if Android rate-limits an update.
+- The supplied PNG is composed at the avatar's bottom right. Android overlays its own
+  small notification icon, so a white foreground traced from that picture also fills
+  the system icon slot. Android controls its color/background and exact placement.
+  App attribution remains Calculator; taps and reply actions remain inactive.
+- New name controls use an existing profile-control extension so 1.1 clients ignore
+  them rather than displaying them as ordinary chat text. Update both devices for
+  display-name synchronization. Each sender must actually choose a profile photo.
 
-The UI expiry tests call the production expiry check at its deadline rather than
-waiting ten wall-clock minutes. JVM tests verify the full ten-minute elapsed-time
-policy. Native video popup controls are explicitly dismissed on disposal.
+## Completed checks
 
-## Live two-device checks
+- Preview and instrumentation APKs build. Version code 3, version name 1.2-preview,
+  application ID com.relay.app, minimum Android API 26, target API 36.
+- 237 JVM tests passed: zero failures, errors or skips. New tests cover bounded
+  Unicode names, malformed input and compatibility with the previous control parser.
+- Ten targeted Android checks passed on Android 15 across notification/profile and
+  media runs: three notification tests, four profile/QR tests, and three media tests.
+  Checks include OS-posted sender name/icon, published conversation shortcut,
+  late-profile refresh without duplicate history, no tap/reply intent, real encrypted
+  avatar storage, stale/blocked update rejection, placeholder repair and local aliases.
+- The actual Android preview was captured and visually inspected: shared name/photo
+  and the supplied phone design are shown in the avatar's bottom-right badge.
+- Portrait/landscape images retain their aspect ratio and open internally; EXIF rotation
+  is preserved. The five-second test MP4 advances playback, stops on close and forced
+  session expiry, and private viewing copies are removed. This is local received-media
+  playback testing, not a new live video transfer between devices.
+- The media harness now starts a fresh activity and waits for it to render. It also
+  waits for Android to settle after forced expiry. No saved chats or app data were reset.
+- Lint: zero errors, 15 warnings and seven informational findings. One new warning is
+  the traced small icon's long vector path; other warnings include existing platform
+  ExifInterface, locale and deprecation findings.
+- APK v2 signature verifies and its signing certificate matches the previous 1.1 APK.
+  In-place update on both emulator installations succeeded. The primary emulator was
+  reopened and unlocked for the user's phone-to-PC test.
 
-Two independent Android 15 emulator installations connected to public Nostr relays.
-The production ML Kit decoder read the displayed 30-minute invitation, both users
-approved the pairing, and verified contacts were created. Text/emoji and replies
-arrived in both directions (3.4 s and 9.9 s including UI automation).
+An initial broader run hit the session smoke test's explicit fresh-install prerequisite;
+that test was not represented as passing on this already-configured installation.
+The unchanged ten-minute duration is covered by JVM tests; the media expiry test forces
+its production deadline instead of waiting ten wall-clock minutes. Earlier media runs
+also exposed harness timing issues and a missing fixture; the original clip was recovered
+and the complete media class subsequently passed.
 
-Both peers selected gallery photos, returned through the active session, uploaded
-encrypted media, and downloaded/decrypted matching JPEG hashes. Both selected their
-own profile photo through Account and the system picker; the approved other peer
-received identical photo bytes. Removing Alice's profile photo removed it on Bob.
-Both app databases and UI were checked. This verifies image decoding and the real
-QR/NFC confirmation path, not optical camera-to-screen scanning.
+## Limits and next checks
 
-After the final notification-history change, its two Android notification tests
-were repeated against the final APK and passed. The final APK was then used for
-the complete live two-device flow. Package signatures, archive checksums, uploaded
-asset digests and merged-source identity are checked during publication.
+The physical phone's notification layout and real phone camera pairing were not
+controlled in this run. Android and OEM notification templates can render differently.
+No new live network video transfer, Doze/battery behavior or real Orbot routing was
+verified. Earlier two-emulator text/photo/profile network checks are recorded in the
+1.1 report. No independent cryptographic audit or Double Ratchet is claimed.
 
-## Behavior and privacy
-
-A successful four-digit code plus + starts a fixed ten-minute session. Background
-and return do not extend it. A process restart ends it. Expiry closes private screens
-and any media viewer; the original code is needed again. Three wrong submissions
-still require the owner's signed relay recovery command. No owner web server is needed.
-
-Photos fit their source aspect ratio. Photo/video taps open an internal secure viewer;
-no external app receives the decrypted file. Photos support pinch zoom. Videos use
-native playback controls. Temporary per-view plaintext copies are deleted when their
-bubble leaves composition, with leftovers removed at process startup. Existing outgoing
-compressed-media caches remain a plaintext-at-rest limitation.
-
-Account → Profile photo explicitly shares a JPEG of at most 128 px / 6 KiB with mutually
-approved contacts through the existing encrypted conversation. There is no public
-profile endpoint or extra avatar fetch. Photos are encrypted at rest and excluded from
-backup; revisions prevent stale updates from undoing removal. Recipients can save photos.
-Both peers must use the updated app for this new control-message protocol.
-
-Notifications provide sender name, received photo/generated avatar, this app's generic
-purple message badge and up to five unread messages per conversation. They have no tap
-intent or reply action. Android's app attribution remains Calculator; the badge is not
-Viber's logo. See [Android's notification anatomy](https://developer.android.com/develop/ui/compose/notifications)
-and [Viber's Android notification features](https://help.viber.com/hc/en-us/articles/9029767646237-Reply-search-and-customize-on-Android).
-
-## Remaining limits
-
-This is a debug-signed test preview. Physical-phone camera/NFC, real Orbot routing,
-Doze/OEM survival, battery usage, accessibility/font scaling and the full range of image
-and video codecs remain unverified. Real-network video transfer was not newly tested;
-received encrypted-video playback was. Public relays/blob servers can change availability
-or retention. The protocol has no Double Ratchet or independent security audit. Stable
-production signing remains necessary before a production release.
-
-## Reproduce
-
-Use dedicated emulator data only. These tests use code 4826 and synthetic fixtures,
-and the two-device harness sends fixture messages/images through public relays/storage.
-
-```sh
-rebuild/dev/build.sh -PrelayPreview=true assembleDebug assembleDebugAndroidTest testDebugUnitTest lintDebug
-# Install both generated APKs on the dedicated emulators first.
-adb -s emulator-5554 shell am instrument -w -e class com.relay.app.calculator.CalculatorSecurityTest,com.relay.app.calculator.MediaViewerTest,com.relay.app.calculator.ProfilePhotoTest com.relay.app.test/androidx.test.runner.AndroidJUnitRunner
-python3 rebuild/dev/test-two-emulators.py
-```
-
-The included test clip is synthetic: FFmpeg testsrc2, 160x320, 15 fps, five seconds,
-MPEG-4 Part 2 in MP4. No personal photos, local databases, private owner state, credentials,
-SDK/JDK installations or signing keys are distributed.
+Conversation previews publish Android conversation data. A launcher may expose the
+sender name/photo in Calculator's long-press menu; opening the chat or removing its
+contact removes that shortcut. Public notification previews intentionally expose their
+text/photos subject to device settings. Canonical received profile photos stay encrypted;
+existing outgoing media cache limitations remain as documented in the previous record.
+This remains a debug-signed test preview.

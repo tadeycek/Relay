@@ -112,6 +112,11 @@ class CalculatorSecurityTest {
         }
         assertNotNull("OS posted the message notification", posted)
         val notification = posted!!.notification
+        assertEquals("conversation:999", notification.shortcutId)
+        val shortcut = context.getSystemService(android.content.pm.ShortcutManager::class.java)
+            .dynamicShortcuts.firstOrNull { it.id == notification.shortcutId }
+        assertNotNull("A published conversation shortcut supplies the compact avatar", shortcut)
+        assertEquals("Preview test", shortcut!!.shortLabel.toString())
         assertNull(notification.contentIntent)
         assertTrue(notification.actions.isNullOrEmpty())
         assertEquals("Hello from the test", notification.extras.getCharSequence("android.text").toString())
@@ -119,6 +124,27 @@ class CalculatorSecurityTest {
         assertNotNull("Contact avatar is supplied to the OS", notification.getLargeIcon())
         val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
         assertNotNull("Sender has an avatar", style.messages.last().person?.icon)
+    }
+
+    @Test fun lateProfileRefreshUpdatesVisibleNameAndAvatarWithoutAddingMessages() {
+        if (Build.VERSION.SDK_INT >= 33) InstrumentationRegistry.getInstrumentation().uiAutomation
+            .grantRuntimePermission(context.packageName, Manifest.permission.POST_NOTIFICATIONS)
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val contact = Contact(id = 999, name = "Contact 12345678", phone = "nostr:fixture")
+        MessageNotifier.cancel(context, contact.id)
+        MessageNotifier.notifyIncoming(context, contact, MessageType.TEXT, "Keep this preview")
+        SystemClock.sleep(300)
+        MessageNotifier.refreshContact(context, contact.copy(name = "Exion"))
+        SystemClock.sleep(300)
+        val notification = manager.activeNotifications.first { it.tag == "conversation:999" }.notification
+        val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
+        assertEquals(1, style.messages.size)
+        assertEquals("Exion", style.messages.last().person!!.name.toString())
+        assertEquals("Keep this preview", style.messages.last().text.toString())
+        assertTrue(notification.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
+        assertNull(notification.contentIntent)
+        assertTrue(notification.actions.isNullOrEmpty())
+        MessageNotifier.cancel(context, contact.id)
     }
 
     @Test fun notificationsKeepBoundedHistorySeparateForEachConversation() {

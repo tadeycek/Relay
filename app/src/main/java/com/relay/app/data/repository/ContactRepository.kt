@@ -86,6 +86,17 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
     }
 
+    /** Follow the peer's profile while preserving a name the recipient chose locally. */
+    fun setProfileNameSync(contactId: Long, name: String) {
+        val current = getByIdSync(contactId) ?: return
+        val generated = current.nostrPubkey?.let { "Contact ${it.take(8)}" }
+        val values = ContentValues().apply {
+            put(Contacts.COL_ORIGINAL_NAME, name)
+            if (current.name == current.originalName || current.name == generated) put(Contacts.COL_NAME, name)
+        }
+        dbHelper.writableDatabase.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
     /** Holds an unverified candidate key without disturbing the currently-trusted one. */
     fun setPendingPublicKeySync(contactId: Long, pendingKeyBase64: String) {
         val db = dbHelper.writableDatabase
