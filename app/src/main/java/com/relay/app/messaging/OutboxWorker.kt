@@ -34,7 +34,8 @@ class OutboxWorker(context: Context, private val transport: Transport) {
                 fail(entry.id, entry.payloadId, entry.contactId)
                 return@run 0
             }
-            val hints = contacts.getByIdSync(entry.contactId)?.relayHints.orEmpty()
+            // A contact's current hints, plus any the group roster supplied for a member who isn't one.
+            val hints = (entry.contactId?.let { contacts.getByIdSync(it)?.relayHints }.orEmpty() + entry.relayHints).distinct()
             when (val result = transport.send(entry.recipientPubkeyHex, payload, hints)) {
                 is SendResult.Sent -> {
                     outbox.markSentSync(entry.id)
@@ -58,14 +59,16 @@ class OutboxWorker(context: Context, private val transport: Transport) {
         return delivered
     }
 
-    private fun fail(entryId: Long, payloadId: String, contactId: Long) {
+    private fun fail(entryId: Long, payloadId: String, contactId: Long?) {
         outbox.markFailedSync(entryId)
         messages.setDeliveryStateSync(payloadId, DeliveryState.FAILED)
         com.relay.app.groups.GroupDelivery.update(appContext, payloadId, DeliveryState.FAILED)
         broadcast(contactId)
     }
 
-    private fun broadcast(contactId: Long) {
+    private fun broadcast(contactId: Long?) {
+        // Group legs to non-contacts are refreshed through GroupDelivery instead.
+        if (contactId == null) return
         appContext.sendBroadcast(Intent("com.relay.app.NEW_MESSAGE").apply {
             putExtra("contact_id", contactId)
             setPackage(appContext.packageName)

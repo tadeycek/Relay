@@ -13,7 +13,7 @@ class OutboxRepository(private val dbHelper: RelayDbHelper) {
     fun enqueueSync(entry: OutboxEntry): Long {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply {
-            put(Outbox.COL_CONTACT_ID, entry.contactId)
+            entry.contactId?.let { put(Outbox.COL_CONTACT_ID, it) } ?: putNull(Outbox.COL_CONTACT_ID)
             put(Outbox.COL_RECIPIENT, entry.recipientPubkeyHex)
             put(Outbox.COL_PAYLOAD_ID, entry.payloadId)
             put(Outbox.COL_PAYLOAD_JSON, entry.payloadJson)
@@ -21,6 +21,7 @@ class OutboxRepository(private val dbHelper: RelayDbHelper) {
             put(Outbox.COL_ATTEMPTS, entry.attempts)
             put(Outbox.COL_NEXT_ATTEMPT_AT, entry.nextAttemptAt)
             put(Outbox.COL_STATE, entry.state.dbValue)
+            if (entry.relayHints.isNotEmpty()) put(Outbox.COL_RELAY_HINTS, entry.relayHints.joinToString("\n"))
         }
         return db.insert(Outbox.TABLE, null, values)
     }
@@ -91,7 +92,7 @@ class OutboxRepository(private val dbHelper: RelayDbHelper) {
 
     private fun Cursor.toEntry() = OutboxEntry(
         id = getLong(getColumnIndexOrThrow(Outbox.COL_ID)),
-        contactId = getLong(getColumnIndexOrThrow(Outbox.COL_CONTACT_ID)),
+        contactId = getColumnIndexOrThrow(Outbox.COL_CONTACT_ID).let { if (isNull(it)) null else getLong(it) },
         recipientPubkeyHex = getString(getColumnIndexOrThrow(Outbox.COL_RECIPIENT)),
         payloadId = getString(getColumnIndexOrThrow(Outbox.COL_PAYLOAD_ID)),
         payloadJson = getString(getColumnIndexOrThrow(Outbox.COL_PAYLOAD_JSON)),
@@ -99,5 +100,6 @@ class OutboxRepository(private val dbHelper: RelayDbHelper) {
         attempts = getInt(getColumnIndexOrThrow(Outbox.COL_ATTEMPTS)),
         nextAttemptAt = getLong(getColumnIndexOrThrow(Outbox.COL_NEXT_ATTEMPT_AT)),
         state = OutboxState.fromDb(getInt(getColumnIndexOrThrow(Outbox.COL_STATE))),
+        relayHints = getColumnIndexOrThrow(Outbox.COL_RELAY_HINTS).let { if (isNull(it)) emptyList() else getString(it).split('\n').filter(String::isNotBlank) },
     )
 }

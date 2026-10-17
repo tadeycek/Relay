@@ -10,10 +10,11 @@ enum class OutboxState(val dbValue: Int) {
     }
 }
 
-/** A message waiting to be (re)published. The payload JSON is stored verbatim so retries are byte-identical. */
+/** A message waiting to be (re)published. The payload JSON is stored verbatim so retries are byte-identical.
+ *  [contactId] is null for a group member who isn't a contact; [relayHints] then come from the group roster. */
 data class OutboxEntry(
     val id: Long = 0L,
-    val contactId: Long,
+    val contactId: Long?,
     val recipientPubkeyHex: String,
     val payloadId: String,
     val payloadJson: String,
@@ -21,6 +22,7 @@ data class OutboxEntry(
     val attempts: Int = 0,
     val nextAttemptAt: Long = createdAt,
     val state: OutboxState = OutboxState.QUEUED,
+    val relayHints: List<String> = emptyList(),
 )
 
 /**

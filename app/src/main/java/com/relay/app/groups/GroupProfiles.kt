@@ -5,13 +5,12 @@ import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.media.ProfileNameBody
 import com.relay.app.messaging.MessagingDb
-import com.relay.app.messaging.Outgoing
 import com.relay.app.transport.nostr.NostrIdentity
 import com.relay.app.util.RelayPreferences
 import java.util.UUID
 
-/** Profile revisions are separate from owner-authorized membership revisions. Owner relays names
- * only for current members, authenticated on the existing private transport. Never forwards aliases. */
+/** Profile revisions are separate from owner-authorized membership revisions. Each member announces their
+ * own name directly to the other members, who accept it only for current roster members. Never sends aliases. */
 object GroupProfiles {
     const val CREATE = """CREATE TABLE group_profiles (
         group_id INTEGER NOT NULL REFERENCES groups(_id) ON DELETE CASCADE,
@@ -32,21 +31,11 @@ object GroupProfiles {
             ON CONFLICT(group_id,member_key) DO UPDATE SET revision=excluded.revision,name=excluded.name
             WHERE excluded.revision > group_profiles.revision""", arrayOf(group, key, update.revision, update.name))
     }
-    fun accepts(sender: String, own: String, current: GroupProtocol.State, p: GroupProtocol.Packet): Boolean =
-        p.state.id == current.id && p.state.owner == current.owner &&
-            current.members.any { it.key == own } && current.members.any { it.key == p.author } &&
-            ((p.kind == "profile-submit" && own == current.owner && sender == p.author && sender != own) ||
-                (p.kind == "profile" && sender == current.owner))
-
-    @Synchronized fun handle(context: Context, sender: String, stored: SharedGroups.Stored?, packet: GroupProtocol.Packet) {
-        if (stored == null || stored.hidden) return
-        val own = NostrIdentity.publicKeyHex(context)
-        if (!accepts(sender, own, stored.state, packet)) return
-        val update = ProfileNameBody.parse(packet.text) ?: return
-        val db = MessagingDb.get(context)
-        save(db, stored.localId, packet.author, update)
+    /** A name update [SharedGroups] already checked: sent by its author, who is on our roster. */
+    internal fun apply(context: Context, stored: SharedGroups.Stored, e: GroupProtocol.Event) {
+        val update = ProfileNameBody.parse(e.text) ?: return
+        save(MessagingDb.get(context), stored.localId, e.author, update)
         SharedGroups.notify(context, stored.localId)
-        if (own == stored.state.owner) syncPending(context)
     }
 
     /** Invoked on profile changes, membership changes and reconnect. Durable queue markers avoid
@@ -75,18 +64,15 @@ object GroupProfiles {
                 }
                 GroupAvatars.sync(context, id, state)
                 GroupAvatars.request(context, id, state)
-                val authors = if (own == state.owner) state.members.map { it.key } else listOf(own)
-                val recipients = if (own == state.owner) state.members.map { it.key }.filter { it != own } else listOf(state.owner)
-                for (author in authors) {
-                    val update = latest(db, id, author) ?: continue
-                    val body = ProfileNameBody.format(update)
-                    val packet = GroupProtocol.Packet(if (own == state.owner) "profile" else "profile-submit", state,
-                        UUID.randomUUID().toString(), author, body, System.currentTimeMillis())
-                    for (key in recipients) {
-                        val contact = repo.findByNostrPubkeySync(key)?.takeIf(GroupProtocol::eligible) ?: continue
-                        val marker = "$id:$author:$key:${state.revision}"
+                // Each member announces only their own name, straight to everyone else on the roster.
+                val update = latest(db, id, own)
+                if (update != null) {
+                    val packet = GroupProtocol.Event("profile", GroupProtocol.ref(state), UUID.randomUUID().toString(), own,
+                        ProfileNameBody.format(update), System.currentTimeMillis())
+                    for (to in SharedGroups.recipients(db, state, own)) {
+                        val marker = "$id:$own:${to.key}:${state.revision}"
                         if (markers.getLong(marker, -1) >= update.revision) continue
-                        if (Outgoing.enqueue(context, contact, GroupProtocol.format(packet)) != null)
+                        if (runCatching { SharedGroups.queue(context, db, to, id, packet) }.isSuccess)
                             check(markers.edit().putLong(marker, update.revision).commit())
                     }
                 }

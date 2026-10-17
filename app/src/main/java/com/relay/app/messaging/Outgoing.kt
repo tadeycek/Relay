@@ -18,17 +18,35 @@ object Outgoing {
      */
     fun enqueue(context: Context, contact: Contact, plainBody: String, seal: Boolean = true, payloadId: String = PayloadCodec.newId()): String? {
         val recipient = contact.nostrPubkey ?: return null
+        return enqueueTo(context, recipient, if (seal) contact.publicKey else null, emptyList(), contact.id, plainBody, payloadId)
+    }
+
+    /**
+     * Like [enqueue], for a recipient who may not be a contact (a group member): the group roster supplies
+     * the Tink key ([innerKey], null sends without the inner layer) and [relayHints]. [contactId] links the
+     * entry to a contact when there is one.
+     */
+    fun enqueueTo(
+        context: Context,
+        recipient: String,
+        innerKey: String?,
+        relayHints: List<String>,
+        contactId: Long?,
+        plainBody: String,
+        payloadId: String = PayloadCodec.newId(),
+    ): String? {
         val now = System.currentTimeMillis()
-        val body = if (seal) InnerEnvelope.seal(contact.publicKey, plainBody) else plainBody
+        val body = InnerEnvelope.seal(innerKey, plainBody)
         require(body.length <= PayloadCodec.MAX_BODY_LENGTH) { "Message is too large; shorten it and try again" }
         val payload = RelayPayload(id = payloadId, ts = now, body = body)
         val stored = OutboxRepository(MessagingDb.get(context)).enqueueSync(
             OutboxEntry(
-                contactId = contact.id,
+                contactId = contactId,
                 recipientPubkeyHex = recipient,
                 payloadId = payload.id,
                 payloadJson = PayloadCodec.encode(payload),
                 createdAt = now,
+                relayHints = relayHints,
             )
         )
         if (stored == -1L) return null

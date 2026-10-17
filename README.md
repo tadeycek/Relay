@@ -17,9 +17,10 @@ or otherwise compromised device.
 
 Choose **People → New group**, enter a name and select up to sixteen verified friends. Only
 active, unblocked friends with accepted encryption keys can be invited. Invitations and replies
-travel through the existing encrypted messaging transport. The creator forwards members' replies;
-the creator's phone must reconnect for those replies to reach the rest of the group. Group members
-can see one another's shared names and messaging IDs, but are not automatically verified contacts.
+travel through the existing encrypted messaging transport. Messages, reactions, deletions, typing and
+name updates go **directly from the sender to every member**, so they arrive without waiting for the
+creator's phone. Only membership changes come from the creator. Group members can see one another's
+shared names and messaging IDs, but are not automatically verified contacts.
 The creator controls additions/removals; other members can delete the group locally. Deleting your
 own group closes it for everyone. Old local-only groups remain readable; create a new group for
 shared conversations. Install **1.8-preview or newer on every participant's phone** for group photos,
@@ -107,7 +108,7 @@ background for up to seven days. Failed local preparation leaves the draft avail
 Queued means local acceptance; sent means relay acceptance, never proof of recipient delivery.
 Group names use separate monotonic profile revisions, leaving membership/permissions unchanged.
 Current names apply to historical sender labels; saved reply quotes retain their original snapshot.
-All participants, including the creator, need 1.9 for group-name forwarding; the creator must reconnect.
+Each member announces their own name directly to the other members.
 
 Choose **Account → Profile photo → Choose photo and share** to share your own avatar with
 mutually approved contacts. Photos are reduced to a JPEG of at most 256 px / 8 KiB, sent inside the
@@ -191,7 +192,7 @@ There is no map screen. In a chat, **Share my location** sends your current posi
 Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. Accepted uploads retry in the durable background queue for up to seven days; after final failure, delete the failed bubble and resubmit if needed. The defaults are `blossom.ditto.pub` and `blossom.data.haus`; encrypted binary upload/download, hash verification, decryption and cleanup were tested at the 3 MiB photo limit. Availability and retention can change. Gallery access uses selected-URI grants and survives session expiry. Photos retain their aspect ratio and camera orientation. Tap a photo to view/zoom it, or a video to play it, inside the app. Playback stops on close, backgrounding or session expiry. Private plaintext view copies are removed when their bubbles leave composition and leftover copies are removed on process startup. A direct peer connection is not required.
 
 ### Groups
-Shared groups use a creator-controlled roster and encrypted private fanout to up to sixteen verified friends. The creator checks submitting members and forwards their posts; members authenticate the creator rather than independently authenticating the original author. Creator connectivity is required for forwarding. See the group instructions above and rebuild/VERIFICATION.md for current test limits.
+Shared groups use a creator-controlled roster and encrypted private fanout to up to sixteen verified friends. Group protocol v2 sends every post, deletion, purge, name update and typing signal straight from its author to each member (one relay hop). A receiver accepts an event only when the authenticated sender is its author and is on the receiver's own copy of the roster. Only the creator can send roster updates. The roster carries each member's Tink key and up to two relay hints, vouched for by the creator, who verified them by QR, so members who aren't each other's contacts can still seal to and reach one another. An event naming a newer roster than the receiver has (e.g. from a just-added member) is held, bounded and expiring, until that roster arrives. **Every participant needs a build with protocol v2**: older phones only accept group posts forwarded by the creator, so they stop receiving other members' messages. See the group instructions above and rebuild/VERIFICATION.md for current test limits.
 
 ### Tor (optional)
 Settings → Privacy → "Hide my IP from relays (Tor)" routes relay and media connections through **Orbot** (the Guardian Project's Tor app), which must be installed and started separately: Relay does not include Tor. Setup is written out under the switch in the app: install Orbot, open it and tap Start, then turn the switch on; Relay expects Orbot at 127.0.0.1:9050. It **fails closed**: with Tor on and Orbot not running, nothing is sent and the status shows "Waiting for Tor". Off by default. Embedded Tor is not built, and the real Tor path has not been tested.
@@ -214,7 +215,7 @@ Threat-model notes: metadata (who talks to whom, when, message size) is partly v
 - Media uploads are not retried automatically.
 - Public relay/blob-server retention and continued availability are not guaranteed.
 - No `.onion` relays are bundled; relay list editing UI is not built (defaults/preferences only).
-- Shared groups depend on the creator for availability and attribution of forwarded messages; there is no independent per-author group signature or forward-secure group key schedule.
+- Shared groups depend on the creator only for membership changes. Members trust the creator's roster for who belongs and for other members' keys and relay hints; each event is authenticated by its author's own Nostr seal. There is no forward-secure group key schedule. A just-removed member can briefly exchange messages with members who haven't received the new roster yet. Until a creator's phone refreshes a roster saved before v2, members who aren't each other's contacts are reached without the inner Tink layer (NIP-17 encryption only).
 - No license file yet.
 - Android tests cover Calculator access, Keystore persistence, notifications and layout; the opt-in two-emulator harness checks live conversations. Real-phone and Tor integration still need device tests.
 

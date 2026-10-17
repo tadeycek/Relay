@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 19
+    const val DB_VERSION = 20
 
     object Contacts {
         const val TABLE = "contacts"
@@ -177,24 +177,34 @@ object DatabaseContract {
         const val COL_ATTEMPTS = "attempts"
         const val COL_NEXT_ATTEMPT_AT = "next_attempt_at"
         const val COL_STATE = "state"
+        const val COL_RELAY_HINTS = "relay_hints"
 
+        /** [COL_CONTACT_ID] is null for a group member who isn't a contact (v20); [COL_RELAY_HINTS] then
+         *  carries the group roster's relay hints for them, newline-separated. */
         const val CREATE = """
             CREATE TABLE IF NOT EXISTS $TABLE (
                 $COL_ID              INTEGER PRIMARY KEY AUTOINCREMENT,
-                $COL_CONTACT_ID      INTEGER NOT NULL REFERENCES ${Contacts.TABLE}(${Contacts.COL_ID}) ON DELETE CASCADE,
+                $COL_CONTACT_ID      INTEGER REFERENCES ${Contacts.TABLE}(${Contacts.COL_ID}) ON DELETE CASCADE,
                 $COL_RECIPIENT       TEXT    NOT NULL,
                 $COL_PAYLOAD_ID      TEXT    NOT NULL,
                 $COL_PAYLOAD_JSON    TEXT    NOT NULL,
                 $COL_CREATED_AT      INTEGER NOT NULL,
                 $COL_ATTEMPTS        INTEGER NOT NULL DEFAULT 0,
                 $COL_NEXT_ATTEMPT_AT INTEGER NOT NULL,
-                $COL_STATE           INTEGER NOT NULL DEFAULT 0
+                $COL_STATE           INTEGER NOT NULL DEFAULT 0,
+                $COL_RELAY_HINTS     TEXT
             )
         """
 
         const val INDEX_DUE = """
             CREATE INDEX IF NOT EXISTS idx_outbox_due ON $TABLE($COL_STATE, $COL_NEXT_ATTEMPT_AT)
         """
+
+        // v20 relaxes NOT NULL on contact_id, which SQLite can't do in place: move the old table aside,
+        // create the new one, copy every entry (ids, attempts and state included), then drop the old one.
+        const val V20_RENAME = "ALTER TABLE $TABLE RENAME TO outbox_v19"
+        const val V20_COPY = "INSERT INTO $TABLE ($COL_ID, $COL_CONTACT_ID, $COL_RECIPIENT, $COL_PAYLOAD_ID, $COL_PAYLOAD_JSON, $COL_CREATED_AT, $COL_ATTEMPTS, $COL_NEXT_ATTEMPT_AT, $COL_STATE) SELECT $COL_ID, $COL_CONTACT_ID, $COL_RECIPIENT, $COL_PAYLOAD_ID, $COL_PAYLOAD_JSON, $COL_CREATED_AT, $COL_ATTEMPTS, $COL_NEXT_ATTEMPT_AT, $COL_STATE FROM outbox_v19"
+        const val V20_DROP = "DROP TABLE outbox_v19"
     }
 
     /**
