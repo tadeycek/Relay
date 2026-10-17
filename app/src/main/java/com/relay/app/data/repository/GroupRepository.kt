@@ -26,7 +26,7 @@ class GroupRepository(private val dbHelper: RelayDbHelper) {
             }
             list
         }
-        groups.map { g -> g.copy(members = getMembersSync(g.id)) }
+        groups.mapNotNull { g -> com.relay.app.groups.SharedGroups.enrich(dbHelper, g.copy(members = getMembersSync(g.id))) }
     }
 
     suspend fun insertGroup(name: String, memberContactIds: List<Long>): Long = withContext(Dispatchers.IO) {

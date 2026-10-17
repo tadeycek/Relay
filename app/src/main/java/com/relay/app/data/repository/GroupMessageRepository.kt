@@ -31,6 +31,8 @@ class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
             put(GroupMessages.COL_GROUP_ID, msg.groupId)
             msg.contactId?.let { put(GroupMessages.COL_CONTACT_ID, it) }
             put(GroupMessages.COL_BODY, msg.body)
+            put("sender_key", msg.senderKey)
+            put("sender_name", msg.senderName)
             put(GroupMessages.COL_TYPE, msg.type.name)
             msg.lat?.let { put(GroupMessages.COL_LAT, it) }
             msg.lng?.let { put(GroupMessages.COL_LNG, it) }
@@ -89,6 +91,8 @@ class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
             groupId = getLong(getColumnIndexOrThrow(GroupMessages.COL_GROUP_ID)),
             contactId = if (isNull(contactIdIdx)) null else getLong(contactIdIdx),
             body = getString(getColumnIndexOrThrow(GroupMessages.COL_BODY)),
+            senderKey = getString(getColumnIndexOrThrow("sender_key")),
+            senderName = getString(getColumnIndexOrThrow("sender_name")),
             type = MessageType.fromDb(getString(getColumnIndexOrThrow(GroupMessages.COL_TYPE))),
             lat = if (isNull(latIdx)) null else getDouble(latIdx),
             lng = if (isNull(lngIdx)) null else getDouble(lngIdx),

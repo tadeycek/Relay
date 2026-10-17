@@ -1,5 +1,9 @@
-Calculator 1.4 preview package
+Calculator 1.5 preview package
 ==========================
+
+New in 1.5: picker handoff repair, shared groups with verified friends, quoted replies,
+and short-lived typing indicators. These new Android interactions have not yet been
+checked on a phone; this is a test preview. Install 1.5 on every participating phone.
 
 00-Calculator-preview.apk is the Android installer. The numbered names put it first
 when sorting this folder by name. Android 8 or newer is required. Allow installation
@@ -83,3 +87,28 @@ See README.md for setup, consent, routing, recovery and remaining limitations.
 02-TEST-RESULTS.txt states what was actually checked. 04-SHA256SUMS.txt lets you
 verify the files. Local databases, phone identities, credentials, private logs,
 signing keys and SDK/JDK installations are excluded from the source archive.
+
+Groups and replies
+------------------
+People → New group opens a shared conversation with up to sixteen verified friends.
+The creator mediates group delivery using encrypted messages and must reconnect for
+members' replies to be forwarded. Names and messaging IDs are shared with members.
+The creator can add/remove friends; a removed member cannot submit further posts.
+Members aren't automatically added or marked verified on other members' phones.
+Delete closes a creator-owned group; on other phones it deletes the local copy.
+Existing local-only groups are retained for reading and do not send private direct
+messages masquerading as group messages. Create a new shared group instead.
+This first group version supports text and quoted replies, not group attachments or
+location requests. It trusts the creator to attribute and forward other members'
+posts; it does not independently authenticate each original author to every member.
+
+Tap Reply beneath a message, type, and send. Cancel reply clears the quote.
+Typing indicators stop after a pause/send/exit and expire within eight seconds if
+interrupted. They use the existing encrypted transport and are not stored in chat
+history or the durable send queue; encrypted relay events can still be retained by
+relays. Disable them under Account → Privacy and Tor → Typing indicators.
+
+Phone checks still required: picker selection/cancel/camera return, session expiry
+inside a picker, three-phone invitations/replies/removal/offline delivery, quoted
+photo/video captions and typing indicator appearance/clear. No emulator profiles
+were recreated. No claim of a bug-free or audited release is made.

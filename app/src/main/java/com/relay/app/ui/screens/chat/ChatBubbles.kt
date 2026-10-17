@@ -31,6 +31,8 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import com.relay.app.messaging.ReplyBody
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -75,12 +77,12 @@ private val MediaScrim = Color.Black.copy(alpha = 0.55f)
 
 /** One row of the chat list. */
 @Composable
-fun ChatItemRow(item: ChatItem, contactName: String, senderName: ((Long) -> String?)? = null) {
+fun ChatItemRow(item: ChatItem, contactName: String, senderName: ((Long) -> String?)? = null, onReply: ((Message) -> Unit)? = null) {
     when (item) {
         is ChatItem.Day -> DaySeparator(item.label)
         is ChatItem.UnreadDivider -> UnreadDivider(item.count)
         is ChatItem.Note -> SystemNote(item.message, contactName)
-        is ChatItem.Bubble -> BubbleRow(item, senderName?.takeIf { !item.message.isSent && item.startsGroup }?.invoke(item.message.contactId))
+        is ChatItem.Bubble -> BubbleRow(item, senderName?.takeIf { !item.message.isSent && item.startsGroup }?.invoke(item.message.contactId), onReply)
     }
 }
 
@@ -145,7 +147,7 @@ private fun SystemNote(message: Message, contactName: String) {
 }
 
 @Composable
-private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null) {
+private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((Message) -> Unit)? = null) {
     val message = item.message
     val shape = bubbleShape(message.isSent, item.startsGroup)
     Column(
@@ -155,6 +157,12 @@ private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null) {
             .padding(top = if (item.startsGroup) 10.dp else 2.dp),
         horizontalAlignment = if (message.isSent) Alignment.End else Alignment.Start,
     ) {
+        if (sender != null) Text(sender, style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+        val reply = ReplyBody.parse(message.body)
+        if (reply != null) Column(Modifier.widthIn(max = MaxBubbleWidth).padding(vertical = 4.dp)) {
+            Text("↪ ${reply.name}", style = MaterialTheme.typography.labelMedium, color = TextSecondary)
+            Text(reply.quote, maxLines = 3, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+        }
         when (message.type) {
             MessageType.TEXT -> TextBubble(message, shape)
             MessageType.LOCATION -> LocationCard(message, shape)
@@ -164,6 +172,9 @@ private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null) {
             MessageType.LOCATION_REQUEST, MessageType.LOCATION_DECLINED -> Unit
         }
         if (item.endsGroup) MessageMeta(message)
+        if (onReply != null) TextButton(onClick = { onReply(message) }, contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp, vertical = 0.dp)) {
+            Text("Reply", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+        }
     }
 }
 
@@ -211,7 +222,7 @@ private fun MessageMeta(message: Message) {
 private fun TextBubble(message: Message, shape: Shape) {
     val sent = message.isSent
     Text(
-        text = message.body,
+        text = ReplyBody.preview(message.body),
         style = MaterialTheme.typography.bodyLarge,
         color = if (sent) OnAccent else TextPrimary,
         modifier = Modifier
@@ -353,7 +364,7 @@ private fun VideoBubble(message: Message, shape: Shape) {
 @Composable
 private fun MediaCaption(text: String) {
     Text(
-        text = text,
+        text = ReplyBody.preview(text),
         style = MaterialTheme.typography.bodyMedium,
         color = TextPrimary,
         modifier = Modifier.padding(horizontal = RelaySpacing.md, vertical = RelaySpacing.sm),

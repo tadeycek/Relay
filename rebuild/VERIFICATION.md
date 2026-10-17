@@ -1,31 +1,79 @@
-# Calculator 1.4 preview verification — 2026-10-17
+# Calculator 1.5 preview verification — 2026-10-17
 
-This revision changes Android's registered application identity to the requested
-Viber name and supplied purple phone icon. MainActivity explicitly retains the
-Calculator home-screen label and calculator launcher icon. Package com.relay.app
-and signing identity are unchanged; this is still the Relay messaging build.
+This revision repairs explicit media-picker handoffs and adds shared text groups,
+quoted replies and short-lived typing indicators. It remains a test preview.
 
-## Verified
+## Checks
 
-- Preview APK build and lint completed successfully. Version 1.4-preview, code 5.
-- The compiled APK reports application-label Viber. Every application-icon density
-  entry resolves to notification_avatar_badge.png, not the calculator launcher icon.
-- The compiled launchable MainActivity reports label Calculator and its calculator
-  adaptive icon, independently of the application-level identity.
-- Pixels decoded from the packaged application icon exactly match the supplied
-  purple phone image. Application roundIcon points to that same phone image.
-- APK signature verification passes and its certificate matches 1.3, supporting an
-  in-place update without changing package identity or clearing existing app data.
-- The emulator device/profile listings remain empty. No emulators or virtual-device
-  profiles were recreated for this change. No physical phone is connected to adb,
-  so notification appearance on Samsung was not checked at runtime in this revision.
+- Preview application APK and Android test APK compile; JVM tests and lint pass.
+  Version 1.5-preview, code 6. Lint: zero errors, 18 warnings, 7 information items.
+- All 254 JVM tests pass with zero failures, errors or skips. New tests cover:
+  picker retention only inside the unchanged session deadline; verified-friend
+  eligibility; creator-only roster updates; member/author checks; stale rosters,
+  removal and delayed posts; malformed/oversized group controls; Unicode payload
+  budgets; quoted text and media-caption encoding; reply previews; fresh typing
+  signals, expiry, ordering, stop events and conversation isolation.
+- A separate host SQLite check executes the group table definitions and additive
+  v16 migration statements. Existing v15 group/message data is retained. Event
+  uniqueness, rollback and foreign-key cleanup pass. This is a host schema check,
+  not an Android SQLCipher runtime or multi-phone integration test. Reproduce with
+  `python3 rebuild/dev/check-group-schema.py`.
+- The final APK signature verifies against the existing debug signing certificate.
+  Its package is com.relay.app; Android application label/icon remain Viber and the
+  supplied purple phone picture. MainActivity remains Calculator with its calculator
+  launcher icon. In-place installation preserves the package/signing identity.
+- No Android devices are connected. Emulator/profile listings remain empty; no
+  profiles were recreated. Android instrumentation tests were compiled, not run.
 
-Install the new APK over the existing app, dismiss the old preview and receive a new
-message to check the source name and application badge. Android settings and installer
-will also show Viber; the launcher remains Calculator. Other notification behavior,
-including tap-to-dismiss, is unchanged from 1.3.
+## Behavior and limits
 
-The broader Android/JVM checks in [VERIFICATION-1.3-preview.md](VERIFICATION-1.3-preview.md)
-and earlier reports are historical and were not repeated for this manifest/resource
-change. Lint findings and physical-phone/OEM styling remain limitations. This remains
-a debug-signed test preview, not a claim of no remaining bugs or an independent audit.
+An explicitly launched gallery, camera or profile picker retains the private
+navigation tree while the original fixed ten-minute session remains active.
+Picker cancellation/selection clears that handoff; expiry still removes private
+screens. Process death never restores a session. Ordinary backgrounding keeps the
+existing calculator gate behavior. Missing pickers show an error rather than throw.
+
+People → New group invites up to sixteen verified active friends with accepted
+keys. New groups have a shared random ID and creator-controlled versioned roster.
+The creator stores/fans out replies with durable outbox entries in one transaction;
+failed inserts roll back. Received group events are deduplicated. Individual direct
+messages are no longer mirrored into groups. Existing local-only groups are kept
+readable and must be recreated to become shared conversations.
+
+The creator is a routing participant, not an external service: its phone must
+reconnect to forward members' replies. Members authenticate the creator's forwarded
+posts; there is no independent original-author signature for every recipient.
+Members see shared names and messaging IDs without automatically becoming verified
+contacts. Only the creator changes membership; removed members cannot submit.
+Creator deletion closes the group; other members delete only their local copy.
+A local deletion retains a hidden tombstone so later messages cannot restore it.
+This group version supports text and quoted replies, not group media/location.
+
+Reply buttons quote a bounded snapshot. Text, media captions and previews decode
+that snapshot for display. Typing signals use authenticated encrypted NIP-17 sends,
+without the persistent outbox, chat history or durable payload replay table. Signals
+expire after eight seconds and stop on pause/send/exit; transport delivery is best
+effort. Encrypted relay events may still be retained by relays. Users can disable
+indicators under Account → Privacy and Tor → Typing indicators.
+
+All participants need 1.5-preview or newer for these features. Existing contacts,
+profile sharing, Calculator entry, Control Panel recovery, notification source
+identity and tap-to-dismiss previews are preserved.
+
+## Phone verification still required
+
+- Select/cancel gallery photo or video and return to the same chat with the draft;
+  test camera permission denial/capture and profile-photo selection too.
+- Keep a picker open across session expiry; returning must require the code.
+  Repeat with process death/rotation and the optional biometric app lock.
+- On three updated phones: creator invites two verified friends; both receive the
+  same group and can reply to everyone. Verify offline reconnect, replay/dedup,
+  member addition/removal, local deletion and creator closure.
+- Check quoted text/photo/video captions, notification dismissal and typing
+  appearance/expiry/pause/disabled behavior on real phones and Samsung's UI.
+
+Earlier device/network checks in archived verification reports are historical;
+they were not rerun for this revision. Current lint warnings include the intentional
+preview-dismiss broadcast PendingIntents as well as existing compatibility/resource
+findings. This is debug-signed, has no independent security audit, and is not a claim
+that the new Android interactions or all app features are free of bugs.

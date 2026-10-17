@@ -44,6 +44,7 @@ class RelayDbHelper(context: Context) :
         db.execSQL(DatabaseContract.SeenPayloads.CREATE)
         db.execSQL(DatabaseContract.Messages.INDEX_UNREAD)
         db.execSQL(DatabaseContract.GroupMessages.INDEX_UNREAD)
+        createSharedGroups(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -112,6 +113,7 @@ class RelayDbHelper(context: Context) :
             // reference it, are unaffected; only a real delete cascades and removes them.
             db.execSQL(DatabaseContract.Contacts.ADD_DELETED_AT)
         }
+        if (oldVersion < 16) createSharedGroups(db)
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.
@@ -121,6 +123,13 @@ class RelayDbHelper(context: Context) :
                     "${DatabaseContract.Contacts.COL_NAME} WHERE ${DatabaseContract.Contacts.COL_ORIGINAL_NAME} IS NULL"
             )
         }
+    }
+
+    private fun createSharedGroups(db: SQLiteDatabase) {
+        db.execSQL(com.relay.app.groups.SharedGroups.CREATE)
+        db.execSQL(com.relay.app.groups.SharedGroups.CREATE_SEEN)
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN sender_key TEXT")
+        db.execSQL("ALTER TABLE group_messages ADD COLUMN sender_name TEXT")
     }
 
     override fun onConfigure(db: SQLiteDatabase) {

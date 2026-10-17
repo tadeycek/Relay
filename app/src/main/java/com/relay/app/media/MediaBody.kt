@@ -40,14 +40,15 @@ object MediaBody {
     fun isMedia(body: String): Boolean = body.trim().startsWith(PREFIX, ignoreCase = true)
 
     fun format(ref: MediaRef): String {
-        val caption = sanitizeCaption(ref.caption)
+        val caption = normalizeCaption(ref.caption)
         val sb = StringBuilder(PREFIX)
         sb.append("URL:").append(ref.url)
         sb.append("|SHA:").append(ref.sha256Hex)
         sb.append("|KEY:").append(ref.keyBase64)
         sb.append("|MIME:").append(ref.mime)
         sb.append("|SIZE:").append(ref.size)
-        if (caption.isNotEmpty()) sb.append("|CAP:").append(caption)
+        if (com.relay.app.messaging.ReplyBody.parse(caption) != null) sb.append("|CAP64:").append(Base64.getEncoder().encodeToString(caption.toByteArray(Charsets.UTF_8)))
+        else if (caption.isNotEmpty()) sb.append("|CAP:").append(caption)
         return sb.toString()
     }
 
@@ -74,13 +75,21 @@ object MediaBody {
         val size = fields["SIZE"]?.toLongOrNull() ?: return null
         if (size < 1 || size > MAX_MEDIA_BYTES) return null
 
+        val caption = if (fields.containsKey("CAP64")) {
+            val encoded = fields["CAP64"]!!
+            if (encoded.length > 4096) return null
+            val decoded = runCatching { String(Base64.getDecoder().decode(encoded), Charsets.UTF_8) }.getOrNull() ?: return null
+            val reply = com.relay.app.messaging.ReplyBody.parse(decoded) ?: return null
+            if (reply.text.length > MAX_CAPTION_LENGTH) return null
+            decoded
+        } else sanitizeCaption(fields["CAP"] ?: "")
         return MediaRef(
             url = url,
             sha256Hex = sha,
             keyBase64 = key,
             mime = mime,
             size = size,
-            caption = sanitizeCaption(fields["CAP"] ?: ""),
+            caption = caption,
         )
     }
 
@@ -96,6 +105,12 @@ object MediaBody {
         val authority = rest.substringBefore('/').substringBefore('?').substringBefore('#')
         if (authority.isEmpty() || authority.contains('@')) return false
         return true
+    }
+
+    fun normalizeCaption(caption: String): String {
+        val reply = com.relay.app.messaging.ReplyBody.parse(caption)
+        return if (reply == null) sanitizeCaption(caption)
+        else com.relay.app.messaging.ReplyBody.format(reply.copy(text = reply.text.take(MAX_CAPTION_LENGTH)))
     }
 
     fun sanitizeCaption(caption: String): String =

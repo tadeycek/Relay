@@ -87,8 +87,14 @@ class MainActivity : FragmentActivity() {
                 if (!calculatorSession.isActive()) closePrivateScreens()
             }
             val privateScreenState = rememberSaveableStateHolder()
-            val mediaPicker = rememberChatMediaPicker()
-            val profilePhotoPicker = rememberProfilePhotoPicker()
+            val mediaPicker = rememberChatMediaPicker(
+                onLaunch = { calculatorSession.pickerOpen = true },
+                onReturn = { calculatorSession.pickerOpen = false },
+            )
+            val profilePhotoPicker = rememberProfilePhotoPicker(
+                onLaunch = { calculatorSession.pickerOpen = true },
+                onReturn = { calculatorSession.pickerOpen = false },
+            )
             val messagingDark = when (ThemeController.mode) {
                 ThemeMode.DARK -> true
                 ThemeMode.LIGHT -> false
@@ -208,12 +214,12 @@ class MainActivity : FragmentActivity() {
     }
 
     override fun onUserLeaveHint() {
-        closePrivateScreens()
+        if (!calculatorSession.keepChatForPicker()) closePrivateScreens()
         super.onUserLeaveHint()
     }
 
     override fun onStop() {
-        closePrivateScreens()
+        if (!calculatorSession.keepChatForPicker()) closePrivateScreens()
         super.onStop()
     }
 }

@@ -9,11 +9,14 @@ class NotificationDismissReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_DISMISS) return
         val contactId = intent.getLongExtra(EXTRA_CONTACT_ID, -1L)
+        val groupId = intent.getLongExtra(EXTRA_GROUP_ID, -1L)
+        if (groupId > 0) GroupMessageNotifier.cancel(context, groupId)
         if (contactId > 0) MessageNotifier.cancel(context, contactId)
     }
 
     companion object {
         const val ACTION_DISMISS = "com.relay.app.DISMISS_MESSAGE_PREVIEW"
+        const val EXTRA_GROUP_ID = "dismiss_group_id"
         const val EXTRA_CONTACT_ID = "dismiss_contact_id"
     }
 }

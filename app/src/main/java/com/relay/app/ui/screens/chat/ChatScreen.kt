@@ -86,6 +86,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val messages by vm.messages.collectAsState()
     val contact by vm.contact.collectAsState()
     val unreadAnchor by vm.unreadAnchorId.collectAsState()
+    var replyDraft by rememberSaveable { mutableStateOf<String?>(null) }
     var inputText by rememberSaveable { mutableStateOf("") }
     val context = LocalContext.current
     val listState = rememberLazyListState()
@@ -217,7 +218,9 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.md),
                 ) {
-                    items(items, key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "") }
+                    items(items, key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "", onReply = { message ->
+                        replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(context).myName.ifBlank { "Me" } else contact?.name ?: "Someone")
+                    }) }
                 }
             }
 
@@ -234,9 +237,11 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                         .padding(RelaySpacing.lg),
                 )
             } else {
+                ConversationTyping(inputText, contactId = contactId)
+                ReplyPreview(replyDraft) { replyDraft = null }
                 Composer(
                     value = inputText,
-                    onValueChange = { inputText = it },
+                    onValueChange = { inputText = it.take(8000) },
                     pendingMediaUri = pendingMediaUri,
                     pendingMediaMime = pendingMimeType,
                     onClearMedia = { mediaPicker.clear(contactId) },
@@ -244,11 +249,13 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                     onSend = {
                         val uri = pendingMediaUri
                         if (uri != null) {
-                            vm.sendMedia(uri, pendingMimeType, inputText.trim(), context)
+                            vm.sendMedia(uri, pendingMimeType, com.relay.app.messaging.ReplyBody.withText(replyDraft, inputText.trim()), context)
+                            replyDraft = null
                             mediaPicker.clear(contactId)
                             inputText = ""
                         } else if (inputText.isNotBlank()) {
-                            vm.sendText(inputText.trim(), context)
+                            vm.sendText(com.relay.app.messaging.ReplyBody.withText(replyDraft, inputText.trim()), context)
+                            replyDraft = null
                             inputText = ""
                         }
                     },

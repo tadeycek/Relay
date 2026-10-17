@@ -15,6 +15,27 @@ PIN verification, counters, recovery credentials and the separate recovery ident
 Keystore-backed encrypted preferences, excluded from backup. This UI gate does not secure a rooted
 or otherwise compromised device.
 
+Choose **People → New group**, enter a name and select up to sixteen verified friends. Only
+active, unblocked friends with accepted encryption keys can be invited. Invitations and replies
+travel through the existing encrypted messaging transport. The creator forwards members' replies;
+the creator's phone must reconnect for those replies to reach the rest of the group. Group members
+can see one another's shared names and messaging IDs, but are not automatically verified contacts.
+The creator controls additions/removals; other members can delete the group locally. Deleting your
+own group closes it for everyone. Old local-only groups remain readable; create a new group for
+shared conversations. All participants need **1.5-preview or newer**. Group chats currently support
+text and quoted replies; photo/video attachments remain available in individual chats.
+
+Use **Reply** beneath a message to quote it, then type and send; **Cancel reply** clears the quote.
+Quoted snapshots also work in individual photo/video captions. Text notifications and the chat list
+show the reply text rather than protocol fields. Typing indicators use encrypted, short-lived signals
+rather than the persistent outbox, expire after eight seconds, and can be turned off in
+**Account → Privacy and Tor → Typing indicators**. They reveal typing activity to approved recipients.
+
+Opening an explicitly requested gallery/camera/profile picker now retains the current navigation
+while the original ten-minute session is active. Cancelling or selecting returns to the same chat;
+expiry and process death still require the entry code. Device verification for these new flows is
+pending; see **rebuild/VERIFICATION.md**.
+
 Encrypted profile updates keep approved contacts’ display names and photos in sync, including after reconnect. Locally chosen contact aliases are preserved.
 
 Message notifications show the sender name, their rounded-square profile photo (or generated avatar), the supplied flat purple phone badge, and up to five unread messages kept separately for each conversation. Tapping dismisses only the notification through a private receiver; it does not open the app, delete a message, or mark it read. There are no reply actions. Android attributes them to
@@ -103,7 +124,7 @@ There is no map screen. In a chat, **Share my location** sends your current posi
 Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to a **Blossom** media server; only a small reference (URL, SHA-256, key, type) travels in the message. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. If an upload fails the user must retry. The defaults are `blossom.ditto.pub` and `blossom.data.haus`; encrypted binary upload/download, hash verification, decryption and cleanup were tested at the 3 MiB photo limit. Availability and retention can change. Gallery access uses selected-URI grants and survives session expiry. Photos retain their aspect ratio and camera orientation. Tap a photo to view/zoom it, or a video to play it, inside the app. Playback stops on close, backgrounding or session expiry. Private plaintext view copies are removed when their bubbles leave composition and leftover copies are removed on process startup. A direct peer connection is not required.
 
 ### Groups
-Lightweight, local groups; sending fans out one message per member (NIP-17 discourages groups beyond ~10). There is no group membership authentication.
+Shared groups use a creator-controlled roster and encrypted private fanout to up to sixteen verified friends. The creator checks submitting members and forwards their posts; members authenticate the creator rather than independently authenticating the original author. Creator connectivity is required for forwarding. See the group instructions above and rebuild/VERIFICATION.md for current test limits.
 
 ### Tor (optional)
 Settings → Privacy → "Hide my IP from relays (Tor)" routes relay and media connections through **Orbot** (the Guardian Project's Tor app), which must be installed and started separately: Relay does not include Tor. Setup is written out under the switch in the app: install Orbot, open it and tap Start, then turn the switch on; Relay expects Orbot at 127.0.0.1:9050. It **fails closed**: with Tor on and Orbot not running, nothing is sent and the status shows "Waiting for Tor". Off by default. Embedded Tor is not built, and the real Tor path has not been tested.
@@ -126,7 +147,7 @@ Threat-model notes: metadata (who talks to whom, when, message size) is partly v
 - Media uploads are not retried automatically.
 - Public relay/blob-server retention and continued availability are not guaranteed.
 - No `.onion` relays are bundled; relay list editing UI is not built (defaults/preferences only).
-- Group sends have no membership authentication or rate awareness.
+- Shared groups depend on the creator for availability and attribution of forwarded messages; there is no independent per-author group signature or forward-secure group key schedule.
 - No license file yet.
 - Android tests cover Calculator access, Keystore persistence, notifications and layout; the opt-in two-emulator harness checks live conversations. Real-phone and Tor integration still need device tests.
 

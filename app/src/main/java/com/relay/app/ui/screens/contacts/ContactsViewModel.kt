@@ -98,18 +98,34 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
         )
     }
 
-    fun createGroup(name: String, memberIds: List<Long>) {
-        if (name.isBlank() || memberIds.isEmpty()) return
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+    fun clearError() { _error.value = null }
+    private suspend fun groupAction(action: () -> Unit) {
+        runCatching { withContext(Dispatchers.IO) { action() } }
+            .onFailure { _error.value = it.message ?: "Couldn't update this group" }
+        _groups.value = groupRepo.getAllGroups()
+    }
+
+    private var creatingGroup = false
+    fun createGroup(name: String, memberIds: List<Long>, onCreated: (Long) -> Unit) {
+        if (creatingGroup || name.isBlank() || memberIds.isEmpty()) return
+        creatingGroup = true
         viewModelScope.launch {
-            groupRepo.insertGroup(name.trim(), memberIds)
-            _groups.value = groupRepo.getAllGroups()
+            try {
+                runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.create(getApplication(), name, memberIds) } }
+                    .onSuccess { id -> _groups.value = groupRepo.getAllGroups(); onCreated(id) }
+                    .onFailure { _error.value = it.message ?: "Couldn't create this group" }
+            } finally { creatingGroup = false }
         }
     }
 
     fun deleteGroup(id: Long) {
         viewModelScope.launch {
-            groupRepo.deleteGroup(id)
-            _groups.value = groupRepo.getAllGroups()
+            groupAction {
+                if (com.relay.app.groups.SharedGroups.get(db, id) == null) db.writableDatabase.delete("groups", "_id=?", arrayOf(id.toString()))
+                else com.relay.app.groups.SharedGroups.delete(getApplication(), id)
+            }
         }
     }
 
@@ -150,15 +166,13 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun removeMemberFromGroup(groupId: Long, contactId: Long) {
         viewModelScope.launch {
-            groupRepo.removeMember(groupId, contactId)
-            _groups.value = groupRepo.getAllGroups()
+            groupAction { com.relay.app.groups.SharedGroups.changeMember(getApplication(), groupId, contactId, false) }
         }
     }
 
     fun addMemberToGroup(groupId: Long, contactId: Long) {
         viewModelScope.launch {
-            groupRepo.addMember(groupId, contactId)
-            _groups.value = groupRepo.getAllGroups()
+            groupAction { com.relay.app.groups.SharedGroups.changeMember(getApplication(), groupId, contactId, true) }
         }
     }
 }

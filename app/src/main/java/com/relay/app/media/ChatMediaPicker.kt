@@ -27,7 +27,7 @@ val LocalChatMediaPicker = staticCompositionLocalOf<ChatMediaPicker> { error("Mi
 
 /** Keep launchers registered at the Activity root while Calculator disposes the private screens. */
 @Composable
-fun rememberChatMediaPicker(): ChatMediaPicker {
+fun rememberChatMediaPicker(onLaunch: () -> Unit = {}, onReturn: () -> Unit = {}): ChatMediaPicker {
     val context = LocalContext.current
     var target by rememberSaveable { mutableStateOf(-1L) }
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
@@ -35,16 +35,16 @@ fun rememberChatMediaPicker(): ChatMediaPicker {
     var cameraUri by rememberSaveable { mutableStateOf<String?>(null) }
     fun selected(uri: Uri, fallback: String) {
         selectedUri = uri.toString()
-        selectedMime = context.contentResolver.getType(uri) ?: fallback
+        selectedMime = runCatching { context.contentResolver.getType(uri) }.getOrNull() ?: fallback
     }
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) selected(uri, "image/jpeg")
+        try { if (uri != null) selected(uri, "image/jpeg") } finally { onReturn() }
     }
     val video = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) selected(uri, "video/mp4")
+        try { if (uri != null) selected(uri, "video/mp4") } finally { onReturn() }
     }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
-        if (success) cameraUri?.let { selected(Uri.parse(it), "image/jpeg") }
+        try { if (success) cameraUri?.let { selected(Uri.parse(it), "image/jpeg") } } finally { onReturn() }
     }
     fun takePhoto() {
         val dir = File(context.cacheDir, "mms").also { it.mkdirs() }
@@ -54,7 +54,9 @@ fun rememberChatMediaPicker(): ChatMediaPicker {
         camera.launch(uri)
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) takePhoto()
+        if (granted) {
+            try { takePhoto() } catch (e: Exception) { onReturn(); android.widget.Toast.makeText(context, "Couldn’t open the media picker", android.widget.Toast.LENGTH_LONG).show() }
+        } else onReturn()
     }
     return ChatMediaPicker(
         draftFor = { contact ->
@@ -63,12 +65,13 @@ fun rememberChatMediaPicker(): ChatMediaPicker {
         open = { contact, source ->
             if (target != contact) { selectedUri = null; selectedMime = "" }
             target = contact
-            when (source) {
+            onLaunch()
+            try { when (source) {
                 ChatMediaSource.PHOTO -> photo.launch("image/*")
                 ChatMediaSource.VIDEO -> video.launch("video/*")
                 ChatMediaSource.CAMERA -> if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
                     takePhoto() else permission.launch(Manifest.permission.CAMERA)
-            }
+            } } catch (e: Exception) { onReturn(); android.widget.Toast.makeText(context, "Couldn’t open the media picker", android.widget.Toast.LENGTH_LONG).show() }
         },
         clear = { contact -> if (target == contact) { selectedUri = null; selectedMime = "" } },
     )

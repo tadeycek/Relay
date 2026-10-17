@@ -22,6 +22,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -38,7 +39,7 @@ import com.relay.app.ui.theme.TextSecondary
 /** Group messages share the 1:1 bubbles; the sender's contact id lets the timeline tell members apart. */
 private fun GroupMessage.asMessage() = Message(
     id = id,
-    contactId = contactId ?: 0L,
+    contactId = senderKey?.let { com.relay.app.groups.GroupProtocol.memberId(it) } ?: contactId ?: 0L,
     body = body,
     type = type,
     lat = lat,
@@ -57,10 +58,15 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val vm: GroupChatViewModel = viewModel(factory = GroupChatViewModelFactory(groupId, app))
     val group by vm.group.collectAsState()
     val messages by vm.messages.collectAsState()
-    var inputText by remember { mutableStateOf("") }
+    val error by vm.error.collectAsState()
+    var replyDraft by rememberSaveable { mutableStateOf<String?>(null) }
+    var inputText by rememberSaveable { mutableStateOf("") }
     var confirmRequestLocation by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val own = remember { com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }
+    val canSend = group?.sharedOwner != null && group?.members.orEmpty().any { it.nostrPubkey == own }
     val listState = rememberLazyListState()
+    LaunchedEffect(error) { error?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show(); vm.clearError() } }
 
     DisposableEffect(Unit) {
         vm.registerUpdates(context)
@@ -70,7 +76,8 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val items = remember(messages) {
         ChatTimeline.build(messages.map { it.asMessage() }, firstUnreadId = null, nowMs = System.currentTimeMillis())
     }
-    val names = remember(group) { group?.members.orEmpty().associate { it.id to it.name } }
+    val names = remember(group, messages) { group?.members.orEmpty().associate { it.id to it.name } +
+        messages.filter { it.senderKey != null }.associate { com.relay.app.groups.GroupProtocol.memberId(it.senderKey!!) to it.senderName.orEmpty() } }
 
     LaunchedEffect(items.size) {
         if (items.isNotEmpty()) listState.scrollToItem(items.size - 1)
@@ -85,16 +92,8 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 memberSeeds = group?.members.orEmpty().map { GlyphGenerator.seedFor(it.nostrPubkey, null, it.name) },
                 memberCount = group?.members?.size ?: 0,
                 onBack = { navController.popBackStack() },
-                actions = {
-                    IconButton(onClick = { confirmRequestLocation = true }) {
-                        Icon(
-                            imageVector = Icons.Outlined.LocationSearching,
-                            contentDescription = "Ask the group for their location",
-                            tint = TextSecondary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                },
+                actions = {},
+
             )
         },
         containerColor = Background,
@@ -106,30 +105,32 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 contentPadding = PaddingValues(horizontal = RelaySpacing.lg, vertical = RelaySpacing.md),
             ) {
                 items(items, key = { it.key }) { item ->
-                    ChatItemRow(item, contactName = "Someone", senderName = { names[it] })
+                    ChatItemRow(item, contactName = "Someone", senderName = { names[it] }, onReply = { message ->
+                        replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(context).myName.ifBlank { "Me" } else names[message.contactId] ?: "Someone")
+                    })
                 }
             }
-            Composer(
-                value = inputText,
-                onValueChange = { inputText = it },
-                placeholder = "Message the group",
-                onSend = {
-                    if (inputText.isNotBlank()) {
-                        vm.sendText(inputText.trim(), context)
-                        inputText = ""
-                    }
-                },
-            )
+            if (canSend) {
+                ConversationTyping(inputText, groupId = groupId, revisionKey = group)
+                ReplyPreview(replyDraft) { replyDraft = null }
+                Composer(
+                    value = inputText,
+                    onValueChange = { inputText = it.take(1000) },
+                    placeholder = "Message the group",
+                    onSend = {
+                        if (inputText.isNotBlank()) {
+                            val sentText = inputText
+                            val sentDraft = replyDraft
+                            vm.sendText(com.relay.app.messaging.ReplyBody.withText(sentDraft, sentText.trim()), context) {
+                                if (inputText == sentText && replyDraft == sentDraft) { inputText = ""; replyDraft = null }
+                            }
+                        }
+                    },
+                )
+            } else androidx.compose.material3.Text(
+                if (group?.sharedOwner == null) "This is a legacy local group. Create a new shared group from People." else "You are no longer a member of this group.",
+                modifier = Modifier.padding(16.dp), color = TextSecondary)
         }
     }
 
-    if (confirmRequestLocation) {
-        com.relay.app.ui.components.ConfirmDialog(
-            title = "Ask ${group?.name.orEmpty()} for their location?",
-            message = "Every member is asked to share where they are, and each can decline.",
-            confirmLabel = "Ask",
-            onConfirm = { confirmRequestLocation = false; vm.sendLocationRequest(context) },
-            onDismiss = { confirmRequestLocation = false },
-        )
-    }
 }

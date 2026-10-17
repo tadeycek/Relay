@@ -49,7 +49,7 @@ object ConversationFormat {
         if (type == null) return "No messages yet"
         val you = if (isSent) "You: " else ""
         return when (type) {
-            MessageType.TEXT -> you + oneLine(body.orEmpty()).ifEmpty { "Message" }
+            MessageType.TEXT -> you + oneLine(com.relay.app.messaging.ReplyBody.preview(body.orEmpty())).ifEmpty { "Message" }
             MessageType.LOCATION -> you + "Shared a location"
             MessageType.IMAGE -> you + "Photo"
             MessageType.VIDEO -> you + "Video"

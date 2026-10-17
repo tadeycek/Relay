@@ -35,6 +35,13 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     var theme by mutableStateOf(prefs.theme)
         private set
 
+    var typingIndicators by mutableStateOf(prefs.typingIndicators)
+        private set
+    fun updateTypingIndicators(value: Boolean) {
+        prefs.typingIndicators = value
+        typingIndicators = value
+    }
+
     var appLock by mutableStateOf(prefs.appLock)
         private set
 
