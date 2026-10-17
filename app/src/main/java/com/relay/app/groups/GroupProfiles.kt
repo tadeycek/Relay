@@ -51,43 +51,47 @@ object GroupProfiles {
 
     /** Invoked on profile changes, membership changes and reconnect. Durable queue markers avoid
      * repeated fanout; roster revision makes a newly added recipient receive current names. */
-    @Synchronized fun syncPending(context: Context) {
-        val db = MessagingDb.get(context)
-        val own = NostrIdentity.publicKeyHex(context)
-        val self = RelayPreferences(context)
-        val repo = ContactRepository(db)
-        val ids = db.readableDatabase.rawQuery("SELECT group_id FROM shared_groups WHERE hidden=0", null).use { c ->
-            buildList { while (c.moveToNext()) add(c.getLong(0)) }
-        }
-        val markers = context.getSharedPreferences("group_profile_queue", Context.MODE_PRIVATE)
-        for (id in ids) {
-            val stored = SharedGroups.get(db, id) ?: continue
-            val state = stored.state
-            if (state.members.none { it.key == own }) continue
-            if (self.myName.isNotBlank()) save(db, id, own, ProfileNameBody.Update(self.profileNameRevision, self.myName.trim()))
-            run {
-                for (member in state.members.filter { it.key != own }) {
-                    val friend = repo.findByNostrPubkeySync(member.key) ?: continue
-                    val revision = context.getSharedPreferences("profile_photo_state", Context.MODE_PRIVATE).getLong("name_received_${friend.id}", -1)
-                    if (revision >= 0 && friend.originalName != null) save(db, id, member.key, ProfileNameBody.Update(revision, friend.originalName))
-                }
+    fun syncPending(context: Context) {
+        synchronized(SharedGroups) {
+            val db = MessagingDb.get(context)
+            val own = NostrIdentity.publicKeyHex(context)
+            val self = RelayPreferences(context)
+            val repo = ContactRepository(db)
+            val ids = db.readableDatabase.rawQuery("SELECT group_id FROM shared_groups WHERE hidden=0", null).use { c ->
+                buildList { while (c.moveToNext()) add(c.getLong(0)) }
             }
-            val authors = if (own == state.owner) state.members.map { it.key } else listOf(own)
-            val recipients = if (own == state.owner) state.members.map { it.key }.filter { it != own } else listOf(state.owner)
-            for (author in authors) {
-                val update = latest(db, id, author) ?: continue
-                val body = ProfileNameBody.format(update)
-                val packet = GroupProtocol.Packet(if (own == state.owner) "profile" else "profile-submit", state,
-                    UUID.randomUUID().toString(), author, body, System.currentTimeMillis())
-                for (key in recipients) {
-                    val contact = repo.findByNostrPubkeySync(key)?.takeIf(GroupProtocol::eligible) ?: continue
-                    val marker = "$id:$author:$key:${state.revision}"
-                    if (markers.getLong(marker, -1) >= update.revision) continue
-                    if (Outgoing.enqueue(context, contact, GroupProtocol.format(packet)) != null)
-                        check(markers.edit().putLong(marker, update.revision).commit())
+            val markers = context.getSharedPreferences("group_profile_queue", Context.MODE_PRIVATE)
+            for (id in ids) {
+                val stored = SharedGroups.get(db, id) ?: continue
+                val state = stored.state
+                if (state.members.none { it.key == own }) continue
+                if (self.myName.isNotBlank()) save(db, id, own, ProfileNameBody.Update(self.profileNameRevision, self.myName.trim()))
+                run {
+                    for (member in state.members.filter { it.key != own }) {
+                        val friend = repo.findByNostrPubkeySync(member.key) ?: continue
+                        val revision = context.getSharedPreferences("profile_photo_state", Context.MODE_PRIVATE).getLong("name_received_${friend.id}", -1)
+                        if (revision >= 0 && friend.originalName != null) save(db, id, member.key, ProfileNameBody.Update(revision, friend.originalName))
+                    }
                 }
+                GroupAvatars.sync(context, id, state)
+                GroupAvatars.request(context, id, state)
+                val authors = if (own == state.owner) state.members.map { it.key } else listOf(own)
+                val recipients = if (own == state.owner) state.members.map { it.key }.filter { it != own } else listOf(state.owner)
+                for (author in authors) {
+                    val update = latest(db, id, author) ?: continue
+                    val body = ProfileNameBody.format(update)
+                    val packet = GroupProtocol.Packet(if (own == state.owner) "profile" else "profile-submit", state,
+                        UUID.randomUUID().toString(), author, body, System.currentTimeMillis())
+                    for (key in recipients) {
+                        val contact = repo.findByNostrPubkeySync(key)?.takeIf(GroupProtocol::eligible) ?: continue
+                        val marker = "$id:$author:$key:${state.revision}"
+                        if (markers.getLong(marker, -1) >= update.revision) continue
+                        if (Outgoing.enqueue(context, contact, GroupProtocol.format(packet)) != null)
+                            check(markers.edit().putLong(marker, update.revision).commit())
+                    }
+                }
+                SharedGroups.notify(context, id)
             }
-            SharedGroups.notify(context, id)
         }
     }
 }

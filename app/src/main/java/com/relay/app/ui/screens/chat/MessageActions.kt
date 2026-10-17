@@ -9,10 +9,12 @@ import androidx.compose.ui.text.AnnotatedString
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.messaging.*
+import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 internal fun MessageActions(message: Message?, group: Long? = null, onReply: (Message) -> Unit, onDismiss: () -> Unit) {
     if (message == null) return
@@ -44,6 +46,28 @@ internal fun MessageActions(message: Message?, group: Long? = null, onReply: (Me
                 }) { Text("Delete for everyone") }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             } else {
+                if (message.msgId?.let(DeletionBody::validId) == true) {
+                    Text("React to this message")
+                    androidx.compose.foundation.layout.FlowRow {
+                        ConversationEventBody.EMOJI.forEach { emoji ->
+                            TextButton(enabled = !busy, onClick = {
+                                busy = true
+                                scope.launch {
+                                    val result = withContext(Dispatchers.IO) { runCatching { ConversationEvents.sendReaction(context, message, group, emoji) } }
+                                    busy = false; result.onSuccess { onDismiss() }.onFailure { error = it.message }
+                                }
+                            }, contentPadding = androidx.compose.foundation.layout.PaddingValues(2.dp)) { Text(emoji) }
+                        }
+                    }
+                    TextButton(enabled = !busy, onClick = {
+                        busy = true
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) { runCatching { ConversationEvents.sendReaction(context, message, group, "") } }
+                            busy = false; result.onSuccess { onDismiss() }.onFailure { error = it.message }
+                        }
+                    }) { Text("Remove my reaction") }
+                    error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                }
                 TextButton(onClick = { onReply(message); onDismiss() }) { Text("Reply") }
                 TextButton(onClick = {
                     val text = ReplyBody.preview(message.body).ifBlank { when(message.type) { MessageType.IMAGE -> "Photo"; MessageType.VIDEO -> "Video"; else -> "" } }

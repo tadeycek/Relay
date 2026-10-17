@@ -23,6 +23,14 @@ object GroupDelivery {
             }
         }
     }
+    fun states(db: RelayDbHelper, group: Long, events: List<String>): Map<String,Int> = buildMap {
+        for (chunk in events.distinct().chunked(500)) {
+            if (chunk.isEmpty()) continue
+            val marks = chunk.joinToString(",") { "?" }
+            db.readableDatabase.rawQuery("SELECT event,CASE WHEN MAX(state=3)=1 THEN 3 WHEN MAX(state=1)=1 THEN 1 ELSE 2 END FROM group_delivery WHERE group_id=? AND event IN ($marks) GROUP BY event",
+                (listOf(group.toString()) + chunk).toTypedArray()).use { c -> while(c.moveToNext()) put(c.getString(0),c.getInt(1)) }
+        }
+    }
     fun update(context: Context, payload: String, state: Int) {
         val db = MessagingDb.get(context)
         val ids = db.readableDatabase.rawQuery("SELECT group_id FROM group_delivery WHERE payload_id=?", arrayOf(payload))

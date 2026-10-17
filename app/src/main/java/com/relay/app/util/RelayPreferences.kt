@@ -120,12 +120,12 @@ class RelayPreferences(context: Context) {
         set(v) { prefs.edit().putString(KEY_BLOSSOM_SERVERS, v.joinToString("\n")).apply() }
 
     /**
-     * Keep a foreground service running so messages arrive while the app is closed. On by default
-     * (without it there is no closed-app delivery); costs battery and shows a persistent notification.
+     * Compatibility preference: continuous foreground delivery was retired to remove its notice.
+     * Old stored opt-ins cannot re-enable the retired service.
      */
     var backgroundConnection: Boolean
-        get() = prefs.getBoolean(KEY_BACKGROUND_CONNECTION, true)
-        set(v) { prefs.edit().putBoolean(KEY_BACKGROUND_CONNECTION, v).apply() }
+        get() = false
+        set(v) { prefs.edit().putBoolean(KEY_BACKGROUND_CONNECTION, false).apply() }
 
     companion object {
         private const val KEY_ASKED_NOTIF_PERMISSION = "asked_notification_permission"

@@ -13,6 +13,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.Composable
@@ -170,10 +171,11 @@ private fun GroupRow(group: Group, onOpen: () -> Unit, onManage: () -> Unit) {
         supporting = if (group.members.size == 1) "1 member" else "${group.members.size} members",
         onClick = onOpen,
         leading = {
-            GroupGlyph(group.members.map { GlyphGenerator.seedFor(it.nostrPubkey, null, it.name) }, size = AvatarSize)
+            GroupGlyph(group.members.map { GlyphGenerator.seedFor(it.nostrPubkey, null, it.name) }, size = AvatarSize, groupId = group.id)
         },
         trailing = {
             TextButton(onClick = onManage) {
+                androidx.compose.material3.Icon(androidx.compose.material.icons.Icons.Outlined.AddPhotoAlternate, "Group picture and settings")
                 Text("Edit", color = TextSecondary, style = MaterialTheme.typography.labelLarge)
             }
         },

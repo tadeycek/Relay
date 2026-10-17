@@ -87,6 +87,7 @@ fun ChatTopBar(
 /** Group chat header: back, the group glyph, its name and how many people are in it. */
 @Composable
 fun GroupChatTopBar(
+    groupId: Long,
     name: String,
     memberSeeds: List<String>,
     memberCount: Int,
@@ -104,7 +105,7 @@ fun GroupChatTopBar(
         IconButton(onClick = onBack) {
             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back", tint = TextSecondary)
         }
-        GroupGlyph(memberSeeds = memberSeeds, size = 40.dp)
+        GroupGlyph(memberSeeds = memberSeeds, size = 40.dp, groupId = groupId)
         Spacer(Modifier.width(RelaySpacing.md))
         Column(modifier = Modifier.weight(1f)) {
             Text(

@@ -1,7 +1,7 @@
 package com.relay.app.data.model
 
 enum class MessageType {
-    TEXT, LOCATION, IMAGE, VIDEO, LOCATION_REQUEST, LOCATION_DECLINED;
+    TEXT, LOCATION, IMAGE, VIDEO, LOCATION_REQUEST, LOCATION_DECLINED, SCREENSHOT;
 
     companion object {
         /** Safe fallback for an unrecognized/legacy stored value, same defensive pattern as

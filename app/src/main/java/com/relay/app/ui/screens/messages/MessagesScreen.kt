@@ -184,6 +184,7 @@ private fun ConversationRow(c: ConversationSummary, onClick: () -> Unit) {
 private fun ConversationAvatar(c: ConversationSummary) {
     if (c.kind == ConversationSummary.Kind.GROUP) {
         GroupGlyph(
+            groupId = c.id,
             memberSeeds = c.memberSeeds.ifEmpty { listOf(c.name) },
             size = AvatarSize,
             description = "${c.name}, group of ${c.memberCount}",

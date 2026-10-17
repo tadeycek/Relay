@@ -11,6 +11,7 @@ class BootReceiver : BroadcastReceiver() {
         if (com.relay.app.calculator.CalculatorOnly.enabled(context)) return
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         MessagingRuntime.ensureStarted(context)
-        if (RelayPreferences(context).backgroundConnection) ConnectionService.start(context)
+        ConnectionService.stop(context)
+        PollWorker.schedule(context)
     }
 }

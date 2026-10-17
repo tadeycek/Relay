@@ -16,7 +16,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import java.io.File
 
-enum class ChatMediaSource { PHOTO, VIDEO, CAMERA }
+enum class ChatMediaSource { PHOTO, VIDEO, CAMERA, GIF }
 data class PickedChatMedia(val uri: Uri, val mime: String, val selectionId: String = "")
 class ChatMediaPicker(
     val draftFor: (Long) -> PickedChatMedia?,
@@ -41,6 +41,9 @@ fun rememberChatMediaPicker(onLaunch: () -> Unit = {}, onReturn: () -> Unit = {}
     }
     val photo = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         try { if (uri != null) selected(uri, "image/jpeg") } finally { onReturn() }
+    }
+    val gif = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        try { if (uri != null) selected(uri, "image/gif") } finally { onReturn() }
     }
     val video = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         try { if (uri != null) selected(uri, "video/mp4") } finally { onReturn() }
@@ -69,6 +72,7 @@ fun rememberChatMediaPicker(onLaunch: () -> Unit = {}, onReturn: () -> Unit = {}
             target = contact
             onLaunch()
             try { when (source) {
+                ChatMediaSource.GIF -> gif.launch("image/gif")
                 ChatMediaSource.PHOTO -> photo.launch("image/*")
                 ChatMediaSource.VIDEO -> video.launch("video/*")
                 ChatMediaSource.CAMERA -> if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)

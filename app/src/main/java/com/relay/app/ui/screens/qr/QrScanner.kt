@@ -158,17 +158,27 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
         }
     }
 
-    if (!hasCameraPermission) {
-        EmptyState(
-            title = "Relay needs your camera",
-            message = "It is only used to read a friend's code. Nothing is recorded or uploaded.",
-            actionLabel = "Allow camera",
-            onAction = { permissionLauncher.launch(Manifest.permission.CAMERA) },
-            modifier = Modifier.fillMaxSize(),
-        )
-        return
+    val pickerSession = com.relay.app.media.LocalPickerSession.current
+    val imagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        pickerSession.returned()
+        if (uri != null) coroutineScope.launch {
+            val raw = withContext(Dispatchers.IO) { com.relay.app.util.QrImages.decode(context, uri) }
+            if (raw == null) errorMsg = "No readable Relay QR code in that image. Try the original image."
+            else onNfcText(raw)
+        }
     }
-
+    androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
+        SecondaryButton("Import QR image", { pickerSession.launch(); imagePicker.launch("image/*") },
+            Modifier.padding(RelaySpacing.md))
+        Box(Modifier.weight(1f)) {
+            if (!hasCameraPermission) {
+                EmptyState(title = "Scan with camera or import an image",
+                    message = "Image import works without camera permission. Camera scanning records and uploads nothing.",
+                    actionLabel = "Allow camera", onAction = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                    modifier = Modifier.fillMaxSize())
+            } else {
     // Held so the async camera-provider callback can be told to abort if the tab is disposed before
     // it fires (otherwise it binds the camera *after* onDispose ran unbindAll, leaving it running),
     // and so the ML Kit scanner (a Closeable native resource) gets released.
@@ -240,41 +250,15 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
             }
         }
 
-        val waiting by PairingCoordinator.outgoing.collectAsState()
-        waiting?.let { pending ->
-            WaitingForThem(pending) {
-                PairingCoordinator.cancelOutgoing(context)
-                scanned = false
-            }
-        }
+    }
 
-        if (connecting) {
-            Box(
-                // A scrim over the camera preview: dark whatever the theme.
-                modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("Connecting", style = MaterialTheme.typography.titleMedium, color = Color.White)
             }
         }
-
-        errorMsg?.let { msg ->
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(RelaySpacing.xl)
-                    .clip(RelayShapeTokens.control)
-                    .background(Surface1)
-                    .padding(horizontal = RelaySpacing.lg, vertical = RelaySpacing.md),
-            ) {
-                Text(msg, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
-            }
-            // Auto-clear so the scanner can retry.
-            LaunchedEffect(msg) {
-                delay(2500)
-                errorMsg = null
-            }
-        }
+    }
+    val waiting by PairingCoordinator.outgoing.collectAsState()
+    waiting?.let { pending -> WaitingForThem(pending) { PairingCoordinator.cancelOutgoing(context); scanned = false } }
+    errorMsg?.let { msg ->
+        LaunchedEffect(msg) { android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show(); delay(2500); errorMsg = null }
     }
 
     pendingScan?.let { scan ->

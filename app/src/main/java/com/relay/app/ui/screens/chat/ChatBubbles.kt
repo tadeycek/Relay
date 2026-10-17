@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.LocationOff
 import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.LocationSearching
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.HorizontalDivider
@@ -77,12 +78,12 @@ private val MediaScrim = Color.Black.copy(alpha = 0.55f)
 
 /** One row of the chat list. */
 @Composable
-fun ChatItemRow(item: ChatItem, contactName: String, senderName: ((Long) -> String?)? = null, onReply: ((Message) -> Unit)? = null) {
+fun ChatItemRow(item: ChatItem, contactName: String, senderName: ((Long) -> String?)? = null, onReply: ((Message) -> Unit)? = null, groupId: Long? = null) {
     when (item) {
         is ChatItem.Day -> DaySeparator(item.label)
         is ChatItem.UnreadDivider -> UnreadDivider(item.count)
-        is ChatItem.Note -> SystemNote(item.message, contactName)
-        is ChatItem.Bubble -> BubbleRow(item, senderName?.takeIf { !item.message.isSent && item.startsGroup }?.invoke(item.message.contactId), onReply)
+        is ChatItem.Note -> SystemNote(item.message, senderName?.invoke(item.message.contactId) ?: contactName)
+        is ChatItem.Bubble -> BubbleRow(item, senderName?.takeIf { !item.message.isSent && item.startsGroup }?.invoke(item.message.contactId), onReply, groupId)
     }
 }
 
@@ -122,6 +123,8 @@ private fun UnreadDivider(count: Int) {
 @Composable
 private fun SystemNote(message: Message, contactName: String) {
     val (icon, text) = when (message.type) {
+        MessageType.SCREENSHOT -> Icons.Outlined.CameraAlt to
+            ((if (message.isSent) "You took a screenshot" else "$contactName took a screenshot") + " · " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(message.timestamp)))
         MessageType.LOCATION_REQUEST ->
             Icons.Outlined.LocationSearching to
                 if (message.isSent) "You asked for their location" else "$contactName asked for your location"
@@ -147,7 +150,7 @@ private fun SystemNote(message: Message, contactName: String) {
 }
 
 @Composable
-private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((Message) -> Unit)? = null) {
+private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((Message) -> Unit)? = null, groupId: Long? = null) {
     val message = item.message
     val shape = bubbleShape(message.isSent, item.startsGroup)
     val replyTo: (() -> Unit)? = onReply?.let { callback -> { callback(message) } }
@@ -170,8 +173,9 @@ private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((
             MessageType.IMAGE -> ImageBubble(message, shape, replyTo)
             MessageType.VIDEO -> VideoBubble(message, shape, replyTo)
             // Requests and replies are notes and never reach here.
-            MessageType.LOCATION_REQUEST, MessageType.LOCATION_DECLINED -> Unit
+            MessageType.LOCATION_REQUEST, MessageType.LOCATION_DECLINED, MessageType.SCREENSHOT -> Unit
         }
+        MessageReactions(message, groupId)
         if (item.endsGroup) MessageMeta(message)
     }
 }

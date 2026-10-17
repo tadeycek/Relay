@@ -41,6 +41,11 @@ class ChatViewModel(
     app: Application,
 ) : AndroidViewModel(app) {
 
+    private var historyLimit = com.relay.app.data.repository.HistoryWindow.PAGE_SIZE
+    private val _hasOlder = MutableStateFlow(false)
+    val hasOlder = _hasOlder.asStateFlow()
+    private var loadJob: kotlinx.coroutines.Job? = null
+    fun loadOlder() { historyLimit = maxOf(historyLimit, _messages.value.size) + com.relay.app.data.repository.HistoryWindow.PAGE_SIZE; loadData(older = true) }
     private val db = com.relay.app.messaging.MessagingDb.get(app)
     private val messageRepo = MessageRepository(db)
     private val contactRepo = ContactRepository(db)
@@ -68,10 +73,17 @@ class ChatViewModel(
     val unreadAnchorId: StateFlow<Long?> = _unreadAnchorId.asStateFlow()
     private var anchorCaptured = false
 
-    private fun loadData() {
-        viewModelScope.launch {
+    private suspend fun readWindow(older: Boolean = false): List<com.relay.app.data.model.Message> {
+        val first = if(older) null else _messages.value.firstOrNull()
+        return messageRepo.getMessages(contactId,historyLimit,first?.timestamp,first?.id ?: 0)
+    }
+
+    private fun loadData(older: Boolean = false) {
+        loadJob?.cancel()
+        loadJob = viewModelScope.launch {
             _contact.value = contactRepo.getById(contactId)
-            val loaded = messageRepo.getMessages(contactId)
+            val loaded = readWindow(older)
+            if(older || _messages.value.isEmpty()) _hasOlder.value = loaded.size == historyLimit
             _messages.value = loaded
             if (!anchorCaptured) {
                 anchorCaptured = true
@@ -144,7 +156,7 @@ class ChatViewModel(
                     } finally { sql.endTransaction() }
                 }
                 onQueued()
-                _messages.value = messageRepo.getMessages(contactId)
+                _messages.value = readWindow()
                 com.relay.app.messaging.MessagingRuntime.kick()
             } catch (e: Exception) { _toastMessage.emit(e.message ?: "Couldn't queue message; draft kept. Try again.") }
             finally { _sending.value = false }
@@ -173,7 +185,7 @@ class ChatViewModel(
                 deliveryState = initialDeliveryState(contact, handle),
             )
             messageRepo.insertMessage(msg)
-            _messages.value = messageRepo.getMessages(contactId)
+            _messages.value = readWindow()
         }
     }
 
@@ -196,7 +208,7 @@ class ChatViewModel(
                 withContext(Dispatchers.IO) {
                     check(contact.canUseInternetTransport) { "Scan this contact's QR code to message them" }
                     val prepared = if (mimeType.startsWith("image/"))
-                        MediaCompressor.compressImage(context, uri, INTERNET_IMAGE_MAX_BYTES, INTERNET_IMAGE_MAX_DIM)
+                        com.relay.app.media.GifPreparation.image(context, uri, mimeType)
                     else MediaCompressor.prepareVideo(context, uri, INTERNET_VIDEO_MAX_BYTES, INTERNET_VIDEO_MAX_MS)
                     when (prepared) {
                         is MediaCompressor.Result.Success -> {
@@ -210,7 +222,7 @@ class ChatViewModel(
                     }
                 }
                 onQueued()
-                _messages.value = messageRepo.getMessages(contactId)
+                _messages.value = readWindow()
                 com.relay.app.messaging.MessagingRuntime.kick()
             } catch (e: Exception) { _toastMessage.emit(e.message ?: "Couldn't queue attachment; draft kept. Try again.") }
             finally { _sending.value = false }

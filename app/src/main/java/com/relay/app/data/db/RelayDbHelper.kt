@@ -49,6 +49,7 @@ class RelayDbHelper(context: Context) :
         db.execSQL(com.relay.app.groups.GroupProfiles.CREATE)
         db.execSQL(com.relay.app.groups.GroupDelivery.CREATE)
         db.execSQL(com.relay.app.media.PendingAttachments.CREATE)
+        createConversationExtras(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -124,6 +125,7 @@ class RelayDbHelper(context: Context) :
             db.execSQL(com.relay.app.groups.GroupDelivery.CREATE)
             db.execSQL(com.relay.app.media.PendingAttachments.CREATE)
         }
+        if (oldVersion < 19) createConversationExtras(db)
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.
@@ -133,6 +135,14 @@ class RelayDbHelper(context: Context) :
                     "${DatabaseContract.Contacts.COL_NAME} WHERE ${DatabaseContract.Contacts.COL_ORIGINAL_NAME} IS NULL"
             )
         }
+    }
+
+    private fun createConversationExtras(db: SQLiteDatabase) {
+        db.execSQL(com.relay.app.groups.GroupAvatars.CREATE)
+        db.execSQL(com.relay.app.messaging.ConversationEvents.CREATE)
+        db.execSQL("CREATE INDEX IF NOT EXISTS history_contact ON messages(contact_id,timestamp DESC,_id DESC)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS history_group ON group_messages(group_id,timestamp DESC,_id DESC)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS group_delivery_event ON group_delivery(group_id,event)")
     }
 
     private fun createSharedGroups(db: SQLiteDatabase) {
