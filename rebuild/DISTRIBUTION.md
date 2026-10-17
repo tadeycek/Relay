@@ -1,9 +1,12 @@
-Calculator 1.5 preview package
+Calculator 1.6 preview package
 ==========================
 
-New in 1.5: picker handoff repair, shared groups with verified friends, quoted replies,
-and short-lived typing indicators. These new Android interactions have not yet been
-checked on a phone; this is a test preview. Install 1.5 on every participating phone.
+New in 1.6: hold a message to reply; app-rendered notification content keeps the
+sender photo rounded-square and uses the latest supplied purple badge. The separate
+connection notice no longer starts while the app is open, and returning removes it. Android
+still requires a notice for background delivery when the app is no longer visible.
+These Android interactions need phone testing; this is a test preview. Group and
+typing features remain compatible with 1.5-preview.
 
 00-Calculator-preview.apk is the Android installer. The numbered names put it first
 when sorting this folder by name. Android 8 or newer is required. Allow installation
@@ -102,7 +105,7 @@ This first group version supports text and quoted replies, not group attachments
 location requests. It trusts the creator to attribute and forward other members'
 posts; it does not independently authenticate each original author to every member.
 
-Tap Reply beneath a message, type, and send. Cancel reply clears the quote.
+Touch and hold a text, photo, video or location message, type, and send. Cancel reply clears the quote.
 Typing indicators stop after a pause/send/exit and expire within eight seconds if
 interrupted. They use the existing encrypted transport and are not stored in chat
 history or the durable send queue; encrypted relay events can still be retained by
@@ -112,3 +115,15 @@ Phone checks still required: picker selection/cancel/camera return, session expi
 inside a picker, three-phone invitations/replies/removal/offline delivery, quoted
 photo/video captions and typing indicator appearance/clear. No emulator profiles
 were recreated. No claim of a bug-free or audited release is made.
+
+Notification photo and badge
+----------------------------
+Direct-message previews use a decorated custom content row instead of Android's
+native conversation-avatar layout, which can crop the same bitmap differently on
+different phones. The row shows a rounded-square photo and the newly supplied
+rounded purple phone badge at its bottom right. The app/OS header and spacing still
+vary with Android and the manufacturer. Native conversation-priority behavior may
+differ from MessagingStyle. The app name remains Viber; its launcher remains
+Calculator. Five-message preview history and late profile refresh are retained.
+Dismiss old previews after updating and receive a new message to check the change.
+The supplied badge is low-resolution; its pixels are preserved rather than redrawn.

@@ -1,79 +1,83 @@
-# Calculator 1.5 preview verification — 2026-10-17
+# Calculator 1.6 preview verification — 2026-10-17
 
-This revision repairs explicit media-picker handoffs and adds shared text groups,
-quoted replies and short-lived typing indicators. It remains a test preview.
+Changes: no startup connection-service notification while the activity is visible;
+hold-to-reply replaces the visible Reply buttons in individual and group chats;
+app-rendered direct notification content keeps the avatar rounded-square and uses
+the latest supplied purple badge.
 
-## Checks
+## Host verification
 
-- Preview application APK and Android test APK compile; JVM tests and lint pass.
-  Version 1.5-preview, code 6. Lint: zero errors, 18 warnings, 7 information items.
-- All 254 JVM tests pass with zero failures, errors or skips. New tests cover:
-  picker retention only inside the unchanged session deadline; verified-friend
-  eligibility; creator-only roster updates; member/author checks; stale rosters,
-  removal and delayed posts; malformed/oversized group controls; Unicode payload
-  budgets; quoted text and media-caption encoding; reply previews; fresh typing
-  signals, expiry, ordering, stop events and conversation isolation.
-- A separate host SQLite check executes the group table definitions and additive
-  v16 migration statements. Existing v15 group/message data is retained. Event
-  uniqueness, rollback and foreign-key cleanup pass. This is a host schema check,
-  not an Android SQLCipher runtime or multi-phone integration test. Reproduce with
-  `python3 rebuild/dev/check-group-schema.py`.
-- The final APK signature verifies against the existing debug signing certificate.
-  Its package is com.relay.app; Android application label/icon remain Viber and the
-  supplied purple phone picture. MainActivity remains Calculator with its calculator
-  launcher icon. In-place installation preserves the package/signing identity.
-- No Android devices are connected. Emulator/profile listings remain empty; no
-  profiles were recreated. Android instrumentation tests were compiled, not run.
+- Preview application and Android test APKs compile: version 1.6-preview, code 7.
+- All 257 JVM tests pass, with no failures, errors or skips. These cover existing
+  session, messaging, group, reply-codec and typing policies; they do not execute
+  Android touch/lifecycle behavior. Three new preview-history tests check ordering,
+  the five-line bound, timestamp preservation on profile refresh and isolation.
+- Lint passes with zero errors, 18 warnings and 7 information items. The APK signature and application/launcher identity
+  are checked before packaging. Package com.relay.app and the existing debug signing
+  certificate are retained; Android application identity is Viber and its supplied
+  purple phone image, while MainActivity stays Calculator with the calculator icon.
+- Host SQLite group migration/rollback/constraint checks still pass.
+- No Android device is connected and no emulator profiles were recreated. Android
+  instrumentation tests are compiled, not run. There is no claim of bug-free behavior.
 
-## Behavior and limits
+## Implementation checks and limits
 
-An explicitly launched gallery, camera or profile picker retains the private
-navigation tree while the original fixed ten-minute session remains active.
-Picker cancellation/selection clears that handoff; expiry still removes private
-screens. Process death never restores a session. Ordinary backgrounding keeps the
-existing calculator gate behavior. Missing pickers show an error rather than throw.
+MainActivity stops ConnectionService when starting/resuming. MessagingRuntime remains
+process-wide, so stopping this foreground service does not stop the transport itself.
+When the activity stops being visible (except rotation), the optional background
+service starts. Permission dialogs that only pause the activity do not trigger it.
+The service guards against queued starts and status notifications after UI return,
+and removes its foreground notification on destruction. Background delivery remains
+opt-in/out through the existing setting, which is on by default.
 
-People → New group invites up to sixteen verified active friends with accepted
-keys. New groups have a shared random ID and creator-controlled versioned roster.
-The creator stores/fans out replies with durable outbox entries in one transaction;
-failed inserts roll back. Received group events are deduplicated. Individual direct
-messages are no longer mirrored into groups. Existing local-only groups are kept
-readable and must be recreated to become shared conversations.
+Android still requires a foreground-service notification for sustained background
+work. This revision suppresses the notice while opening/using the app; it does not
+claim to hide the operating system's background-service disclosure. See the official
+[foreground-service overview](https://developer.android.com/develop/background-work/services/fgs)
+and [visible-to-background start exemption](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start).
 
-The creator is a routing participant, not an external service: its phone must
-reconnect to forward members' replies. Members authenticate the creator's forwarded
-posts; there is no independent original-author signature for every recipient.
-Members see shared names and messaging IDs without automatically becoming verified
-contacts. Only the creator changes membership; removed members cannot submit.
-Creator deletion closes the group; other members delete only their local copy.
-A local deletion retains a hidden tombstone so later messages cannot restore it.
-This group version supports text and quoted replies, not group media/location.
+Each text/photo/video/location bubble uses combined tap/long-click handling. Holding
+sets the quoted reply target, including holding an existing quote. Short taps retain
+photo viewing, video playback and opening locations in Maps. Media can be held to
+reply even while its decrypted display file is not available. Reply is exposed as a
+labeled accessibility long-click action; Cancel reply clears the selected quote.
+No notification quick-reply action is added.
 
-Reply buttons quote a bounded snapshot. Text, media captions and previews decode
-that snapshot for display. Typing signals use authenticated encrypted NIP-17 sends,
-without the persistent outbox, chat history or durable payload replay table. Signals
-expire after eight seconds and stop on pause/send/exit; transport delivery is best
-effort. Encrypted relay events may still be retained by relays. Users can disable
-indicators under Account → Privacy and Tor → Typing indicators.
+## Notification photo and badge
 
-All participants need 1.5-preview or newer for these features. Existing contacts,
-profile sharing, Calculator entry, Control Panel recovery, notification source
-identity and tap-to-dismiss previews are preserved.
+Direct-message notifications now use DecoratedCustomViewStyle and a custom content
+ImageView to avoid the platform conversation-avatar circle. The bitmap clips the
+photo to rounded corners (radius 40 on a 192-pixel canvas). The new supplied badge
+is stored unchanged as notification_sender_badge.png and composited at the bottom
+right with rounded-square clipping, preserving its proportions. The application
+icon still uses notification_avatar_badge.png; the Calculator launcher is unchanged.
+Android retains its outer notification header; spacing and native conversation
+classification/priority can differ. See [Android custom notification guidance](https://developer.android.com/develop/ui/views/notifications/custom-notification).
 
-## Phone verification still required
+Preview text/timestamps use namespaced notification extras, bounded to five entries.
+Visible older MessagingStyle histories are read for migration. Late profile refresh
+updates the sender/avatar without appending or retimestamping messages. Native group
+previews are unchanged. Android test assertions now inspect the custom content's
+actual ImageView and sender/text rather than expecting MessagingStyle metadata.
+Those tests compile but have not been run in this revision.
 
-- Select/cancel gallery photo or video and return to the same chat with the draft;
-  test camera permission denial/capture and profile-photo selection too.
-- Keep a picker open across session expiry; returning must require the code.
-  Repeat with process death/rotation and the optional biometric app lock.
-- On three updated phones: creator invites two verified friends; both receive the
-  same group and can reply to everyone. Verify offline reconnect, replay/dedup,
-  member addition/removal, local deletion and creator closure.
-- Check quoted text/photo/video captions, notification dismissal and typing
-  appearance/expiry/pause/disabled behavior on real phones and Samsung's UI.
+## Phone checks still pending
 
-Earlier device/network checks in archived verification reports are historical;
-they were not rerun for this revision. Current lint warnings include the intentional
-preview-dismiss broadcast PendingIntents as well as existing compatibility/resource
-findings. This is debug-signed, has no independent security audit, and is not a claim
-that the new Android interactions or all app features are free of bugs.
+- Fresh launch: no separate Connected/Connecting service notice. Receive a normal
+  message notification and confirm it is unaffected.
+- Home/lock screen: background delivery continues with Android's required service
+  notice; returning removes that notice. Rapid Home/return, rotation, permission
+  dialogs, gallery return, process restart and disabling background delivery need
+  runtime verification, including Android 12+ foreground-service start rules.
+- On both phones, receive a fresh direct message after dismissing old previews.
+  Check rounded-square photos, exact new badge, collapsed/expanded/heads-up content,
+  light/dark modes, large fonts and TalkBack. Check history, profile refresh and
+  dismiss-only tapping. Android runtime/visual checks have not been performed.
+- Hold text/photo/video/location and quoted messages in individual/group chats;
+  confirm the right quote is selected and can be cancelled/sent. Short media and
+  location taps must still work. Check TalkBack's labeled Reply action.
+
+Broader device/network checks in archived reports are historical. The 1.5 shared
+conversation flows also retain their documented phone-test limitations; see
+[VERIFICATION-1.5-preview.md](VERIFICATION-1.5-preview.md). This is a debug-signed test
+preview with no independent security audit.

@@ -61,10 +61,10 @@ object MessageNotifier {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val tag = "conversation:${contact.id}"
         val previousNotification = nm.activeNotifications.firstOrNull { it.id == NOTIF_BASE && it.tag == tag }?.notification
-        val previous = previousNotification?.let { NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(it) }
-        if (refresh && previous?.messages.isNullOrEmpty()) return
+        val previous = NotificationPreview.history(previousNotification)
+        if (refresh && previous.isEmpty()) return
         val photo = com.relay.app.media.ContactPhotos.load(context, contact.id)
-        val badge = android.graphics.BitmapFactory.decodeResource(context.resources, com.relay.app.R.drawable.notification_avatar_badge)
+        val badge = android.graphics.BitmapFactory.decodeResource(context.resources, com.relay.app.R.drawable.notification_sender_badge)
         val avatar = NotificationAvatar.forContact(contact, photo, badge)
         badge?.recycle()
         photo?.recycle()
@@ -86,13 +86,8 @@ object MessageNotifier {
                 .build())
         }.getOrDefault(false)
         if (published) shortcutFingerprints[shortcutId] = fingerprint
-        val style = NotificationCompat.MessagingStyle(Person.Builder().setName("You").build())
-            .setGroupConversation(false)
-        previous?.messages?.takeLast(if (refresh) 5 else 4)?.forEach { old ->
-            style.addMessage(old.text, old.timestamp, sender)
-        }
-        if (!refresh) style.addMessage(text!!, System.currentTimeMillis(), sender)
-        val last = style.messages.last()
+        val lines = PreviewHistory.update(previous, text, refresh, System.currentTimeMillis())
+        val last = lines.last()
         val dismiss = PendingIntent.getBroadcast(context, 0,
             Intent(context, NotificationDismissReceiver::class.java)
                 .setAction(NotificationDismissReceiver.ACTION_DISMISS)
@@ -102,14 +97,17 @@ object MessageNotifier {
         val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
             .setSmallIcon(com.relay.app.R.drawable.ic_message_notification)
             .setColor(0xFF7D519E.toInt())
-            .setLargeIcon(avatar)
             .setContentTitle(contact.name)
             .setContentText(last.text)
             .setWhen(last.timestamp)
             .setOnlyAlertOnce(refresh)
             .setShortcutId(if (published || existing) shortcutId else null)
             .addPerson(sender)
-            .setStyle(style)
+            .setStyle(NotificationCompat.DecoratedCustomViewStyle())
+            .setCustomContentView(NotificationPreview.view(context, contact.name, avatar, lines, expanded = false))
+            .setCustomBigContentView(NotificationPreview.view(context, contact.name, avatar, lines, expanded = true))
+            .setCustomHeadsUpContentView(NotificationPreview.view(context, contact.name, avatar, lines, expanded = false))
+            .addExtras(NotificationPreview.extras(lines))
             .setAllowSystemGeneratedContextualActions(false)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)

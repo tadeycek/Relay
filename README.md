@@ -25,7 +25,7 @@ own group closes it for everyone. Old local-only groups remain readable; create 
 shared conversations. All participants need **1.5-preview or newer**. Group chats currently support
 text and quoted replies; photo/video attachments remain available in individual chats.
 
-Use **Reply** beneath a message to quote it, then type and send; **Cancel reply** clears the quote.
+Touch and hold a message to quote it, then type and send; **Cancel reply** clears the quote.
 Quoted snapshots also work in individual photo/video captions. Text notifications and the chat list
 show the reply text rather than protocol fields. Typing indicators use encrypted, short-lived signals
 rather than the persistent outbox, expire after eight seconds, and can be turned off in
@@ -38,9 +38,11 @@ pending; see **rebuild/VERIFICATION.md**.
 
 Encrypted profile updates keep approved contacts’ display names and photos in sync, including after reconnect. Locally chosen contact aliases are preserved.
 
-Message notifications show the sender name, their rounded-square profile photo (or generated avatar), the supplied flat purple phone badge, and up to five unread messages kept separately for each conversation. Tapping dismisses only the notification through a private receiver; it does not open the app, delete a message, or mark it read. There are no reply actions. Android attributes them to
+The connection-service notice is not started while the app is open and is removed when returning. Background delivery still uses Android’s required foreground-service notice when the activity is no longer visible. Rotation and dialogs that only pause the activity do not start that service.
+
+Message notifications use app-rendered content with the sender name, their rounded-square profile photo (or generated avatar), and the latest supplied rounded purple phone badge, and up to five unread messages kept separately for each conversation. Tapping dismisses only the notification through a private receiver; it does not open the app, delete a message, or mark it read. There are no reply actions. Android attributes them to
 **Viber**. The application settings and installer also use that name; the launcher activity remains **Calculator** with its calculator icon. Previews expose message text to anyone allowed to see notifications on the device;
-system lock-screen settings also apply. This remains the Relay build (package `com.relay.app`), using its own messaging transport.
+system lock-screen settings also apply. The content uses a decorated custom notification to avoid OEM circular avatar masks; native conversation-priority behavior may differ, and Android still controls the outer header and spacing. This remains the Relay build (package `com.relay.app`), using its own messaging transport.
 
 Choose **Account → Profile photo → Choose photo and share** to share your own avatar with
 mutually approved contacts. Photos are reduced to a JPEG of at most 128 px / 6 KiB, sent inside the

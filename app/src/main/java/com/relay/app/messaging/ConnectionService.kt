@@ -39,6 +39,10 @@ class ConnectionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        if (appVisible || !com.relay.app.util.RelayPreferences(this).backgroundConnection) {
+            stopSelf()
+            return
+        }
         ensureChannel(this)
         startInForeground(buildNotification(this, TransportStatus.CONNECTING))
         MessagingRuntime.ensureStarted(this)
@@ -46,15 +50,22 @@ class ConnectionService : Service() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         scope.launch {
             Transports.get(this@ConnectionService).status.collect { status ->
-                nm.notify(NOTIFICATION_ID, buildNotification(this@ConnectionService, status))
+                if (!appVisible) nm.notify(NOTIFICATION_ID, buildNotification(this@ConnectionService, status))
             }
         }
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (appVisible || !com.relay.app.util.RelayPreferences(this).backgroundConnection) {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        return START_STICKY
+    }
 
     override fun onDestroy() {
         scope.cancel()
+        stopForeground(STOP_FOREGROUND_REMOVE)
         super.onDestroy()
     }
 
@@ -64,12 +75,23 @@ class ConnectionService : Service() {
     }
 
     companion object {
+        @Volatile private var appVisible = false
+        fun onAppForeground(context: Context) {
+            appVisible = true
+            stop(context)
+        }
+        fun onAppBackground(context: Context) {
+            appVisible = false
+            if (com.relay.app.util.RelayPreferences(context).backgroundConnection) start(context)
+        }
+
         private const val TAG = "ConnectionService"
         const val CHANNEL_ID = "relay_connection"
         private const val NOTIFICATION_ID = 1001
 
         /** Starts the service. Safe to call repeatedly; swallows the OS refusing a background start. */
         fun start(context: Context) {
+            if (appVisible) return
             try {
                 ContextCompat.startForegroundService(context, Intent(context, ConnectionService::class.java))
             } catch (e: Exception) {
@@ -105,7 +127,7 @@ class ConnectionService : Service() {
         private fun buildNotification(context: Context, status: TransportStatus): Notification {
             return NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_notify_sync_noanim)
-                .setContentTitle("Calculator")
+                .setContentTitle(context.getString(com.relay.app.R.string.app_name))
                 .setContentText(statusText(status))
                 .setOngoing(true)
                 .setSilent(true)
