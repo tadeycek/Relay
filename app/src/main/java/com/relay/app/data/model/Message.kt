@@ -23,4 +23,16 @@ data class Message(
      * to something we received and decrypted.
      */
     val senderVerified: Boolean = true,
+    /** Outgoing delivery progress over the internet transport; see [DeliveryState]. */
+    val deliveryState: Int = DeliveryState.NONE,
+    /** True for a received message the user has not opened the chat to see yet (drives unread badges). */
+    val unread: Boolean = false,
 )
+
+/** Values of the `delivery_state` column. NONE covers received and legacy (SMS-era) messages. */
+object DeliveryState {
+    const val NONE = 0
+    const val QUEUED = 1
+    const val SENT = 2
+    const val FAILED = 3
+}

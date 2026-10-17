@@ -21,7 +21,7 @@ object MediaCompressor {
         data class Error(val cause: Throwable) : Result()
     }
 
-    fun compressImage(context: Context, uri: Uri): Result {
+    fun compressImage(context: Context, uri: Uri, maxBytes: Long = MAX_BYTES, maxDim: Int = MAX_DIM): Result {
         return try {
         val outDir = File(context.cacheDir, "mms").also { it.mkdirs() }
         val outFile = File(outDir, "img_${System.currentTimeMillis()}.jpg")
@@ -31,7 +31,7 @@ object MediaCompressor {
             BitmapFactory.decodeStream(it, null, bounds)
         }
 
-        val sample = calculateSampleSize(bounds.outWidth, bounds.outHeight)
+        val sample = calculateSampleSize(bounds.outWidth, bounds.outHeight, maxDim)
         val opts = BitmapFactory.Options().apply { inSampleSize = sample }
         val bitmap = context.contentResolver.openInputStream(uri)?.use {
             BitmapFactory.decodeStream(it, null, opts)
@@ -44,12 +44,12 @@ object MediaCompressor {
             bitmap.compress(Bitmap.CompressFormat.JPEG, quality, baos)
             bytes = baos.toByteArray()
             quality -= 10
-        } while (bytes.size > MAX_BYTES && quality > 20)
+        } while (bytes.size > maxBytes && quality > 20)
 
         bitmap.recycle()
 
-        if (bytes.size > MAX_BYTES) {
-            return Result.TooLarge("Image is too large to compress under 900 KB.")
+        if (bytes.size > maxBytes) {
+            return Result.TooLarge("Image is too large to compress under ${maxBytes / 1024} KB.")
         }
 
         FileOutputStream(outFile).use { it.write(bytes) }
@@ -59,7 +59,12 @@ object MediaCompressor {
         }
     }
 
-    fun prepareVideo(context: Context, uri: Uri): Result {
+    fun prepareVideo(
+        context: Context,
+        uri: Uri,
+        maxBytes: Long = MAX_BYTES,
+        maxDurationMs: Long = MAX_VIDEO_DURATION_MS,
+    ): Result {
         return try {
         val retriever = MediaMetadataRetriever()
         retriever.setDataSource(context, uri)
@@ -67,8 +72,8 @@ object MediaCompressor {
             ?.toLongOrNull() ?: 0L
         retriever.release()
 
-        if (durationMs > MAX_VIDEO_DURATION_MS) {
-            return Result.TooLarge("Video must be 30 seconds or shorter to send via MMS.")
+        if (durationMs > maxDurationMs) {
+            return Result.TooLarge("Video must be ${maxDurationMs / 1000} seconds or shorter.")
         }
 
         val outDir = File(context.cacheDir, "mms").also { it.mkdirs() }
@@ -78,9 +83,9 @@ object MediaCompressor {
             FileOutputStream(outFile).use { input.copyTo(it) }
         }
 
-        if (outFile.length() > MAX_BYTES) {
+        if (outFile.length() > maxBytes) {
             outFile.delete()
-            return Result.TooLarge("Video exceeds 900 KB. Please trim the clip and try again.")
+            return Result.TooLarge("Video exceeds ${maxBytes / 1024} KB. Please trim the clip and try again.")
         }
 
         Result.Success(outFile, "video/mp4")
@@ -89,9 +94,9 @@ object MediaCompressor {
         }
     }
 
-    private fun calculateSampleSize(width: Int, height: Int): Int {
+    private fun calculateSampleSize(width: Int, height: Int, maxDim: Int): Int {
         var size = 1
-        while ((width / size) > MAX_DIM || (height / size) > MAX_DIM) size *= 2
+        while ((width / size) > maxDim || (height / size) > maxDim) size *= 2
         return size
     }
 }

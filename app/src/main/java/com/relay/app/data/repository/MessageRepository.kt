@@ -40,8 +40,49 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             msg.expiryAt?.let { put(Messages.COL_EXPIRY_AT, it) }
             msg.msgId?.let { put(Messages.COL_MSG_ID, it) }
             put(Messages.COL_SENDER_VERIFIED, if (msg.senderVerified) 1 else 0)
+            put(Messages.COL_DELIVERY_STATE, msg.deliveryState)
+            put(Messages.COL_UNREAD, if (msg.unread) 1 else 0)
         }
         return db.insert(Messages.TABLE, null, values)
+    }
+
+    /** Clears the unread flag on everything received in this conversation (called when its chat is on screen). */
+    fun markConversationReadSync(contactId: Long): Int {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Messages.COL_UNREAD, 0) }
+        return db.update(
+            Messages.TABLE, values,
+            "${Messages.COL_CONTACT_ID} = ? AND ${Messages.COL_UNREAD} = 1", arrayOf(contactId.toString()),
+        )
+    }
+
+    /** Number of unread received messages across all one-to-one chats. */
+    fun totalUnreadSync(): Int {
+        val db = dbHelper.readableDatabase
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM ${Messages.TABLE} WHERE ${Messages.COL_UNREAD} = 1", null)
+        return cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
+    }
+
+    /** True if a message with this payload id is already stored for [contactId] (idempotent receive). */
+    fun hasMsgIdSync(contactId: Long, msgId: String): Boolean {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            Messages.TABLE, arrayOf(Messages.COL_ID),
+            "${Messages.COL_CONTACT_ID} = ? AND ${Messages.COL_MSG_ID} = ?",
+            arrayOf(contactId.toString(), msgId),
+            null, null, null, "1",
+        )
+        return cursor.use { it.moveToFirst() }
+    }
+
+    /** Updates outgoing delivery progress for the message carrying payload id [msgId]. */
+    fun setDeliveryStateSync(msgId: String, state: Int) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Messages.COL_DELIVERY_STATE, state) }
+        db.update(
+            Messages.TABLE, values,
+            "${Messages.COL_MSG_ID} = ? AND ${Messages.COL_IS_SENT} = 1", arrayOf(msgId),
+        )
     }
 
     fun hasMediaUri(uri: String): Boolean {
@@ -52,29 +93,6 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             null, null, null, "1"
         )
         return cursor.use { it.moveToFirst() }
-    }
-
-    suspend fun getSavedPins(): List<Message> = withContext(Dispatchers.IO) {
-        val now = System.currentTimeMillis()
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            Messages.TABLE, null,
-            "${Messages.COL_TYPE} = ? AND (${Messages.COL_EXPIRY_AT} IS NULL OR ${Messages.COL_EXPIRY_AT} > ?)",
-            arrayOf(MessageType.LOCATION.name, now.toString()),
-            null, null, "${Messages.COL_TIMESTAMP} DESC"
-        )
-        cursor.use { it.toMessageList() }
-    }
-
-    suspend fun getPinHistory(): List<Message> = withContext(Dispatchers.IO) {
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            Messages.TABLE, null,
-            "${Messages.COL_TYPE} = ?",
-            arrayOf(MessageType.LOCATION.name),
-            null, null, "${Messages.COL_TIMESTAMP} DESC"
-        )
-        cursor.use { it.toMessageList() }
     }
 
     fun deleteExpiredPinsSync() {
@@ -113,6 +131,8 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
         val msgIdIdx = getColumnIndex(Messages.COL_MSG_ID)
         val readAtIdx = getColumnIndex(Messages.COL_READ_AT)
         val senderVerifiedIdx = getColumnIndex(Messages.COL_SENDER_VERIFIED)
+        val deliveryStateIdx = getColumnIndex(Messages.COL_DELIVERY_STATE)
+        val unreadIdx = getColumnIndex(Messages.COL_UNREAD)
         return Message(
             id = getLong(getColumnIndexOrThrow(Messages.COL_ID)),
             contactId = getLong(getColumnIndexOrThrow(Messages.COL_CONTACT_ID)),
@@ -130,6 +150,8 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             senderVerified = if (senderVerifiedIdx >= 0 && !isNull(senderVerifiedIdx)) {
                 getInt(senderVerifiedIdx) == 1
             } else true,
+            deliveryState = if (deliveryStateIdx >= 0 && !isNull(deliveryStateIdx)) getInt(deliveryStateIdx) else 0,
+            unread = unreadIdx >= 0 && !isNull(unreadIdx) && getInt(unreadIdx) == 1,
         )
     }
 }

@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 9
+    const val DB_VERSION = 15
 
     object Contacts {
         const val TABLE = "contacts"
@@ -15,6 +15,22 @@ object DatabaseContract {
         const val COL_SENT_PUBKEY = "sent_pubkey"
         const val COL_PENDING_PUBLIC_KEY = "pending_public_key"
         const val COL_SIGNING_PUBLIC_KEY = "signing_public_key"
+        const val COL_NOSTR_PUBKEY = "nostr_pubkey"
+        const val COL_RELAY_HINTS = "relay_hints"
+        const val COL_QR_VERIFIED = "qr_verified"
+        /**
+         * Set instead of deleting the row when the user chooses to keep the conversation: the contact
+         * disappears from People and can no longer be messaged (its key is cleared so a future message
+         * from the same person starts a fresh contact instead of silently reviving this one), but the
+         * chat history stays in Messages, labelled as a deleted contact.
+         */
+        const val COL_DELETED_AT = "deleted_at"
+        /**
+         * The name this contact was first added under (from their QR/NFC code, or the first name they
+         * announced) — set once and never changed again, so a later rename in [COL_NAME] never loses it.
+         * Null for a contact added before this column existed.
+         */
+        const val COL_ORIGINAL_NAME = "original_name"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -26,8 +42,25 @@ object DatabaseContract {
                 $COL_PUBLIC_KEY TEXT,
                 $COL_SENT_PUBKEY INTEGER NOT NULL DEFAULT 0,
                 $COL_PENDING_PUBLIC_KEY TEXT,
-                $COL_SIGNING_PUBLIC_KEY TEXT
+                $COL_SIGNING_PUBLIC_KEY TEXT,
+                $COL_NOSTR_PUBKEY TEXT,
+                $COL_RELAY_HINTS TEXT,
+                $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0,
+                $COL_DELETED_AT INTEGER,
+                $COL_ORIGINAL_NAME TEXT
             )
+        """
+
+        const val ADD_NOSTR_PUBKEY = "ALTER TABLE $TABLE ADD COLUMN $COL_NOSTR_PUBKEY TEXT"
+        const val ADD_RELAY_HINTS = "ALTER TABLE $TABLE ADD COLUMN $COL_RELAY_HINTS TEXT"
+        const val ADD_QR_VERIFIED = "ALTER TABLE $TABLE ADD COLUMN $COL_QR_VERIFIED INTEGER NOT NULL DEFAULT 0"
+        const val ADD_DELETED_AT = "ALTER TABLE $TABLE ADD COLUMN $COL_DELETED_AT INTEGER"
+        const val ADD_ORIGINAL_NAME = "ALTER TABLE $TABLE ADD COLUMN $COL_ORIGINAL_NAME TEXT"
+
+        /** One contact per Nostr key. Partial so the many legacy rows with NULL do not collide. */
+        const val INDEX_NOSTR_PUBKEY = """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_contacts_nostr_pubkey
+            ON $TABLE($COL_NOSTR_PUBKEY) WHERE $COL_NOSTR_PUBKEY IS NOT NULL
         """
 
         const val ADD_HAS_RELAY = "ALTER TABLE $TABLE ADD COLUMN $COL_HAS_RELAY INTEGER NOT NULL DEFAULT 0"
@@ -54,6 +87,8 @@ object DatabaseContract {
         const val COL_MSG_ID = "msg_id"
         const val COL_READ_AT = "read_at"
         const val COL_SENDER_VERIFIED = "sender_verified"
+        const val COL_DELIVERY_STATE = "delivery_state"
+        const val COL_UNREAD = "unread"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -71,13 +106,29 @@ object DatabaseContract {
                 $COL_EXPIRY_AT   INTEGER,
                 $COL_MSG_ID      TEXT,
                 $COL_READ_AT     INTEGER,
-                $COL_SENDER_VERIFIED INTEGER NOT NULL DEFAULT 1
+                $COL_SENDER_VERIFIED INTEGER NOT NULL DEFAULT 1,
+                $COL_DELIVERY_STATE INTEGER NOT NULL DEFAULT 0,
+                $COL_UNREAD INTEGER NOT NULL DEFAULT 0
             )
+        """
+
+        /** Added in DB v13. A per-row flag (not a last-read timestamp): sender timestamps can be older than the read time when messages arrive late. */
+        const val ADD_UNREAD = "ALTER TABLE $TABLE ADD COLUMN $COL_UNREAD INTEGER NOT NULL DEFAULT 0"
+
+        const val INDEX_UNREAD = """
+            CREATE INDEX IF NOT EXISTS idx_messages_unread ON $TABLE($COL_CONTACT_ID, $COL_UNREAD)
         """
 
         const val INDEX_CONTACT = """
             CREATE INDEX idx_messages_contact ON $TABLE($COL_CONTACT_ID, $COL_TIMESTAMP DESC)
         """
+
+        /** Non-unique on purpose: legacy rows may already hold duplicate ids, and a unique index would fail the migration. */
+        const val INDEX_MSG_ID = """
+            CREATE INDEX IF NOT EXISTS idx_messages_msg_id ON $TABLE($COL_CONTACT_ID, $COL_MSG_ID)
+        """
+
+        const val ADD_DELIVERY_STATE = "ALTER TABLE $TABLE ADD COLUMN $COL_DELIVERY_STATE INTEGER NOT NULL DEFAULT 0"
 
         const val ADD_MEDIA_URI = "ALTER TABLE $TABLE ADD COLUMN $COL_MEDIA_URI TEXT"
         const val ADD_PIN_LABEL = "ALTER TABLE $TABLE ADD COLUMN $COL_PIN_LABEL TEXT"
@@ -114,6 +165,57 @@ object DatabaseContract {
         """
     }
 
+    /** Outgoing messages waiting to be (re)published by the transport. See transport/outbox. */
+    object Outbox {
+        const val TABLE = "outbox"
+        const val COL_ID = "_id"
+        const val COL_CONTACT_ID = "contact_id"
+        const val COL_RECIPIENT = "recipient_pubkey"
+        const val COL_PAYLOAD_ID = "payload_id"
+        const val COL_PAYLOAD_JSON = "payload_json"
+        const val COL_CREATED_AT = "created_at"
+        const val COL_ATTEMPTS = "attempts"
+        const val COL_NEXT_ATTEMPT_AT = "next_attempt_at"
+        const val COL_STATE = "state"
+
+        const val CREATE = """
+            CREATE TABLE IF NOT EXISTS $TABLE (
+                $COL_ID              INTEGER PRIMARY KEY AUTOINCREMENT,
+                $COL_CONTACT_ID      INTEGER NOT NULL REFERENCES ${Contacts.TABLE}(${Contacts.COL_ID}) ON DELETE CASCADE,
+                $COL_RECIPIENT       TEXT    NOT NULL,
+                $COL_PAYLOAD_ID      TEXT    NOT NULL,
+                $COL_PAYLOAD_JSON    TEXT    NOT NULL,
+                $COL_CREATED_AT      INTEGER NOT NULL,
+                $COL_ATTEMPTS        INTEGER NOT NULL DEFAULT 0,
+                $COL_NEXT_ATTEMPT_AT INTEGER NOT NULL,
+                $COL_STATE           INTEGER NOT NULL DEFAULT 0
+            )
+        """
+
+        const val INDEX_DUE = """
+            CREATE INDEX IF NOT EXISTS idx_outbox_due ON $TABLE($COL_STATE, $COL_NEXT_ATTEMPT_AT)
+        """
+    }
+
+    /**
+     * Ids of payloads already processed, including control messages (location requests, receipts,
+     * key announcements) that leave no message row. The transport re-fetches a multi-day window on
+     * every start (NIP-17 timestamp fuzzing), so without a persistent record a replayed
+     * location request could re-trigger an auto-share.
+     */
+    object SeenPayloads {
+        const val TABLE = "seen_payloads"
+        const val COL_PAYLOAD_ID = "payload_id"
+        const val COL_SEEN_AT = "seen_at"
+
+        const val CREATE = """
+            CREATE TABLE IF NOT EXISTS $TABLE (
+                $COL_PAYLOAD_ID TEXT PRIMARY KEY,
+                $COL_SEEN_AT    INTEGER NOT NULL
+            )
+        """
+    }
+
     object GroupMessages {
         const val TABLE = "group_messages"
         const val COL_ID = "_id"
@@ -128,6 +230,7 @@ object DatabaseContract {
         const val COL_MEDIA_URI = "media_uri"
         const val COL_PIN_LABEL = "pin_label"
         const val COL_EXPIRY_AT = "expiry_at"
+        const val COL_UNREAD = "unread"
 
         const val CREATE = """
             CREATE TABLE $TABLE (
@@ -142,12 +245,20 @@ object DatabaseContract {
                 $COL_TIMESTAMP   INTEGER NOT NULL,
                 $COL_MEDIA_URI   TEXT,
                 $COL_PIN_LABEL   TEXT,
-                $COL_EXPIRY_AT   INTEGER
+                $COL_EXPIRY_AT   INTEGER,
+                $COL_UNREAD      INTEGER NOT NULL DEFAULT 0
             )
         """
 
         const val INDEX_GROUP = """
             CREATE INDEX idx_group_messages_group ON $TABLE($COL_GROUP_ID, $COL_TIMESTAMP DESC)
+        """
+
+        /** Added in DB v13, same meaning as Messages.COL_UNREAD. */
+        const val ADD_UNREAD = "ALTER TABLE $TABLE ADD COLUMN $COL_UNREAD INTEGER NOT NULL DEFAULT 0"
+
+        const val INDEX_UNREAD = """
+            CREATE INDEX IF NOT EXISTS idx_group_messages_unread ON $TABLE($COL_GROUP_ID, $COL_UNREAD)
         """
     }
 }

@@ -49,3 +49,8 @@ secrets.properties
 *.swo
 *~
 CLAUDE.md
+
+# Owner console state, credentials and Python cache
+.local/
+__pycache__/
+*.pyc

@@ -2,6 +2,12 @@ package com.relay.app.util
 
 import com.relay.app.data.model.PinExpiry
 
+/**
+ * The `TYPE:...` message-body protocol (pins, location requests, read receipts, key announcements,
+ * media references). The name is historical: these strings used to travel as SMS bodies and now
+ * travel as the `body` of an internet [com.relay.app.transport.RelayPayload]. Kept under its old
+ * name to avoid churn; it has no SMS dependency.
+ */
 object SmsMessageParser {
 
     private val LOCATION_REGEX = Regex(
@@ -39,7 +45,10 @@ object SmsMessageParser {
         expiry: PinExpiry = PinExpiry.NEVER,
         label: String? = null,
     ): String {
-        val base = "TYPE:LOCATION|LAT:${"%.6f".format(lat)}|LNG:${"%.6f".format(lng)}"
+        // Locale.US, not the device default: a comma-decimal locale (common outside en-US) would put a
+        // comma in the number, which the receiver's parser — expecting a dot — then fails to recognise,
+        // silently turning a location share into a raw-looking text message instead.
+        val base = "TYPE:LOCATION|LAT:${"%.6f".format(java.util.Locale.US, lat)}|LNG:${"%.6f".format(java.util.Locale.US, lng)}"
         val withExpiry = if (expiry != PinExpiry.NEVER) "$base|EXPIRY:${expiry.smsCode}" else base
         val trimmedLabel = label?.trim()?.take(30)
         return if (!trimmedLabel.isNullOrEmpty()) "$withExpiry|LABEL:$trimmedLabel" else withExpiry

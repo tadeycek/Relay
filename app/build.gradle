@@ -4,6 +4,15 @@ plugins {
     id 'org.jetbrains.kotlin.plugin.compose'
 }
 
+def previewBuild = providers.gradleProperty('relayPreview').getOrElse('false').toBoolean()
+def localOwnerConfig = new Properties()
+def ownerConfigFile = rootProject.file('.local/owner-config.properties')
+if (ownerConfigFile.exists()) ownerConfigFile.withInputStream { localOwnerConfig.load(it) }
+def ownerPublicKey = localOwnerConfig.getProperty('owner_pubkey', '')
+def ownerConfig = new Properties()
+// Relay recovery needs only the public owner key. Never embed local service credentials with it.
+if (!previewBuild && ownerPublicKey.isBlank()) ownerConfig.putAll(localOwnerConfig)
+
 android {
     namespace 'com.relay.app'
     compileSdk 36
@@ -13,7 +22,11 @@ android {
         minSdk 26
         targetSdk 36
         versionCode 1
-        versionName '1.0'
+        versionName previewBuild ? '1.0-preview' : '1.0'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        buildConfigField 'String', 'OWNER_PUBLIC_KEY', groovy.json.JsonOutput.toJson(ownerPublicKey)
+        buildConfigField 'String', 'OWNER_SERVICE_URL', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('url', ''))
+        buildConfigField 'String', 'OWNER_ENROLLMENT_TOKEN', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('enrollment_token', ''))
     }
 
     buildFeatures {
@@ -52,7 +65,6 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-viewmodel-compose:2.7.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0'
-    implementation 'org.osmdroid:osmdroid-android:6.1.18'
     implementation 'com.google.accompanist:accompanist-permissions:0.34.0'
     implementation 'io.coil-kt:coil-compose:2.6.0'
 
@@ -63,7 +75,6 @@ dependencies {
     implementation 'androidx.sqlite:sqlite:2.4.0'
     implementation 'androidx.security:security-crypto:1.1.0'
     implementation 'androidx.biometric:biometric:1.1.0'
-    implementation 'com.googlecode.libphonenumber:libphonenumber:9.0.35'
 
     // QR contact exchange: QR generation (encode-only, no UI dep) + in-app camera scanning.
     implementation 'com.google.zxing:core:3.5.4'
@@ -73,6 +84,33 @@ dependencies {
     implementation 'androidx.camera:camera-view:1.4.2'
     implementation 'com.google.mlkit:barcode-scanning:17.3.0'
 
+    // Periodic safety-net poll for when the foreground service is off or was killed.
+    implementation 'androidx.work:work-runtime-ktx:2.9.1'
+
+    // Internet transport: Nostr (NIP-17 private DMs / NIP-44 / NIP-59 gift wrap) via rust-nostr's
+    // Kotlin bindings. Alpha-quality upstream; pinned and wrapped behind com.relay.app.transport.
+    implementation 'org.rust-nostr:nostr-sdk-kmp-android:0.44.8'
+
+    // JVM unit tests for the pure logic (payload codec, outbox policy, dedupe, QR codec, handlers).
+    // org.json is included because android.jar's org.json is only stubs on the JVM.
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0'
+    androidTestImplementation 'androidx.test:runner:1.6.2'
+    androidTestImplementation 'androidx.test:core:1.6.1'
+    androidTestImplementation 'androidx.test.uiautomator:uiautomator:2.3.0'
+    androidTestImplementation 'junit:junit:4.13.2'
+
     debugImplementation 'androidx.compose.ui:ui-tooling'
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
+}
+
+// A distributed app pins the owner recovery public key (or explicitly configures legacy HTTPS).
+gradle.taskGraph.whenReady { graph ->
+    if (graph.allTasks.any { it.name in ['assembleRelease', 'bundleRelease'] }) {
+        if (!(ownerPublicKey ==~ /[0-9a-f]{64}/) && (!ownerConfig.getProperty('url', '').startsWith('https://') ||
+                ownerConfig.getProperty('enrollment_token', '').isBlank())) {
+            throw new GradleException('Run owner/run.sh --prepare to configure the owner public key before a release build.')
+        }
+    }
 }

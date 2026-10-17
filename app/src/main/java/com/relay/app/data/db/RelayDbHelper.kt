@@ -37,6 +37,13 @@ class RelayDbHelper(context: Context) :
         db.execSQL(DatabaseContract.GroupMembers.CREATE)
         db.execSQL(DatabaseContract.GroupMessages.CREATE)
         db.execSQL(DatabaseContract.GroupMessages.INDEX_GROUP)
+        db.execSQL(DatabaseContract.Contacts.INDEX_NOSTR_PUBKEY)
+        db.execSQL(DatabaseContract.Messages.INDEX_MSG_ID)
+        db.execSQL(DatabaseContract.Outbox.CREATE)
+        db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
+        db.execSQL(DatabaseContract.SeenPayloads.CREATE)
+        db.execSQL(DatabaseContract.Messages.INDEX_UNREAD)
+        db.execSQL(DatabaseContract.GroupMessages.INDEX_UNREAD)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -71,6 +78,48 @@ class RelayDbHelper(context: Context) :
         }
         if (oldVersion < 9) {
             db.execSQL(DatabaseContract.Messages.ADD_SENDER_VERIFIED)
+        }
+        if (oldVersion < 10) {
+            // Internet transport. Purely additive (no table rebuild): dropping/recreating contacts
+            // would cascade-delete every message, so the NOT NULL UNIQUE phone column stays and
+            // internet-only contacts get a synthetic placeholder there (see Contact.hasPhone).
+            db.execSQL(DatabaseContract.Contacts.ADD_NOSTR_PUBKEY)
+            db.execSQL(DatabaseContract.Contacts.ADD_RELAY_HINTS)
+            db.execSQL(DatabaseContract.Contacts.INDEX_NOSTR_PUBKEY)
+            db.execSQL(DatabaseContract.Messages.ADD_DELIVERY_STATE)
+            db.execSQL(DatabaseContract.Messages.INDEX_MSG_ID)
+            db.execSQL(DatabaseContract.Outbox.CREATE)
+            db.execSQL(DatabaseContract.Outbox.INDEX_DUE)
+        }
+        if (oldVersion < 11) {
+            db.execSQL(DatabaseContract.SeenPayloads.CREATE)
+        }
+        if (oldVersion < 12) {
+            // "Met in person": set only by scanning the contact's QR code. Distinguishes a verified
+            // contact from a stranger who merely knows our key (name and key are self-declared).
+            db.execSQL(DatabaseContract.Contacts.ADD_QR_VERIFIED)
+        }
+        if (oldVersion < 13) {
+            // Unread badges for the conversation list. Existing messages start as read (DEFAULT 0):
+            // we cannot know what the user has seen, and a wall of "unread" after an update would be noise.
+            db.execSQL(DatabaseContract.Messages.ADD_UNREAD)
+            db.execSQL(DatabaseContract.GroupMessages.ADD_UNREAD)
+            db.execSQL(DatabaseContract.Messages.INDEX_UNREAD)
+            db.execSQL(DatabaseContract.GroupMessages.INDEX_UNREAD)
+        }
+        if (oldVersion < 14) {
+            // "Delete, keep the chat": the contact row survives (soft-deleted) so its messages, which
+            // reference it, are unaffected; only a real delete cascades and removes them.
+            db.execSQL(DatabaseContract.Contacts.ADD_DELETED_AT)
+        }
+        if (oldVersion < 15) {
+            // Keeps the name a contact was first added under even after a local rename. For a contact
+            // that already existed, the best available answer is whatever name it currently has.
+            db.execSQL(DatabaseContract.Contacts.ADD_ORIGINAL_NAME)
+            db.execSQL(
+                "UPDATE ${DatabaseContract.Contacts.TABLE} SET ${DatabaseContract.Contacts.COL_ORIGINAL_NAME} = " +
+                    "${DatabaseContract.Contacts.COL_NAME} WHERE ${DatabaseContract.Contacts.COL_ORIGINAL_NAME} IS NULL"
+            )
         }
     }
 

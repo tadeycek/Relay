@@ -1,6 +1,8 @@
 package com.relay.app.util
 
 import android.content.Context
+import com.relay.app.media.DefaultBlossomServers
+import com.relay.app.transport.nostr.DefaultRelays
 
 class RelayPreferences(context: Context) {
 
@@ -35,21 +37,9 @@ class RelayPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_MSG_NOTIF, true)
         set(v) { prefs.edit().putBoolean(KEY_MSG_NOTIF, v).apply() }
 
-    var defaultMapZoom: Float
-        get() = prefs.getFloat(KEY_MAP_ZOOM, 14f)
-        set(v) { prefs.edit().putFloat(KEY_MAP_ZOOM, v).apply() }
-
-    var keepScreenOnMap: Boolean
-        get() = prefs.getBoolean(KEY_KEEP_SCREEN, false)
-        set(v) { prefs.edit().putBoolean(KEY_KEEP_SCREEN, v).apply() }
-
     var defaultPinExpiry: String
         get() = prefs.getString(KEY_DEFAULT_PIN_EXPIRY, "never") ?: "never"
         set(v) { prefs.edit().putString(KEY_DEFAULT_PIN_EXPIRY, v).apply() }
-
-    var mapStyle: String
-        get() = prefs.getString(KEY_MAP_STYLE, "standard") ?: "standard"
-        set(v) { prefs.edit().putString(KEY_MAP_STYLE, v).apply() }
 
     var readReceipts: Boolean
         get() = prefs.getBoolean(KEY_READ_RECEIPTS, true)
@@ -72,10 +62,6 @@ class RelayPreferences(context: Context) {
         get() = prefs.getString(KEY_MY_NAME, "") ?: ""
         set(v) { prefs.edit().putString(KEY_MY_NAME, v).apply() }
 
-    var myPhone: String
-        get() = prefs.getString(KEY_MY_PHONE, "") ?: ""
-        set(v) { prefs.edit().putString(KEY_MY_PHONE, v).apply() }
-
     /** Epoch millis after which the retired identity key (kept only to decrypt late-arriving
      *  messages right after a rotation) is permanently deleted. 0 = no retired key on file. */
     var previousKeyExpiresAt: Long
@@ -86,7 +72,52 @@ class RelayPreferences(context: Context) {
         get() = prefs.getLong(KEY_LAST_ROTATION_AT, 0L)
         set(v) { prefs.edit().putLong(KEY_LAST_ROTATION_AT, v).apply() }
 
+    /** Nostr relays used for sending and receiving (one URL per stored line). Falls back to the built-in defaults. */
+    var nostrRelays: List<String>
+        get() = prefs.getString(KEY_NOSTR_RELAYS, null)
+            ?.lines()?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: DefaultRelays.CLEARNET
+        set(v) { prefs.edit().putString(KEY_NOSTR_RELAYS, v.joinToString("\n")).apply() }
+
+    /** Whether the one-time Android 13+ notification permission prompt has been shown. */
+    var askedNotificationPermission: Boolean
+        get() = prefs.getBoolean(KEY_ASKED_NOTIF_PERMISSION, false)
+        set(v) { prefs.edit().putBoolean(KEY_ASKED_NOTIF_PERMISSION, v).apply() }
+
+    /** Route relay and media-server connections through Tor (Orbot). Off by default: slower and heavier on battery. */
+    var torEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TOR_ENABLED, false)
+        set(v) { prefs.edit().putBoolean(KEY_TOR_ENABLED, v).apply() }
+
+    /** If Tor is on but unreachable, connect directly instead of waiting. Off by default (fail closed). */
+    var torFallbackToDirect: Boolean
+        get() = prefs.getBoolean(KEY_TOR_FALLBACK, false)
+        set(v) { prefs.edit().putBoolean(KEY_TOR_FALLBACK, v).apply() }
+
+    /** Blossom media servers tried in order for uploads (one URL per stored line). Falls back to defaults. */
+    var blossomServers: List<String>
+        get() = prefs.getString(KEY_BLOSSOM_SERVERS, null)
+            ?.lines()?.map { it.trim() }?.filter { it.startsWith("https://") }
+            ?.takeIf { it.isNotEmpty() }
+            ?: DefaultBlossomServers.LIST
+        set(v) { prefs.edit().putString(KEY_BLOSSOM_SERVERS, v.joinToString("\n")).apply() }
+
+    /**
+     * Keep a foreground service running so messages arrive while the app is closed. On by default
+     * (without it there is no closed-app delivery); costs battery and shows a persistent notification.
+     */
+    var backgroundConnection: Boolean
+        get() = prefs.getBoolean(KEY_BACKGROUND_CONNECTION, true)
+        set(v) { prefs.edit().putBoolean(KEY_BACKGROUND_CONNECTION, v).apply() }
+
     companion object {
+        private const val KEY_ASKED_NOTIF_PERMISSION = "asked_notification_permission"
+        private const val KEY_TOR_ENABLED = "tor_enabled"
+        private const val KEY_TOR_FALLBACK = "tor_fallback_direct"
+        private const val KEY_BLOSSOM_SERVERS = "blossom_servers"
+        private const val KEY_BACKGROUND_CONNECTION = "background_connection"
+        private const val KEY_NOSTR_RELAYS = "nostr_relays"
         private const val PREFS_NAME = "relay_settings"
         private const val KEY_AUTO_APPROVE = "auto_approve_location"
         private const val KEY_NOTIFY_AUTO_SHARE = "notify_auto_share"
@@ -95,16 +126,12 @@ class RelayPreferences(context: Context) {
         private const val KEY_APP_LOCK = "app_lock"
         private const val KEY_PIN_NOTIF = "incoming_pin_notif"
         private const val KEY_MSG_NOTIF = "incoming_msg_notif"
-        private const val KEY_MAP_ZOOM = "default_map_zoom"
-        private const val KEY_KEEP_SCREEN = "keep_screen_on_map"
         private const val KEY_DEFAULT_PIN_EXPIRY = "default_pin_expiry"
-        private const val KEY_MAP_STYLE = "map_style"
         private const val KEY_READ_RECEIPTS = "read_receipts"
         private const val KEY_DND_ENABLED = "dnd_enabled"
         private const val KEY_DND_START_HOUR = "dnd_start_hour"
         private const val KEY_DND_END_HOUR = "dnd_end_hour"
         private const val KEY_MY_NAME = "my_name"
-        private const val KEY_MY_PHONE = "my_phone"
         private const val KEY_PREV_KEY_EXPIRES_AT = "prev_identity_key_expires_at"
         private const val KEY_LAST_ROTATION_AT = "last_identity_key_rotation_at"
 

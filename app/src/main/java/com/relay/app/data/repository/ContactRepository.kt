@@ -1,7 +1,6 @@
 package com.relay.app.data.repository
 
 import android.content.ContentValues
-import com.google.i18n.phonenumbers.PhoneNumberUtil
 import com.relay.app.data.db.DatabaseContract.Contacts
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
@@ -15,53 +14,36 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
     suspend fun getAllContacts(): List<Contact> = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
         val cursor = db.query(
-            Contacts.TABLE, null, null, null, null, null, "${Contacts.COL_NAME} ASC"
+            Contacts.TABLE, null,
+            "${Contacts.COL_DELETED_AT} IS NULL", null, null, null, "${Contacts.COL_NAME} ASC",
         )
         cursor.use { it.toContactList() }
     }
 
-    suspend fun insertContact(name: String, phone: String): Long = withContext(Dispatchers.IO) {
-        val db = dbHelper.writableDatabase
-        val values = ContentValues().apply {
-            put(Contacts.COL_NAME, name)
-            put(Contacts.COL_PHONE, phone)
-        }
-        db.insertWithOnConflict(Contacts.TABLE, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
-    }
-
+    /** Deletes the contact and, through the foreign key, every message in their chat. */
     suspend fun deleteContact(id: Long) = withContext(Dispatchers.IO) {
         val db = dbHelper.writableDatabase
         db.delete(Contacts.TABLE, "${Contacts.COL_ID} = ?", arrayOf(id.toString()))
     }
 
-    suspend fun findByPhone(phone: String): Contact? = withContext(Dispatchers.IO) {
-        findByPhoneSync(phone)
-    }
-
-    /** Looks up a contact by phone, creating a minimal one (name = phone number) if none exists yet. */
-    fun findOrCreateByPhoneSync(phone: String): Contact {
-        findByPhoneSync(phone)?.let { return it }
+    /**
+     * Removes the contact from People and stops them being messageable, but leaves their chat history
+     * in place. Clears their key so a message from the same person later starts a new contact rather
+     * than silently reviving this one.
+     */
+    suspend fun softDeleteContact(id: Long) = withContext(Dispatchers.IO) {
         val db = dbHelper.writableDatabase
+        val now = System.currentTimeMillis()
         val values = ContentValues().apply {
-            put(Contacts.COL_NAME, phone)
-            put(Contacts.COL_PHONE, phone)
+            put(Contacts.COL_DELETED_AT, now)
+            putNull(Contacts.COL_NOSTR_PUBKEY)
+            putNull(Contacts.COL_PUBLIC_KEY)
+            putNull(Contacts.COL_PENDING_PUBLIC_KEY)
+            // phone is NOT NULL UNIQUE; a re-add from the same key later reuses the exact placeholder
+            // this row used to hold, so it must be freed up here rather than left behind on a dead row.
+            put(Contacts.COL_PHONE, "deleted:$id:$now")
         }
-        db.insertWithOnConflict(Contacts.TABLE, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
-        return findByPhoneSync(phone) ?: Contact(name = phone, phone = phone)
-    }
-
-    fun findByPhoneSync(phone: String): Contact? {
-        val db = dbHelper.readableDatabase
-        val cursor = db.query(
-            Contacts.TABLE, null, null, null, null, null, null
-        )
-        return cursor.use { c ->
-            while (c.moveToNext()) {
-                val stored = c.getString(c.getColumnIndexOrThrow(Contacts.COL_PHONE))
-                if (phoneMatches(stored, phone)) return@use c.toContact()
-            }
-            null
-        }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(id.toString()))
     }
 
     suspend fun getById(id: Long): Contact? = withContext(Dispatchers.IO) {
@@ -76,29 +58,6 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
             null, null, null
         )
         return cursor.use { if (it.moveToFirst()) it.toContact() else null }
-    }
-
-    private fun phoneMatches(stored: String, incoming: String): Boolean {
-        // libphonenumber understands country codes/formatting variants; fall back to a
-        // last-N-digit suffix comparison for numbers it can't parse (e.g. short local numbers).
-        val matchType = try {
-            PhoneNumberUtil.getInstance().isNumberMatch(stored, incoming)
-        } catch (e: Exception) {
-            null
-        }
-        when (matchType) {
-            PhoneNumberUtil.MatchType.EXACT_MATCH,
-            PhoneNumberUtil.MatchType.NSN_MATCH,
-            PhoneNumberUtil.MatchType.SHORT_NSN_MATCH -> return true
-            PhoneNumberUtil.MatchType.NO_MATCH -> return false
-            else -> Unit
-        }
-
-        val s = stored.filter { it.isDigit() }
-        val i = incoming.filter { it.isDigit() }
-        val len = minOf(s.length, i.length, 9)
-        if (len == 0) return false
-        return s.takeLast(len) == i.takeLast(len)
     }
 
     fun setPublicKeySync(contactId: Long, publicKeyBase64: String) {
@@ -187,6 +146,81 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
         db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
     }
 
+    /**
+     * Deletes the contact only if no message was ever exchanged with it, so removing a half-finished
+     * pairing can never take a real conversation with it. Returns whether it was deleted.
+     */
+    fun deleteIfUnusedSync(contactId: Long): Boolean {
+        val db = dbHelper.writableDatabase
+        val used = db.rawQuery(
+            "SELECT 1 FROM ${com.relay.app.data.db.DatabaseContract.Messages.TABLE} WHERE ${com.relay.app.data.db.DatabaseContract.Messages.COL_CONTACT_ID} = ? LIMIT 1",
+            arrayOf(contactId.toString()),
+        ).use { it.moveToFirst() }
+        if (used) return false
+        return db.delete(Contacts.TABLE, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString())) > 0
+    }
+
+    fun findByNostrPubkeySync(pubkeyHex: String): Contact? {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            Contacts.TABLE, null,
+            "${Contacts.COL_NOSTR_PUBKEY} = ?", arrayOf(pubkeyHex.lowercase()),
+            null, null, null, "1",
+        )
+        return cursor.use { if (it.moveToFirst()) it.toContact() else null }
+    }
+
+    /**
+     * Returns the contact for [pubkeyHex], creating one (named [name]) if none exists. A brand-new
+     * internet contact is marked as a Relay user immediately. If an existing contact is found its
+     * name is only replaced when it is still the auto-generated placeholder.
+     */
+    fun findOrCreateByNostrSync(pubkeyHex: String, name: String, relayHints: List<String> = emptyList()): Contact {
+        val key = pubkeyHex.lowercase()
+        findByNostrPubkeySync(key)?.let { existing ->
+            if (relayHints.isNotEmpty()) setRelayHintsSync(existing.id, relayHints)
+            return findByNostrPubkeySync(key) ?: existing
+        }
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put(Contacts.COL_NAME, name)
+            put(Contacts.COL_ORIGINAL_NAME, name)
+            put(Contacts.COL_PHONE, Contact.placeholderPhoneFor(key))
+            put(Contacts.COL_NOSTR_PUBKEY, key)
+            put(Contacts.COL_HAS_RELAY, 1)
+            if (relayHints.isNotEmpty()) put(Contacts.COL_RELAY_HINTS, relayHints.joinToString("\n"))
+        }
+        db.insertWithOnConflict(Contacts.TABLE, null, values, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
+        return findByNostrPubkeySync(key)
+            ?: Contact(name = name, phone = Contact.placeholderPhoneFor(key), hasRelay = true, nostrPubkey = key, originalName = name)
+    }
+
+    /** Attaches a Nostr address to an existing (legacy phone) contact, e.g. after re-pairing by QR v3. */
+    fun setNostrPubkeySync(contactId: Long, pubkeyHex: String) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            put(Contacts.COL_NOSTR_PUBKEY, pubkeyHex.lowercase())
+            put(Contacts.COL_HAS_RELAY, 1)
+        }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
+    /** Marks the contact as met in person (their QR code was scanned). */
+    fun markQrVerifiedSync(contactId: Long) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply { put(Contacts.COL_QR_VERIFIED, 1) }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
+    fun setRelayHintsSync(contactId: Long, hints: List<String>) {
+        val db = dbHelper.writableDatabase
+        val values = ContentValues().apply {
+            if (hints.isEmpty()) putNull(Contacts.COL_RELAY_HINTS)
+            else put(Contacts.COL_RELAY_HINTS, hints.joinToString("\n"))
+        }
+        db.update(Contacts.TABLE, values, "${Contacts.COL_ID} = ?", arrayOf(contactId.toString()))
+    }
+
     private fun Cursor.toContact() = Contact(
         id = getLong(getColumnIndexOrThrow(Contacts.COL_ID)),
         name = getString(getColumnIndexOrThrow(Contacts.COL_NAME)),
@@ -204,6 +238,21 @@ class ContactRepository(private val dbHelper: RelayDbHelper) {
             if (idx >= 0 && !isNull(idx)) getString(idx) else null
         },
         signingPublicKey = getColumnIndex(Contacts.COL_SIGNING_PUBLIC_KEY).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getString(idx) else null
+        },
+        nostrPubkey = getColumnIndex(Contacts.COL_NOSTR_PUBKEY).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getString(idx) else null
+        },
+        relayHints = getColumnIndex(Contacts.COL_RELAY_HINTS).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getString(idx).lines().filter { it.isNotBlank() } else emptyList()
+        },
+        qrVerified = getColumnIndex(Contacts.COL_QR_VERIFIED).let { idx ->
+            idx >= 0 && !isNull(idx) && getInt(idx) == 1
+        },
+        deletedAt = getColumnIndex(Contacts.COL_DELETED_AT).let { idx ->
+            if (idx >= 0 && !isNull(idx)) getLong(idx) else null
+        },
+        originalName = getColumnIndex(Contacts.COL_ORIGINAL_NAME).let { idx ->
             if (idx >= 0 && !isNull(idx)) getString(idx) else null
         },
     )

@@ -7,7 +7,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.relay.app.messaging.ConnectionService
 import com.relay.app.sms.KeyRotationReceiver
+import com.relay.app.transport.TorControl
+import com.relay.app.transport.TransportStatus
+import com.relay.app.transport.Transports
+import com.relay.app.ui.theme.ThemeController
+import com.relay.app.ui.theme.ThemeMode
 import com.relay.app.util.RelayPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,12 +44,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     var incomingMessageNotification by mutableStateOf(prefs.incomingMessageNotification)
         private set
 
-    var defaultMapZoom by mutableFloatStateOf(prefs.defaultMapZoom)
-        private set
-
-    var keepScreenOnMap by mutableStateOf(prefs.keepScreenOnMap)
-        private set
-
     var defaultPinExpiry by mutableStateOf(prefs.defaultPinExpiry)
         private set
 
@@ -55,6 +55,76 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
 
     var dndEndHour by mutableStateOf(prefs.dndEndHour)
         private set
+
+    var backgroundConnection by mutableStateOf(prefs.backgroundConnection)
+        private set
+
+    var connectionStatus by mutableStateOf(TransportStatus.STOPPED)
+        private set
+
+    var torEnabled by mutableStateOf(prefs.torEnabled)
+        private set
+
+    var torFallbackToDirect by mutableStateOf(prefs.torFallbackToDirect)
+        private set
+
+    var torInfoExpanded by mutableStateOf(false)
+        private set
+
+    fun toggleTorInfo() {
+        torInfoExpanded = !torInfoExpanded
+    }
+
+    /** Switching Tor on or off changes how every connection is made, so reconnect straight away. */
+    fun updateTorEnabled(v: Boolean) {
+        prefs.torEnabled = v
+        torEnabled = v
+        reconnectNow()
+    }
+
+    fun updateTorFallbackToDirect(v: Boolean) {
+        prefs.torFallbackToDirect = v
+        torFallbackToDirect = v
+        reconnectNow()
+    }
+
+    var orbotInstalled by mutableStateOf(false)
+        private set
+
+    /** Re-checks whether Orbot is installed (call when the screen resumes, e.g. after installing it). */
+    fun refreshOrbotInstalled() {
+        orbotInstalled = getApplication<Application>().packageManager
+            .getLaunchIntentForPackage(TorControl.ORBOT_PACKAGE) != null
+    }
+
+    /** Opens Orbot if installed, otherwise its store page, so the user can start or get it. */
+    fun openOrbot() {
+        val app = getApplication<Application>()
+        val launch = app.packageManager.getLaunchIntentForPackage(TorControl.ORBOT_PACKAGE)
+        val intent = launch ?: android.content.Intent(
+            android.content.Intent.ACTION_VIEW,
+            android.net.Uri.parse("https://play.google.com/store/apps/details?id=${TorControl.ORBOT_PACKAGE}"),
+        )
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching { app.startActivity(intent) }
+    }
+
+    init {
+        refreshOrbotInstalled()
+        viewModelScope.launch {
+            Transports.get(app).status.collect { connectionStatus = it }
+        }
+    }
+
+    fun updateBackgroundConnection(v: Boolean) {
+        prefs.backgroundConnection = v
+        backgroundConnection = v
+        if (v) ConnectionService.start(getApplication()) else ConnectionService.stop(getApplication())
+    }
+
+    fun reconnectNow() {
+        viewModelScope.launch(Dispatchers.IO) { Transports.get(getApplication()).reconnect() }
+    }
 
     var rotatingKey by mutableStateOf(false)
         private set
@@ -89,8 +159,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         locationRequestFrom = v
     }
 
+    /** Persists the choice and re-themes the running app at once (ThemeController is Compose state). */
     fun updateTheme(v: String) {
-        prefs.theme = v
+        ThemeController.set(getApplication(), ThemeMode.fromPrefs(v))
         theme = v
     }
 
@@ -107,16 +178,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     fun updateIncomingMessageNotification(v: Boolean) {
         prefs.incomingMessageNotification = v
         incomingMessageNotification = v
-    }
-
-    fun updateDefaultMapZoom(v: Float) {
-        prefs.defaultMapZoom = v
-        defaultMapZoom = v
-    }
-
-    fun updateKeepScreenOnMap(v: Boolean) {
-        prefs.keepScreenOnMap = v
-        keepScreenOnMap = v
     }
 
     fun updateDefaultPinExpiry(v: String) {

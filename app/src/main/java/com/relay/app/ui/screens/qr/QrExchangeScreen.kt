@@ -1,135 +1,164 @@
 package com.relay.app.ui.screens.qr
 
-import android.Manifest
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ExperimentalGetImage
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.ImageProxy
-import androidx.camera.core.Preview
-import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import com.relay.app.nfc.NfcPairing
+import com.relay.app.pairing.PairingCoordinator
+import com.relay.app.pairing.PairingEvent
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
 import androidx.navigation.NavController
-import com.google.mlkit.vision.barcode.BarcodeScannerOptions
-import com.google.mlkit.vision.barcode.BarcodeScanning
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.relay.app.crypto.RelayCrypto
 import com.relay.app.data.db.RelayDbHelper
+import com.relay.app.data.model.Contact
 import com.relay.app.data.repository.ContactRepository
-import com.relay.app.sms.QrContactExchange
+import com.relay.app.transport.nostr.NostrIdentity
+import com.relay.app.ui.components.ContactGlyph
+import com.relay.app.ui.components.PrimaryButton
+import com.relay.app.ui.components.RelayTextField
 import com.relay.app.ui.components.RelayTopBar
+import com.relay.app.ui.components.SecondaryButton
+import com.relay.app.ui.components.SegmentedControl
 import com.relay.app.ui.navigation.Screen
-import com.relay.app.ui.theme.Accent
 import com.relay.app.ui.theme.Background
-import com.relay.app.ui.theme.Border
-import com.relay.app.ui.theme.IbmPlexSans
-import com.relay.app.ui.theme.OnAccent
+import com.relay.app.ui.theme.RelayShapeTokens
+import com.relay.app.ui.theme.RelaySpacing
 import com.relay.app.ui.theme.Surface1
-import com.relay.app.ui.theme.Surface2
 import com.relay.app.ui.theme.TextPrimary
 import com.relay.app.ui.theme.TextSecondary
 import com.relay.app.util.QrContactCode
 import com.relay.app.util.RelayPreferences
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.QrCode
-import androidx.compose.material.icons.outlined.QrCodeScanner
-import androidx.compose.material3.Icon
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private enum class QrTab { SCAN, MY_CODE }
 
+/** Meeting in person: scan a friend's code, then let them scan yours. This is what "verified" means. */
 @Composable
-fun QrExchangeScreen(navController: NavController) {
+fun QrExchangeScreen(navController: NavController, showMyCodeInitially: Boolean = false) {
     val context = LocalContext.current
     val prefs = remember { RelayPreferences(context) }
-    var selectedTab by remember { mutableStateOf(QrTab.SCAN) }
+    var selectedTab by remember { mutableStateOf(if (showMyCodeInitially) QrTab.MY_CODE else QrTab.SCAN) }
     var pendingContactId by remember { mutableStateOf<Long?>(null) }
+    // True when the other person also said yes, so both sides are already verified.
+    var mutual by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            RelayTopBar(title = "QR Contact Exchange", onBack = { navController.popBackStack() })
-        },
-        containerColor = Background,
-    ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
-            TabRow(
-                selectedTabIndex = selectedTab.ordinal,
-                containerColor = Surface1,
-                contentColor = Accent,
-            ) {
-                Tab(
-                    selected = selectedTab == QrTab.SCAN,
-                    onClick = { selectedTab = QrTab.SCAN },
-                    text = { Text("SCAN", fontFamily = IbmPlexSans) },
-                    icon = { Icon(Icons.Outlined.QrCodeScanner, contentDescription = null) },
-                )
-                Tab(
-                    selected = selectedTab == QrTab.MY_CODE,
-                    onClick = { selectedTab = QrTab.MY_CODE },
-                    text = { Text("MY CODE", fontFamily = IbmPlexSans) },
-                    icon = { Icon(Icons.Outlined.QrCode, contentDescription = null) },
-                )
-            }
-
-            when (selectedTab) {
-                QrTab.SCAN -> ScanTab(
-                    onConnected = { contactId ->
-                        pendingContactId = contactId
-                        selectedTab = QrTab.MY_CODE
-                    },
-                )
-                QrTab.MY_CODE -> MyCodeTab(
-                    prefs = prefs,
-                    pendingContactId = pendingContactId,
-                    onProceedToChat = { contactId ->
-                        navController.navigate(Screen.Chat.routeFor(contactId)) {
-                            popUpTo(Screen.QrExchange.route) { inclusive = true }
-                        }
-                    },
-                )
+    LaunchedEffect(Unit) {
+        PairingCoordinator.events.collect { event ->
+            if (event is PairingEvent.Verified) {
+                pendingContactId = event.contactId
+                mutual = true
+                selectedTab = QrTab.MY_CODE
             }
         }
+    }
+
+    Column(modifier = Modifier.fillMaxSize().background(Background)) {
+        RelayTopBar(title = "Meet in person", onBack = { navController.popBackStack() })
+        SegmentedControl(
+            options = listOf(QrTab.SCAN to "Scan their code", QrTab.MY_CODE to "Show my code"),
+            selected = selectedTab,
+            onSelect = { selectedTab = it },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.sm),
+        )
+
+        when (selectedTab) {
+            QrTab.SCAN -> ScanTab(
+                onConnected = { contactId ->
+                    // The one-sided flow (an older code without a pairing field).
+                    pendingContactId = contactId
+                    mutual = false
+                    selectedTab = QrTab.MY_CODE
+                },
+            )
+            QrTab.MY_CODE -> MyCodeTab(
+                prefs = prefs,
+                pendingContactId = pendingContactId,
+                mutual = mutual,
+                onProceedToChat = { contactId ->
+                    navController.navigate(Screen.Chat.routeFor(contactId)) {
+                        popUpTo(if (showMyCodeInitially) Screen.QrMyCode.route else Screen.QrExchange.route) { inclusive = true }
+                    }
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The one animated moment in the app: after a scan, the new contact's glyph settles into place and the
+ * frame goes from dashed to solid. With animations switched off in system settings it just appears.
+ */
+@Composable
+private fun PairedPanel(contact: Contact, mutual: Boolean, onProceedToChat: () -> Unit) {
+    val context = LocalContext.current
+    val reduceMotion = remember {
+        android.provider.Settings.Global.getFloat(context.contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+    }
+    val progress = remember { Animatable(if (reduceMotion) 1f else 0f) }
+    LaunchedEffect(contact.id) {
+        if (!reduceMotion) progress.animateTo(1f, tween(durationMillis = 700))
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RelayShapeTokens.bubble)
+            .background(Surface1)
+            .padding(RelaySpacing.lg),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(RelaySpacing.md),
+    ) {
+        ContactGlyph(
+            contact,
+            size = 88.dp,
+            modifier = Modifier.scale(0.85f + 0.15f * progress.value).alpha(0.3f + 0.7f * progress.value),
+        )
+        Text(
+            if (mutual) "You and ${contact.name} are verified" else "You scanned ${contact.name}",
+            style = MaterialTheme.typography.titleMedium,
+            color = TextPrimary,
+        )
+        Text(
+            if (mutual) "You both said yes, so each of you knows you are talking to the right person."
+            else "Now let them scan your code below, so they can add you too.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = TextSecondary,
+        )
+        SecondaryButton("Start chatting now", onProceedToChat, Modifier.fillMaxWidth())
     }
 }
 
@@ -137,99 +166,85 @@ fun QrExchangeScreen(navController: NavController) {
 private fun MyCodeTab(
     prefs: RelayPreferences,
     pendingContactId: Long? = null,
+    mutual: Boolean = false,
     onProceedToChat: (Long) -> Unit = {},
 ) {
     val context = LocalContext.current
     var name by remember { mutableStateOf(prefs.myName) }
-    var phone by remember { mutableStateOf(prefs.myPhone) }
-    var profileSet by remember { mutableStateOf(prefs.myName.isNotBlank() && prefs.myPhone.isNotBlank()) }
+    var profileSet by remember { mutableStateOf(prefs.myName.isNotBlank()) }
+    val nfc = remember { NfcPairing.availability(context) }
+    // While this screen is open the phone answers taps with its code; when it closes, it stops.
+    DisposableEffect(Unit) {
+        val activity = NfcPairing.activityOf(context)
+        if (activity != null) NfcPairing.startServing(activity)
+        onDispose { activity?.let { NfcPairing.stopServing(it) } }
+    }
+    val pending by produceState<Contact?>(null, pendingContactId) {
+        value = pendingContactId?.let { ContactRepository(RelayDbHelper(context)).getById(it) }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .verticalScroll(rememberScrollState())
+            .padding(RelaySpacing.gutter),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        verticalArrangement = Arrangement.spacedBy(RelaySpacing.lg),
     ) {
-        if (pendingContactId != null) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Surface2)
-                    .padding(12.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Text(
-                    "Scanned! Have them scan your code below to finish the secure connection.",
-                    color = TextPrimary,
-                    fontFamily = IbmPlexSans,
-                    modifier = Modifier.padding(bottom = 8.dp),
-                )
-                TextButton(onClick = { onProceedToChat(pendingContactId) }) {
-                    Text("Skip — start chatting now", color = Accent, fontFamily = IbmPlexSans)
-                }
-            }
-            androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
-        }
+        pending?.let { PairedPanel(it, mutual, onProceedToChat = { onProceedToChat(it.id) }) }
 
         if (!profileSet) {
             Text(
-                "Set up your profile once — this is what people see when they scan your code.",
+                "Pick the name people see when they scan your code. You can change it later.",
+                style = MaterialTheme.typography.bodyMedium,
                 color = TextSecondary,
-                fontFamily = IbmPlexSans,
-                modifier = Modifier.padding(bottom = 16.dp),
             )
-            val fieldColors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Accent,
-                unfocusedBorderColor = Border,
-                focusedTextColor = TextPrimary,
-                unfocusedTextColor = TextPrimary,
-                cursorColor = Accent,
-                focusedContainerColor = Surface2,
-                unfocusedContainerColor = Surface2,
-            )
-            OutlinedTextField(
-                value = name,
-                onValueChange = { name = it },
-                label = { Text("Your name", fontFamily = IbmPlexSans) },
-                singleLine = true,
-                colors = fieldColors,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            androidx.compose.foundation.layout.Spacer(Modifier.height(12.dp))
-            com.relay.app.ui.components.PhoneNumberField(
-                initialE164 = prefs.myPhone,
-                onE164Change = { phone = it },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = {
+            RelayTextField(value = name, onValueChange = { name = it.take(30) }, label = "Your name", modifier = Modifier.fillMaxWidth())
+            PrimaryButton(
+                "Show my code",
+                {
                     prefs.myName = name.trim()
-                    prefs.myPhone = phone.trim()
-                    profileSet = name.isNotBlank() && phone.isNotBlank()
+                    profileSet = name.isNotBlank()
                 },
-                enabled = name.isNotBlank() && phone.isNotBlank(),
-                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent),
-            ) {
-                Text("Generate my code")
-            }
+                Modifier.fillMaxWidth(),
+                enabled = name.isNotBlank(),
+            )
         } else {
             // Keystore keypair generation + QR bitmap rendering are both expensive; run them off the
             // main thread (this composes right after the post-scan auto tab-flip, so a main-thread
             // stall here would freeze at the worst moment). null bitmap after done = failure.
             var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
             var qrFailed by remember { mutableStateOf(false) }
-            androidx.compose.runtime.LaunchedEffect(prefs.myPhone, prefs.myName) {
-                qrFailed = false
+            val invitation by PairingCoordinator.shownCode.collectAsState()
+            var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+            // An unused code rotates, so a code someone photographed earlier stops working.
+            LaunchedEffect(Unit) {
+                PairingCoordinator.startShowingCode()
+                while (true) {
+                    delay(1_000)
+                    nowMs = System.currentTimeMillis()
+                    PairingCoordinator.refreshShownCode()
+                }
+            }
+            LaunchedEffect(prefs.myName, invitation) {
+                val active = invitation ?: return@LaunchedEffect
                 qrBitmap = null
+                qrFailed = false
                 val bmp = withContext(Dispatchers.Default) {
                     val myKey = RelayCrypto.myPublicKeyBase64(context) ?: return@withContext null
                     val mySigningKey = RelayCrypto.mySigningPublicKeyBase64(context)
-                    encodeQrBitmap(
-                        QrContactCode.encode(prefs.myPhone, prefs.myName, myKey, mySigningKey),
-                        800,
+                    val myNostr = runCatching { NostrIdentity.publicKeyHex(context) }.getOrNull() ?: return@withContext null
+                    val code = QrContactCode.encode(
+                        name = prefs.myName,
+                        nostrPubkeyHex = myNostr,
+                        publicKeyBase64 = myKey,
+                        signingPublicKeyBase64 = mySigningKey,
+                        relayHints = prefs.nostrRelays.take(3),
+                        pairNonce = active.nonce,
+                        expiresAtMs = active.expiresAtMs,
                     )
+                    NfcPairing.payload = code // the same code, served to a phone that is held against this one
+                    encodeQrBitmap(code, 800)
                 }
                 if (bmp == null) qrFailed = true else qrBitmap = bmp
             }
@@ -237,242 +252,42 @@ private fun MyCodeTab(
             val bmp = qrBitmap
             when {
                 bmp != null -> {
-                    androidx.compose.foundation.Image(
+                    Image(
                         bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Your QR code",
+                        contentDescription = "Your code",
                         modifier = Modifier
                             .size(260.dp)
-                            .background(androidx.compose.ui.graphics.Color.White)
-                            .padding(12.dp),
+                            .clip(RelayShapeTokens.bubble)
+                            // A QR code needs a white quiet zone to scan, in both themes.
+                            .background(Color.White)
+                            .padding(RelaySpacing.md),
                     )
-                    androidx.compose.foundation.layout.Spacer(Modifier.height(16.dp))
-                    Text(prefs.myName, color = TextPrimary, fontFamily = IbmPlexSans, fontSize = 16.sp)
-                    TextButton(onClick = { profileSet = false }) {
-                        Text("Edit profile", color = Accent, fontFamily = IbmPlexSans)
+                    Text(prefs.myName, style = MaterialTheme.typography.titleMedium, color = TextPrimary)
+                    val seconds = ((invitation?.expiresAtMs ?: nowMs) - nowMs).coerceAtLeast(0) / 1_000
+                    Text("Expires in %d:%02d · one use".format(seconds / 60, seconds % 60),
+                        style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    Text("Valid for 30 minutes. An expired code cannot add you; a fresh one appears here automatically.",
+                        style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                    when (nfc) {
+                        NfcPairing.Availability.ON -> Column {
+                            Text("Or hold the back of your phone against theirs.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                            Text(
+                                "Sharing this way doesn't work on every phone. If nothing happens, the code above always works.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = TextSecondary,
+                                modifier = Modifier.padding(top = RelaySpacing.xs),
+                            )
+                        }
+                        NfcPairing.Availability.OFF ->
+                            Text("Turn on NFC in your phone's settings to tap phones together.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                        NfcPairing.Availability.NONE -> Unit
                     }
+                    SecondaryButton("Change name", { profileSet = false })
                 }
-                qrFailed -> Text(
-                    "Couldn't generate your code. Try again.",
-                    color = TextSecondary,
-                    fontFamily = IbmPlexSans,
-                )
-                else -> Text("Generating your code…", color = TextSecondary, fontFamily = IbmPlexSans)
+                qrFailed -> Text("Couldn't make your code. Go back and try again.", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+                else -> Text("Making your code", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
             }
         }
-    }
-}
-
-@Composable
-private fun ScanTab(onConnected: (Long) -> Unit) {
-    val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
-    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
-    var hasCameraPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-        )
-    }
-    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted -> hasCameraPermission = granted }
-
-    var scanned by remember { mutableStateOf(false) }
-    var connecting by remember { mutableStateOf(false) }
-    var errorMsg by remember { mutableStateOf<String?>(null) }
-    var pendingScan by remember { mutableStateOf<QrContactCode.ScannedContact?>(null) }
-    val prefs = remember { RelayPreferences(context) }
-
-    fun onDecoded(value: QrContactCode.ScannedContact) {
-        // Guard against scanning your own code (e.g. a screenshot / second device) — it would
-        // create a self-contact and fire an SMS to your own number.
-        if (prefs.myPhone.isNotBlank() && value.phone == prefs.myPhone) {
-            errorMsg = "That's your own code."
-            return
-        }
-        // Stop the scanner and ask for confirmation before saving + firing an SMS to the scanned
-        // number (the QR's number is attacker-choosable; don't act on it silently).
-        scanned = true
-        pendingScan = value
-    }
-
-    fun confirmAdd(value: QrContactCode.ScannedContact) {
-        pendingScan = null
-        connecting = true
-        coroutineScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                val db = RelayDbHelper(context)
-                val contactRepo = ContactRepository(db)
-                QrContactExchange.onScanned(context, contactRepo, value)
-            }
-            withContext(Dispatchers.Main) {
-                result.onSuccess { onConnected(it.id) }
-                    .onFailure {
-                        connecting = false
-                        scanned = false
-                        errorMsg = "Couldn't add contact. Try again."
-                    }
-            }
-        }
-    }
-
-    if (!hasCameraPermission) {
-        Column(
-            modifier = Modifier.fillMaxSize().padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            Text(
-                "Camera permission is needed to scan a QR code.",
-                color = TextSecondary,
-                fontFamily = IbmPlexSans,
-                modifier = Modifier.padding(bottom = 12.dp),
-            )
-            Button(
-                onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) },
-                colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent),
-            ) {
-                Text("Grant permission")
-            }
-        }
-        return
-    }
-
-    // Held so the async camera-provider callback can be told to abort if the tab is disposed before
-    // it fires (otherwise it binds the camera *after* onDispose ran unbindAll, leaving it running),
-    // and so the ML Kit scanner (a Closeable native resource) gets released.
-    val disposed = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
-    val scannerRef = remember { BarcodeScanning.getClient(
-        BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()
-    ) }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        val onDecodedState = rememberUpdatedState<(String) -> Unit> { raw ->
-            if (!scanned) {
-                val decoded = QrContactCode.decode(raw)
-                if (decoded != null) onDecoded(decoded) else errorMsg = "Not a Relay code."
-            }
-        }
-
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                val previewView = PreviewView(ctx)
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-
-                cameraProviderFuture.addListener({
-                    if (disposed.get()) return@addListener
-                    val cameraProvider = cameraProviderFuture.get()
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-                    val analysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build()
-                    analysis.setAnalyzer(
-                        ContextCompat.getMainExecutor(ctx),
-                        QrAnalyzer(scannerRef) { value -> onDecodedState.value(value) },
-                    )
-                    try {
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(
-                            lifecycleOwner,
-                            CameraSelector.DEFAULT_BACK_CAMERA,
-                            preview,
-                            analysis,
-                        )
-                    } catch (e: Exception) {
-                        // Camera bind can fail if the screen is torn down mid-init; nothing to
-                        // recover here, the user can just navigate back and retry.
-                    }
-                }, ContextCompat.getMainExecutor(ctx))
-
-                previewView
-            },
-        )
-
-        DisposableEffect(Unit) {
-            onDispose {
-                disposed.set(true)
-                runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() }
-                runCatching { scannerRef.close() }
-            }
-        }
-
-        if (connecting) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.75f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text("Connecting…", color = TextPrimary, fontFamily = IbmPlexSans)
-            }
-        }
-
-        errorMsg?.let { msg ->
-            Box(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(24.dp)
-                    .background(Surface1)
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-            ) {
-                Text(msg, color = TextPrimary, fontFamily = IbmPlexSans)
-            }
-            // Auto-clear so the scanner can retry.
-            androidx.compose.runtime.LaunchedEffect(msg) {
-                kotlinx.coroutines.delay(2500)
-                errorMsg = null
-            }
-        }
-    }
-
-    pendingScan?.let { scan ->
-        AlertDialog(
-            onDismissRequest = { pendingScan = null; scanned = false },
-            containerColor = Surface1,
-            titleContentColor = TextPrimary,
-            textContentColor = TextSecondary,
-            title = { Text("Add contact?", fontFamily = IbmPlexSans) },
-            text = {
-                Text(
-                    "${scan.name}\n${scan.phone}\n\nThis saves them and texts them your key.",
-                    color = TextSecondary,
-                    fontFamily = IbmPlexSans,
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { confirmAdd(scan) }) {
-                    Text("Add", color = Accent, fontFamily = IbmPlexSans)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingScan = null; scanned = false }) {
-                    Text("Cancel", color = TextSecondary, fontFamily = IbmPlexSans)
-                }
-            },
-        )
-    }
-}
-
-@ExperimentalGetImage
-private class QrAnalyzer(
-    private val scanner: com.google.mlkit.vision.barcode.BarcodeScanner,
-    private val onDetected: (String) -> Unit,
-) : ImageAnalysis.Analyzer {
-    override fun analyze(imageProxy: ImageProxy) {
-        val mediaImage = imageProxy.image
-        if (mediaImage == null) {
-            imageProxy.close()
-            return
-        }
-        val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
-        scanner.process(image)
-            .addOnSuccessListener { barcodes ->
-                barcodes.firstOrNull { it.format == Barcode.FORMAT_QR_CODE }?.rawValue?.let(onDetected)
-            }
-            .addOnCompleteListener { imageProxy.close() }
     }
 }
 

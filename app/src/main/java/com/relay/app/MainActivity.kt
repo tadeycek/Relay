@@ -2,43 +2,48 @@ package com.relay.app
 
 import android.Manifest
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.CompositionLocalProvider
+import com.relay.app.media.LocalChatMediaPicker
+import com.relay.app.media.rememberChatMediaPicker
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.core.view.WindowCompat
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.fragment.app.FragmentActivity
-import androidx.lifecycle.lifecycleScope
 import androidx.navigation.compose.rememberNavController
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.rememberMultiplePermissionsState
-import com.relay.app.data.db.RelayDbHelper
-import com.relay.app.data.repository.ContactRepository
+import com.relay.app.messaging.ConnectionService
+import com.relay.app.messaging.MessageNotifier
 import com.relay.app.ui.lock.AppLockScreen
 import com.relay.app.ui.lock.deviceSupportsAppLock
 import com.relay.app.ui.lock.promptAppUnlock
+import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.relay.app.pairing.PairingCoordinator
 import com.relay.app.ui.navigation.RelayNavGraph
+import com.relay.app.ui.screens.qr.PairingRequestHost
+import com.relay.app.ui.screens.messages.UnreadViewModel
 import com.relay.app.ui.navigation.Screen
+import com.relay.app.ui.navigation.Tab
+import com.relay.app.ui.navigation.navigateToTab
 import com.relay.app.ui.theme.RelayTheme
+import com.relay.app.ui.theme.ThemeController
+import com.relay.app.ui.theme.ThemeMode
 import com.relay.app.util.RelayPreferences
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
+import com.relay.app.calculator.CalculatorScreen
+import com.relay.app.messaging.ActiveChat
 
 class MainActivity : FragmentActivity() {
+    private val calculatorUnlocked = mutableStateOf(false)
 
     // Note: read once per composition of the lock gate; toggling "App lock" in Settings while
     // Relay is already in the foreground takes effect on the next cold start / resume-from-background,
@@ -46,21 +51,42 @@ class MainActivity : FragmentActivity() {
     private val isUnlocked = mutableStateOf(false)
 
     // Set from the "key changed" security notification's PendingIntent (see
-    // SmsReceiver.showKeyChangeNotification) — a State rather than reading `intent` directly so
+    // SecurityNotifier.showKeyChange) — a State rather than reading `intent` directly so
     // it also works when the activity is already running and only gets onNewIntent, not onCreate.
     private val pendingOpenContacts = mutableStateOf(false)
 
-    // Resolved contact id to jump straight to a chat with, from an ACTION_SENDTO intent (e.g.
-    // "Message" from Contacts/Phone, or Relay being the target of a share-to-sms) — see
-    // handleSendToIntent. Null when there's nothing pending.
+    // Contact id to jump straight to a chat with, from a new-message notification (see
+    // MessageNotifier). Null when there's nothing pending.
     private val pendingChatContactId = mutableStateOf<Long?>(null)
+
+    // A tap the system routed to Relay via the manifest's NDEF intent-filter rather than reader mode
+    // (see NfcPairing.handleNdefIntent) — jump to the scan screen so the code it carried is not lost.
+    private val pendingOpenScan = mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (Build.VERSION.SDK_INT >= 33) setRecentsScreenshotEnabled(false)
+        // Load the saved Dark / Light / System choice before the first frame so there is no flash.
+        ThemeController.load(applicationContext)
+        PairingCoordinator.restore(applicationContext)
         pendingOpenContacts.value = intent?.getBooleanExtra("open_contacts", false) == true
-        handleSendToIntent(intent)
+        handleOpenChatIntent(intent)
+        pendingOpenScan.value = com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)
         setContent {
+            val privateScreenState = rememberSaveableStateHolder()
+            val mediaPicker = rememberChatMediaPicker()
+            val messagingDark = when (ThemeController.mode) {
+                ThemeMode.DARK -> true
+                ThemeMode.LIGHT -> false
+                ThemeMode.SYSTEM -> isSystemInDarkTheme()
+            }
+            SideEffect { setDarkSystemBars(!calculatorUnlocked.value || messagingDark) }
+            if (!calculatorUnlocked.value) {
+                CalculatorScreen(onUnlock = { calculatorUnlocked.value = true })
+            } else {
+            privateScreenState.SaveableStateProvider("private_screens") {
+            CompositionLocalProvider(LocalChatMediaPicker provides mediaPicker) {
             RelayTheme {
                 val prefs = remember { RelayPreferences(applicationContext) }
                 val locked = remember { prefs.appLock && deviceSupportsAppLock(this@MainActivity) }
@@ -75,27 +101,41 @@ class MainActivity : FragmentActivity() {
                         promptAppUnlock(this@MainActivity) { isUnlocked.value = true }
                     })
                 } else {
-                    SmsPermissionGate {
-                        val navController = rememberNavController()
-                        RelayNavGraph(navController = navController)
+                    NotificationPermissionRequest(prefs)
 
-                        val shouldOpenContacts by pendingOpenContacts
-                        LaunchedEffect(shouldOpenContacts) {
-                            if (shouldOpenContacts) {
-                                navController.navigate(Screen.Contacts.route)
-                                pendingOpenContacts.value = false
-                            }
+                    val navController = rememberNavController()
+                    val unreadVm: UnreadViewModel = viewModel()
+                    val unreadTotal by unreadVm.total.collectAsState()
+                    RelayNavGraph(navController = navController, unreadMessages = unreadTotal)
+                    PairingRequestHost()
+
+                    val shouldOpenContacts by pendingOpenContacts
+                    LaunchedEffect(shouldOpenContacts) {
+                        if (shouldOpenContacts) {
+                            navController.navigateToTab(Tab.PEOPLE)
+                            pendingOpenContacts.value = false
                         }
+                    }
 
-                        val chatContactId by pendingChatContactId
-                        LaunchedEffect(chatContactId) {
-                            chatContactId?.let {
-                                navController.navigate(Screen.Chat.routeFor(it))
-                                pendingChatContactId.value = null
-                            }
+                    val chatContactId by pendingChatContactId
+                    LaunchedEffect(chatContactId) {
+                        chatContactId?.let {
+                            navController.navigate(Screen.Chat.routeFor(it))
+                            pendingChatContactId.value = null
+                        }
+                    }
+
+                    val shouldOpenScan by pendingOpenScan
+                    LaunchedEffect(shouldOpenScan) {
+                        if (shouldOpenScan) {
+                            navController.navigate(Screen.QrExchange.route)
+                            pendingOpenScan.value = false
                         }
                     }
                 }
+            }
+            }
+            }
             }
         }
     }
@@ -106,78 +146,67 @@ class MainActivity : FragmentActivity() {
         if (intent.getBooleanExtra("open_contacts", false)) {
             pendingOpenContacts.value = true
         }
-        handleSendToIntent(intent)
+        handleOpenChatIntent(intent)
+        if (com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)) pendingOpenScan.value = true
     }
 
-    /**
-     * Handles ACTION_SENDTO for sms/smsto/mms/mmsto (see AndroidManifest.xml) — required for
-     * default-SMS-app eligibility, and also what makes "Message this number" from other apps
-     * actually work. Resolves/creates the contact for the target phone number and navigates
-     * straight to that chat.
-     */
-    private fun handleSendToIntent(intent: Intent?) {
-        if (intent?.action != Intent.ACTION_SENDTO) return
-        val data = intent.data ?: return
-        if (data.scheme !in setOf("sms", "smsto", "mms", "mmsto")) return
-        val phone = data.schemeSpecificPart?.substringBefore("?")?.trim()
-        if (phone.isNullOrEmpty()) return
-        lifecycleScope.launch(Dispatchers.IO) {
-            val db = RelayDbHelper(applicationContext)
-            val contact = ContactRepository(db).findOrCreateByPhoneSync(phone)
-            pendingChatContactId.value = contact.id
+    /** Tap on a new-message notification (see MessageNotifier): jump straight to that chat. */
+    private fun handleOpenChatIntent(intent: Intent?) {
+        val id = intent?.getLongExtra(MessageNotifier.EXTRA_OPEN_CHAT, -1L) ?: -1L
+        if (id > 0) pendingChatContactId.value = id
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // The activity is visible, which is when Android allows starting a foreground service.
+        if (RelayPreferences(applicationContext).backgroundConnection) ConnectionService.start(this)
+    }
+
+    private fun closePrivateScreens() {
+        calculatorUnlocked.value = false
+        isUnlocked.value = false
+        ActiveChat.contactId = -1L
+        ActiveChat.groupId = -1L
+    }
+
+    private fun setDarkSystemBars(dark: Boolean) {
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = !dark
+            isAppearanceLightNavigationBars = !dark
         }
     }
 
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus && !calculatorUnlocked.value) setDarkSystemBars(true)
+    }
+
+    override fun onUserLeaveHint() {
+        closePrivateScreens()
+        super.onUserLeaveHint()
+    }
+
     override fun onStop() {
+        closePrivateScreens()
         super.onStop()
-        isUnlocked.value = false
     }
 }
 
 /**
- * Relay's entire reason for existing depends on SEND_SMS/RECEIVE_SMS/READ_SMS (and
- * RECEIVE_MMS/READ_MMS) — all dangerous runtime permissions, denied by default. Nothing
- * elsewhere in the app ever asked for them; without this gate the app would silently fail to
- * send or receive a single real message on a fresh install. Requests once on launch and blocks
- * the rest of the UI (mirroring the AppLockScreen gate in MainActivity) until granted — a user
- * who permanently denies can retry via the button, which re-triggers the system prompt (or, once
- * permanently denied at the OS level, at least makes it obvious why nothing works instead of
- * failing silently).
+ * Asks once (Android 13+) for permission to show notifications. Without it new-message and
+ * location-request notifications are silently skipped, so background delivery would look broken.
+ * Never blocks the UI (unlike the SMS-permission gate this replaced): Relay no longer needs any
+ * SMS/MMS permissions at all. Asked only once per install so a user who says no is not nagged;
+ * they can still enable notifications later in system settings.
  */
-@OptIn(ExperimentalPermissionsApi::class)
-@Composable
-private fun SmsPermissionGate(content: @Composable () -> Unit) {
-    val smsPermissions = remember {
-        listOf(
-            Manifest.permission.SEND_SMS,
-            Manifest.permission.RECEIVE_SMS,
-            Manifest.permission.READ_SMS,
-            Manifest.permission.RECEIVE_MMS,
-            Manifest.permission.READ_MMS,
-        )
-    }
-    val permState = rememberMultiplePermissionsState(smsPermissions)
-
+@androidx.compose.runtime.Composable
+private fun NotificationPermissionRequest(prefs: RelayPreferences) {
+    if (Build.VERSION.SDK_INT < 33) return
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
     LaunchedEffect(Unit) {
-        if (!permState.allPermissionsGranted) permState.launchMultiplePermissionRequest()
-    }
-
-    if (permState.allPermissionsGranted) {
-        content()
-    } else {
-        Surface(modifier = Modifier.fillMaxSize()) {
-            Column(
-                modifier = Modifier.fillMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp, Alignment.CenterVertically),
-            ) {
-                Text(
-                    "Relay needs SMS/MMS permissions to send and receive messages.",
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Button(onClick = { permState.launchMultiplePermissionRequest() }) {
-                    Text("Grant permissions")
-                }
-            }
+        if (!prefs.askedNotificationPermission) {
+            prefs.askedNotificationPermission = true
+            launcher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }

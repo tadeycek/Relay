@@ -12,11 +12,14 @@ import android.location.LocationManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
+import com.relay.app.data.model.DeliveryState
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
+import com.relay.app.data.model.PinExpiry
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.util.RelayPreferences
@@ -52,13 +55,11 @@ class LocationShareService : Service() {
         startId: Int,
     ) {
         val lm = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .filter { runCatching { lm.isProviderEnabled(it) }.getOrDefault(false) }
 
-        val lastKnown = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
-            .mapNotNull { provider ->
-                runCatching {
-                    if (lm.isProviderEnabled(provider)) lm.getLastKnownLocation(provider) else null
-                }.getOrNull()
-            }
+        val lastKnown = providers
+            .mapNotNull { provider -> runCatching { lm.getLastKnownLocation(provider) }.getOrNull() }
             .maxByOrNull { it.time }
 
         if (lastKnown != null && System.currentTimeMillis() - lastKnown.time < 300_000L) {
@@ -67,33 +68,59 @@ class LocationShareService : Service() {
             return
         }
 
+        if (providers.isEmpty()) {
+            // Nothing to even try: say so instead of silently doing nothing for 15 seconds.
+            fail("Turn on location in your phone's settings to share it")
+            stopSelf(startId)
+            return
+        }
+
         val handler = Handler(Looper.getMainLooper())
+        var settled = false
 
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
-                lm.removeUpdates(this)
+                if (settled) return
+                settled = true
+                providers.forEach { runCatching { lm.removeUpdates(this) } }
+                handler.removeCallbacksAndMessages(null)
                 sendLocationSms(phone, contactId, contactName, doNotify, location)
                 stopSelf(startId)
             }
         }
 
         val timeoutRunnable = Runnable {
-            lm.removeUpdates(listener)
+            if (settled) return@Runnable
+            settled = true
+            providers.forEach { runCatching { lm.removeUpdates(listener) } }
             if (lastKnown != null) {
                 sendLocationSms(phone, contactId, contactName, doNotify, lastKnown)
+            } else {
+                fail("Couldn't get your location. Try again with a clearer view of the sky or a network signal")
             }
             stopSelf(startId)
         }
 
-        try {
-            @Suppress("DEPRECATION")
-            lm.requestSingleUpdate(LocationManager.GPS_PROVIDER, listener, Looper.getMainLooper())
-            handler.postDelayed(timeoutRunnable, 8_000L)
-        } catch (e: SecurityException) {
-            handler.removeCallbacks(timeoutRunnable)
-            if (lastKnown != null) sendLocationSms(phone, contactId, contactName, doNotify, lastKnown)
-            stopSelf(startId)
+        // Ask every enabled provider at once; whichever answers first wins. GPS alone can take much
+        // longer than a person will wait, especially indoors, and network location often beats it there.
+        val requested = providers.count { provider ->
+            runCatching {
+                @Suppress("DEPRECATION")
+                lm.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+                true
+            }.getOrDefault(false)
         }
+        if (requested == 0) {
+            if (lastKnown != null) sendLocationSms(phone, contactId, contactName, doNotify, lastKnown)
+            else fail("Couldn't get your location. Check Relay has location permission")
+            stopSelf(startId)
+            return
+        }
+        handler.postDelayed(timeoutRunnable, 15_000L)
+    }
+
+    private fun fail(message: String) {
+        Handler(Looper.getMainLooper()).post { Toast.makeText(this, message, Toast.LENGTH_LONG).show() }
     }
 
     private fun sendLocationSms(
@@ -103,11 +130,14 @@ class LocationShareService : Service() {
         doNotify: Boolean,
         location: Location,
     ) {
-        val body = SmsMessageParser.formatLocation(location.latitude, location.longitude)
+        // Shared locations expire like the old map pins did (default from Settings), so a stale
+        // "where I was" does not sit in the chat forever; the receiver applies the same expiry.
+        val expiry = PinExpiry.fromPrefsKey(RelayPreferences(this).defaultPinExpiry)
+        val body = SmsMessageParser.formatLocation(location.latitude, location.longitude, expiry)
         val db = RelayDbHelper(this)
         val contactRepo = ContactRepository(db)
         val contact = contactRepo.getByIdSync(contactId) ?: Contact(id = contactId, name = contactName, phone = phone)
-        RelaySecureSend.send(this, contactRepo, contact, body)
+        val handle = RelaySecureSend.sendWithId(this, contactRepo, contact, body)
 
         val repo = MessageRepository(db)
         repo.insertMessageSync(
@@ -118,6 +148,9 @@ class LocationShareService : Service() {
                 lat = location.latitude,
                 lng = location.longitude,
                 isSent = true,
+                expiryAt = expiry.durationMs?.let { System.currentTimeMillis() + it },
+                msgId = handle.msgId,
+                deliveryState = if (contact.canUseInternetTransport) DeliveryState.QUEUED else DeliveryState.NONE,
             )
         )
 
@@ -133,7 +166,7 @@ class LocationShareService : Service() {
         val db = RelayDbHelper(this)
         val contactRepo = ContactRepository(db)
         val contact = contactRepo.getByIdSync(contactId) ?: Contact(id = contactId, name = phone, phone = phone)
-        RelaySecureSend.send(this, contactRepo, contact, SmsMessageParser.LOCATION_DECLINED_MSG)
+        val handle = RelaySecureSend.sendWithId(this, contactRepo, contact, SmsMessageParser.LOCATION_DECLINED_MSG)
 
         val repo = MessageRepository(db)
         repo.insertMessageSync(
@@ -142,6 +175,8 @@ class LocationShareService : Service() {
                 body = SmsMessageParser.LOCATION_DECLINED_MSG,
                 type = MessageType.LOCATION_DECLINED,
                 isSent = true,
+                msgId = handle.msgId,
+                deliveryState = if (contact.canUseInternetTransport) DeliveryState.QUEUED else DeliveryState.NONE,
             )
         )
 
@@ -177,6 +212,19 @@ class LocationShareService : Service() {
     }
 
     companion object {
+        /** Shares the phone's current location with [contact] (needs location permission already granted). */
+        fun share(context: Context, contact: Contact) {
+            context.startService(
+                Intent(context, LocationShareService::class.java).apply {
+                    action = ACTION_SHARE
+                    putExtra(EXTRA_PHONE, contact.phone)
+                    putExtra(EXTRA_CONTACT_ID, contact.id)
+                    putExtra(EXTRA_CONTACT_NAME, contact.name)
+                    putExtra(EXTRA_NOTIFY, false) // the pin appears in the chat itself
+                }
+            )
+        }
+
         const val ACTION_SHARE = "com.relay.app.SHARE_LOCATION"
         const val ACTION_DECLINE = "com.relay.app.DECLINE_LOCATION"
         const val EXTRA_PHONE = "phone"
