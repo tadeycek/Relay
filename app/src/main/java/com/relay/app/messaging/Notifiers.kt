@@ -19,7 +19,7 @@ import com.relay.app.data.model.Contact
 import com.relay.app.data.model.MessageType
 import com.relay.app.util.RelayPreferences
 
-/** Purple conversation previews. Taps intentionally have no intent or action to execute. */
+/** Conversation previews. A tap only dismisses the preview through a private receiver. */
 object MessageNotifier {
 
     const val CHANNEL_MESSAGES = "relay_messages"
@@ -93,9 +93,15 @@ object MessageNotifier {
         }
         if (!refresh) style.addMessage(text!!, System.currentTimeMillis(), sender)
         val last = style.messages.last()
+        val dismiss = PendingIntent.getBroadcast(context, 0,
+            Intent(context, NotificationDismissReceiver::class.java)
+                .setAction(NotificationDismissReceiver.ACTION_DISMISS)
+                .setData(android.net.Uri.parse("relay-preview://dismiss/${contact.id}"))
+                .putExtra(NotificationDismissReceiver.EXTRA_CONTACT_ID, contact.id),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(context, CHANNEL_MESSAGES)
             .setSmallIcon(com.relay.app.R.drawable.ic_message_notification)
-            .setColor(0xFF8E4BC4.toInt())
+            .setColor(0xFF7D519E.toInt())
             .setLargeIcon(avatar)
             .setContentTitle(contact.name)
             .setContentText(last.text)
@@ -108,8 +114,9 @@ object MessageNotifier {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(false)
-            .setContentIntent(null)
+            .setAutoCancel(true)
+            .setContentIntent(dismiss)
+            .setDeleteIntent(dismiss)
             .build()
         nm.cancel(NOTIF_BASE + (contact.id % 1000).toInt()) // retire the previous app version's ID
         nm.notify(tag, NOTIF_BASE, notification)
@@ -129,7 +136,7 @@ object MessageNotifier {
         if (nm.getNotificationChannel(CHANNEL_MESSAGES) != null) return
         nm.createNotificationChannel(
             NotificationChannel(CHANNEL_MESSAGES, "Messages", NotificationManager.IMPORTANCE_HIGH)
-                .apply { description = "Message previews; tapping a preview does not open the app" }
+                .apply { description = "Message previews; tap to dismiss without opening the app" }
         )
     }
 

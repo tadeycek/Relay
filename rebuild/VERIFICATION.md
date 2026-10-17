@@ -1,73 +1,38 @@
-# Calculator 1.2 preview verification — 2026-10-17
+# Calculator 1.3 preview verification — 2026-10-17
 
-Branch: `feat/rebuild`, based on `d69bfe4`. This is measured verification, not a
-claim that the app is free of bugs. The previous release record is preserved in
-[VERIFICATION-1.1-preview.md](VERIFICATION-1.1-preview.md).
+Branch: feat/rebuild. Previous checks and limitations are preserved in
+[VERIFICATION-1.2-preview.md](VERIFICATION-1.2-preview.md).
 
-## Changes checked
+## Changes and checks
 
-- QR completion repairs a pre-existing generated contact name. Encrypted versioned
-  profile updates follow a peer's display-name changes while preserving local aliases.
-- Reconnects and incoming messages request profiles again with a cooldown, recovering
-  profile data that arrived before mutual pairing completed. Unapproved/blocked peers
-  cannot set a name or avatar. Old revisions cannot undo newer names or photo removals.
-- Late photo/name arrivals refresh an existing notification without adding a message
-  or another alert. Notification history stays bounded and separated by contact.
-- Android conversation shortcuts supply the sender's name/avatar to the compact
-  notification template. Unchanged shortcut icons are not pushed on every message;
-  existing shortcuts remain usable if Android rate-limits an update.
-- The supplied PNG is composed at the avatar's bottom right. Android overlays its own
-  small notification icon, so a white foreground traced from that picture also fills
-  the system icon slot. Android controls its color/background and exact placement.
-  App attribution remains Calculator; taps and reply actions remain inactive.
-- New name controls use an existing profile-control extension so 1.1 clients ignore
-  them rather than displaying them as ordinary chat text. Update both devices for
-  display-name synchronization. Each sender must actually choose a profile photo.
+- Notification avatars now use a 1:1 rounded square instead of a circle. The supplied
+  flat purple phone image replaces the previous badge. Its proportions are preserved.
+- Relative to 1.2's actual foreground bounds (237/354 wide and 249/349 high),
+  the new status-bar symbol occupies 166/174.1 wide and 174/174.1 high. That increases
+  its width by approximately 42.4% and height by 40.1%, centered without clipping.
+  Android retains control of the physical icon slot, tint and system badge background.
+- Tapping or swiping dismisses only the corresponding preview. A private, unexported
+  receiver is reached by an immutable, per-contact broadcast PendingIntent. No activity
+  is launched; message contents and unread state are not changed. There are no reply actions.
+- Preview and Android-test APK builds succeeded. Version 1.3-preview, code 4; minimum
+  Android API 26, target 36. APK signature verification passed. In-place updates on both
+  Android emulator installations succeeded, retaining existing accounts and chats.
+- Five targeted Android tests passed. A real notification-shade tap removes its preview
+  without resuming Calculator. Independent-contact dismissal leaves another preview
+  present. History separation, late profile refresh, avatar loading/encrypted storage,
+  stale photo removal protection and replacement-badge rendering also pass.
+- The actual Android notification-shade screenshot was inspected and shows the rounded
+  square avatar and new phone design. The generated 192x192 avatar's near-corner pixel
+  (20,20) is opaque while the outer corner (0,0) is transparent, confirming rounded-square
+  geometry rather than the previous circle.
+- Lint: zero errors, 16 warnings, seven informational findings. The broadcast content
+  intent intentionally triggers LaunchActivityFromNotification because the requested
+  tap behavior dismisses a preview instead of launching an activity. The traced vector
+  remains a VectorPath performance warning; other findings predate this change.
 
-## Completed checks
-
-- Preview and instrumentation APKs build. Version code 3, version name 1.2-preview,
-  application ID com.relay.app, minimum Android API 26, target API 36.
-- 237 JVM tests passed: zero failures, errors or skips. New tests cover bounded
-  Unicode names, malformed input and compatibility with the previous control parser.
-- Ten targeted Android checks passed on Android 15 across notification/profile and
-  media runs: three notification tests, four profile/QR tests, and three media tests.
-  Checks include OS-posted sender name/icon, published conversation shortcut,
-  late-profile refresh without duplicate history, no tap/reply intent, real encrypted
-  avatar storage, stale/blocked update rejection, placeholder repair and local aliases.
-- The actual Android preview was captured and visually inspected: shared name/photo
-  and the supplied phone design are shown in the avatar's bottom-right badge.
-- Portrait/landscape images retain their aspect ratio and open internally; EXIF rotation
-  is preserved. The five-second test MP4 advances playback, stops on close and forced
-  session expiry, and private viewing copies are removed. This is local received-media
-  playback testing, not a new live video transfer between devices.
-- The media harness now starts a fresh activity and waits for it to render. It also
-  waits for Android to settle after forced expiry. No saved chats or app data were reset.
-- Lint: zero errors, 15 warnings and seven informational findings. One new warning is
-  the traced small icon's long vector path; other warnings include existing platform
-  ExifInterface, locale and deprecation findings.
-- APK v2 signature verifies and its signing certificate matches the previous 1.1 APK.
-  In-place update on both emulator installations succeeded. The primary emulator was
-  reopened and unlocked for the user's phone-to-PC test.
-
-An initial broader run hit the session smoke test's explicit fresh-install prerequisite;
-that test was not represented as passing on this already-configured installation.
-The unchanged ten-minute duration is covered by JVM tests; the media expiry test forces
-its production deadline instead of waiting ten wall-clock minutes. Earlier media runs
-also exposed harness timing issues and a missing fixture; the original clip was recovered
-and the complete media class subsequently passed.
-
-## Limits and next checks
-
-The physical phone's notification layout and real phone camera pairing were not
-controlled in this run. Android and OEM notification templates can render differently.
-No new live network video transfer, Doze/battery behavior or real Orbot routing was
-verified. Earlier two-emulator text/photo/profile network checks are recorded in the
-1.1 report. No independent cryptographic audit or Double Ratchet is claimed.
-
-Conversation previews publish Android conversation data. A launcher may expose the
-sender name/photo in Calculator's long-press menu; opening the chat or removing its
-contact removes that shortcut. Public notification previews intentionally expose their
-text/photos subject to device settings. Canonical received profile photos stay encrypted;
-existing outgoing media cache limitations remain as documented in the previous record.
-This remains a debug-signed test preview.
+The 237 JVM and ten broader Android checks from 1.2 are historical; the JVM suite,
+media/network tests and fresh-install session smoke test were not repeated for this
+notification-only change. Physical-phone/OEM rendering still needs a manual check.
+This is a debug-signed test preview, not an independent security audit or a claim of
+no remaining bugs. Public preview and launcher-shortcut privacy limits remain as
+recorded in DISTRIBUTION.md and the previous verification reports.

@@ -118,5 +118,8 @@
                 android:resource="@xml/file_provider_paths" />
         </provider>
 
+        <receiver
+            android:name=".messaging.NotificationDismissReceiver"
+            android:exported="false" />
     </application>
 </manifest>

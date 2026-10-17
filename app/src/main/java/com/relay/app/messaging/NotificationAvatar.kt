@@ -19,7 +19,7 @@ object NotificationAvatar {
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         canvas.save()
-        canvas.clipPath(Path().apply { addCircle(96f, 96f, 94f, Path.Direction.CW) })
+        canvas.clipPath(Path().apply { addRoundRect(RectF(2f, 2f, 190f, 190f), 40f, 40f, Path.Direction.CW) })
         if (photo != null) {
             val scale = maxOf(192f / photo.width, 192f / photo.height)
             val width = photo.width * scale
@@ -55,11 +55,17 @@ object NotificationAvatar {
         if (badge != null) {
             canvas.save()
             canvas.clipPath(Path().apply { addCircle(158f, 158f, 30f, Path.Direction.CW) })
-            canvas.drawBitmap(badge, null, RectF(128f, 128f, 188f, 188f), paint)
+            paint.color = badge.getPixel(0, 0)
+            canvas.drawCircle(158f, 158f, 30f, paint)
+            val scale = minOf(60f / badge.width, 60f / badge.height)
+            val width = badge.width * scale
+            val height = badge.height * scale
+            canvas.drawBitmap(badge, null, RectF(158f - width / 2, 158f - height / 2,
+                158f + width / 2, 158f + height / 2), paint)
             canvas.restore()
             return bitmap
         }
-        paint.color = 0xFF8E4BC4.toInt()
+        paint.color = 0xFF7D519E.toInt()
         canvas.drawCircle(158f, 158f, 30f, paint)
         paint.color = Color.WHITE
         canvas.drawRoundRect(RectF(141f, 143f, 175f, 167f), 6f, 6f, paint)
