@@ -23,16 +23,16 @@ class OutboxWorker(context: Context, private val transport: Transport) {
     /** Returns how many entries were delivered to at least one relay. */
     suspend fun drain(): Int {
         val now = System.currentTimeMillis()
-        var delivered = 0
-        for (entry in outbox.dueSync(now)) {
+        val delivered = com.relay.app.transport.outbox.OutboxDispatch.run(outbox.dueSync(now), { it.recipientPubkeyHex }) { entry ->
+            var accepted = 0
             if (OutboxPolicy.isExpired(entry.createdAt, now)) {
                 fail(entry.id, entry.payloadId, entry.contactId)
-                continue
+                return@run 0
             }
             val payload = PayloadCodec.decode(entry.payloadJson)
             if (payload == null) {
                 fail(entry.id, entry.payloadId, entry.contactId)
-                continue
+                return@run 0
             }
             val hints = contacts.getByIdSync(entry.contactId)?.relayHints.orEmpty()
             when (val result = transport.send(entry.recipientPubkeyHex, payload, hints)) {
@@ -40,7 +40,7 @@ class OutboxWorker(context: Context, private val transport: Transport) {
                     outbox.markSentSync(entry.id)
                     messages.setDeliveryStateSync(entry.payloadId, DeliveryState.SENT)
                     broadcast(entry.contactId)
-                    delivered++
+                    accepted++
                 }
                 is SendResult.Failed -> {
                     if (!result.retryable) {
@@ -51,6 +51,7 @@ class OutboxWorker(context: Context, private val transport: Transport) {
                     }
                 }
             }
+            accepted
         }
         outbox.purgeSentBeforeSync(now - 24L * 60 * 60 * 1000)
         return delivered

@@ -22,10 +22,16 @@ the creator's phone must reconnect for those replies to reach the rest of the gr
 can see one another's shared names and messaging IDs, but are not automatically verified contacts.
 The creator controls additions/removals; other members can delete the group locally. Deleting your
 own group closes it for everyone. Old local-only groups remain readable; create a new group for
-shared conversations. All participants need **1.5-preview or newer**. Group chats currently support
-text and quoted replies; photo/video attachments remain available in individual chats.
+shared conversations. Install **1.8-preview or newer on every participant's phone** for group photos,
+videos and deletion controls. Use the attachment button to send media and **Members** in the group
+header to view membership; the creator can add/remove verified friends there. Failed group media
+downloads stay pending and retry when reopening the group or reconnecting.
 
-Touch and hold a message to quote it, then type and send; **Cancel reply** clears the quote.
+Touch and hold a message to open **Reply / Copy / Delete**. Choose Reply, then type and send;
+**Cancel reply** clears the quote. Delete can remove a local copy, or request removal of a message
+you authored from compatible recipient apps. Author-scoped tombstones cover delayed delivery.
+Older group messages without stable event ids support local deletion only. Saved copies,
+screenshots, quoted snapshots and relay ciphertext are not guaranteed to disappear.
 Quoted snapshots also work in individual photo/video captions. Text notifications and the chat list
 show the reply text rather than protocol fields. Typing indicators use encrypted, short-lived signals
 rather than the persistent outbox, expire after eight seconds, and can be turned off in
@@ -37,6 +43,25 @@ expiry and process death still require the entry code. Device verification for t
 pending; see **rebuild/VERIFICATION.md**.
 
 Encrypted profile updates keep approved contacts’ display names and photos in sync, including after reconnect. Locally chosen contact aliases are preserved.
+
+**Account → Security → Emergency: keep calculator only** requires the original four-digit code.
+Wrong confirmation codes count toward lockout. After confirmation, the app attempts author-scoped
+remote history deletion for up to 15 seconds, then erases local conversations, media, contacts,
+preferences and Keystore keys, cancels work/notifications/shortcuts, disables messaging components,
+and closes. Reopening leaves a functional calculator without an unlock gate. The compiled messaging
+code stays in the APK; this is a local data wipe and disabled mode, not partial uninstallation.
+Reinstalling/clearing data can reset it. Offline recipients, old versions, removed memberships,
+blocked contacts, saved/forwarded/quoted copies and relay retention can prevent complete remote
+erasure. Undelivered deletion requests are erased too. Use test devices until phone checks pass.
+
+**Account → Appearance → Dancing unlock illustration** enables the supplied image swaying and
+bouncing for four seconds after a valid code; disabled by default. It runs locally, skips when system
+animations are disabled, and does not extend the original ten-minute session. This animates the
+illustration as a whole, rather than generating a character-animation video.
+
+**Account → Connection → Hide connection notification** opens Android's channel settings. Turn off
+only **Relay connection**, leaving **Messages** enabled. Android controls channel visibility; the app
+cannot silently remove a required foreground-service notice while retaining the service.
 
 The connection-service notice is not started while the app is open and is removed when returning. Background delivery still uses Android’s required foreground-service notice when the activity is no longer visible. Rotation and dialogs that only pause the activity do not start that service.
 

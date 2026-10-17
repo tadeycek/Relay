@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 class KeyRotationReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(context)) return
         val prefs = RelayPreferences(context)
         val last = prefs.lastKeyRotationAt
         val now = System.currentTimeMillis()

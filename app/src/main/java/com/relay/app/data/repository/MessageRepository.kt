@@ -40,7 +40,14 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
             msg.expiryAt?.let { put(Messages.COL_EXPIRY_AT, it) }
             msg.msgId?.let { put(Messages.COL_MSG_ID, it) }
             put(Messages.COL_SENDER_VERIFIED, if (msg.senderVerified) 1 else 0)
-            put(Messages.COL_DELIVERY_STATE, msg.deliveryState)
+            val alreadySent = if (msg.isSent && msg.msgId != null) db.rawQuery("SELECT state FROM outbox WHERE payload_id=?", arrayOf(msg.msgId)).use {
+                if (it.moveToFirst()) it.getInt(0) else -1
+            } else -1
+            put(Messages.COL_DELIVERY_STATE, when (alreadySent) {
+                1 -> com.relay.app.data.model.DeliveryState.SENT
+                2 -> com.relay.app.data.model.DeliveryState.FAILED
+                else -> msg.deliveryState
+            })
             put(Messages.COL_UNREAD, if (msg.unread) 1 else 0)
         }
         return db.insert(Messages.TABLE, null, values)

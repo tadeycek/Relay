@@ -86,4 +86,37 @@ class GroupProtocolTest {
         assertEquals(GroupProtocol.memberId(owner), GroupProtocol.memberId(owner))
         assertNotEquals(GroupProtocol.memberId(owner), GroupProtocol.memberId(alice))
     }
+    @Test fun deleteRequestsAreBoundToAuthenticatedAuthorsAndCreators() {
+        val target = UUID.randomUUID().toString()
+        val request = post("delete-submit").copy(text = target)
+        assertEquals(request, GroupProtocol.parse(GroupProtocol.format(request)))
+        assertTrue(GroupProtocol.acceptSubmit(alice, state, request))
+        assertFalse(GroupProtocol.acceptSubmit(bob, state, request))
+        val forwarded = request.copy(kind = "delete")
+        assertTrue(GroupProtocol.acceptOwner(owner, state, forwarded))
+        assertFalse(GroupProtocol.acceptOwner(bob, state, forwarded))
+        assertTrue(runCatching { GroupProtocol.format(request.copy(text = "../arbitrary-file")) }.isFailure)
+        val removed = state.copy(revision = 2, members = state.members.filterNot { it.key == alice })
+        assertFalse(GroupProtocol.acceptSubmit(alice, removed, request))
+    }
+    @Test fun mediaAndQuotedRepliesTravelInsideGroupPackets() {
+        val reply = com.relay.app.messaging.ReplyBody.withText(com.relay.app.messaging.ReplyBody.draft(
+            com.relay.app.data.model.Message(id = 1, contactId = 1, body = "original"), "Alice"), "Reply caption")
+        val media = com.relay.app.media.MediaBody.format(com.relay.app.media.MediaRef("https://example.com/a", "a".repeat(64),
+            java.util.Base64.getEncoder().encodeToString(ByteArray(32)), "image/jpeg", 1024, reply))
+        val packet = post().copy(text = media)
+        val parsed = GroupProtocol.parse(GroupProtocol.format(packet))!!
+        assertEquals("Reply caption", com.relay.app.messaging.ReplyBody.preview(com.relay.app.media.MediaBody.parse(parsed.text)!!.caption))
+        assertTrue(runCatching { GroupProtocol.format(post().copy(text = "TYPE:MEDIA|URL:file:///secret")) }.isFailure)
+    }
+
+    @Test fun bulkErasureUsesAnAuthenticatedAuthorAndRejectsInvalidCutoffs() {
+        val request = post("purge-submit").copy(text = "12345")
+        assertEquals(request, GroupProtocol.parse(GroupProtocol.format(request)))
+        assertTrue(GroupProtocol.acceptSubmit(alice, state, request))
+        assertFalse(GroupProtocol.acceptSubmit(bob, state, request))
+        assertTrue(GroupProtocol.acceptOwner(owner, state, request.copy(kind = "purge")))
+        for (bad in listOf("0", "-1", "not a timestamp")) assertTrue(runCatching { GroupProtocol.format(request.copy(text = bad)) }.isFailure)
+    }
+
 }

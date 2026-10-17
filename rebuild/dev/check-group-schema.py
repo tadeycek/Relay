@@ -51,3 +51,31 @@ db.execute('DELETE FROM groups WHERE _id=1')
 for table in ['shared_groups', 'shared_group_seen', 'group_messages']:
     assert db.execute('SELECT count(*) FROM '+table).fetchone()[0] == 0
 print('Host SQLite: additive migration preserves legacy data; unique group events, transaction rollback and foreign-key cleanup pass.')
+
+# v16 -> v17: stable event ids and author-scoped deletion tombstones.
+actions = (ROOT / 'app/src/main/java/com/relay/app/messaging/MessageDeletion.kt').read_text()
+delete_schema = re.search(r'const val CREATE = "(.*?)"', actions).group(1)
+db.execute('ALTER TABLE group_messages ADD COLUMN event_id TEXT')
+db.execute('ALTER TABLE group_messages ADD COLUMN media_ref TEXT')
+db.execute('CREATE INDEX group_event ON group_messages(group_id,event_id)')
+db.execute(delete_schema)
+db.execute("INSERT INTO groups(_id,name) VALUES (2,'New group')")
+db.execute("INSERT INTO group_messages(group_id,body,timestamp,sender_key,event_id) VALUES (2,'Alice',1,'alice','same-id')")
+db.execute("INSERT INTO group_messages(group_id,body,timestamp,sender_key,event_id) VALUES (2,'Bob',1,'bob','same-id')")
+db.execute("INSERT INTO message_deletions VALUES ('group:2','alice','same-id')")
+assert db.execute("INSERT OR IGNORE INTO message_deletions VALUES ('group:2','alice','same-id')").rowcount == 0
+where = re.search(r'remove\(context, "group_messages", "([^"]*event_id[^\"]*)"', actions).group(1)
+db.execute('DELETE FROM group_messages WHERE ' + where, ('2','same-id','alice'))
+assert db.execute('SELECT body FROM group_messages WHERE group_id=2').fetchall() == [('Bob',)]
+assert db.execute("SELECT 1 FROM message_deletions WHERE scope=? AND author=? AND event=?", ('group:2','alice','same-id')).fetchone()
+assert db.execute("SELECT 1 FROM message_deletions WHERE scope=? AND author=? AND event=?", ('group:3','alice','same-id')).fetchone() is None
+assert db.execute("SELECT 1 FROM message_deletions WHERE scope=? AND author=? AND event=?", ('group:2','bob','same-id')).fetchone() is None
+print('Host SQLite: v17 event migration, deletion deduplication, cross-author/cross-group isolation and late-delivery tombstones pass.')
+purges_schema = re.search(r'const val CREATE_PURGES = "(.*?)"', actions).group(1)
+db.execute(purges_schema)
+db.execute("INSERT OR IGNORE INTO message_purges VALUES ('group:2','alice',100)")
+db.execute("UPDATE message_purges SET before_ms=MAX(before_ms,?) WHERE scope=? AND author=?", (50,'group:2','alice'))
+assert db.execute("SELECT before_ms FROM message_purges WHERE scope='group:2' AND author='alice'").fetchone() == (100,)
+assert db.execute("SELECT 1 FROM message_purges WHERE scope=? AND author=? AND before_ms>=?", ('group:2','alice',99)).fetchone()
+assert db.execute("SELECT 1 FROM message_purges WHERE scope=? AND author=? AND before_ms>=?", ('group:2','alice',101)).fetchone() is None
+print('Host SQLite: history purge cutoff is monotonic; late old messages stay deleted while newer messages remain admissible.')

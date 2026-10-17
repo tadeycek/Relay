@@ -9,6 +9,7 @@ import com.relay.app.data.model.Contact
 import com.relay.app.data.model.Message
 import com.relay.app.data.model.MessageType
 import com.relay.app.data.repository.MessageRepository
+import com.relay.app.messaging.MessageDeletion
 import com.relay.app.messaging.MessageNotifier
 import com.relay.app.messaging.MessagingDb
 import com.relay.app.messaging.Outgoing
@@ -27,14 +28,27 @@ object MediaSender {
     }
 
     fun send(context: Context, contact: Contact, file: File, mime: String, caption: String): Result {
+        val ref = try { upload(context, file, mime, caption) } catch (e: Exception) { return Result.Failed(e.message ?: "Upload failed") }
+        val msgId = Outgoing.enqueue(context, contact, MediaBody.format(ref))
+            ?: return Result.Failed("Couldn't queue the message")
+        return Result.Sent(msgId)
+    }
+
+    fun keepEncryptedCopy(context: Context, source: File): File {
+        val target = File(File(context.filesDir, "media").also { it.mkdirs() }, java.util.UUID.randomUUID().toString() + "." + source.extension)
+        RelayFileCrypto.writeEncrypted(context, target, source.readBytes())
+        return target
+    }
+
+    fun upload(context: Context, file: File, mime: String, caption: String): MediaRef {
         val plain = try {
             file.readBytes()
         } catch (e: Exception) {
-            return Result.Failed("Couldn't read the file")
+            error("Couldn’t read the file")
         }
-        if (plain.isEmpty() || plain.size > MediaBody.MAX_MEDIA_BYTES) return Result.Failed("File is too large")
+        if (plain.isEmpty() || plain.size > MediaBody.MAX_MEDIA_BYTES) error("File is too large")
 
-        val client = blossomClientFor(context) ?: return Result.Failed(TOR_UNAVAILABLE_MESSAGE)
+        val client = blossomClientFor(context) ?: error(TOR_UNAVAILABLE_MESSAGE)
         val encrypted = MediaCrypto.encrypt(plain)
         val blobSha256 = MediaCrypto.sha256Hex(encrypted.blob)
         val servers = RelayPreferences(context).blossomServers
@@ -43,10 +57,10 @@ object MediaSender {
             // The friendly message can't explain a server's own error text, but logcat can: pull it
             // when a report says uploads are failing.
             Log.w(TAG, "upload failed to all of $servers: ${client.lastUploadError}")
-            return Result.Failed("Upload failed - check your connection and try again")
+            error("Upload failed - check your connection and try again")
         }
 
-        val ref = MediaRef(
+        return MediaRef(
             url = uploaded.url,
             sha256Hex = blobSha256,
             keyBase64 = encrypted.keyBase64,
@@ -54,9 +68,6 @@ object MediaSender {
             size = plain.size.toLong(),
             caption = caption,
         )
-        val msgId = Outgoing.enqueue(context, contact, MediaBody.format(ref))
-            ?: return Result.Failed("Couldn't queue the message")
-        return Result.Sent(msgId)
     }
 }
 
@@ -106,8 +117,10 @@ object MediaReceiver {
             val file = File(dir, name)
             RelayFileCrypto.writeEncrypted(context, file, plain)
             val type = if (ref.isVideo) MessageType.VIDEO else MessageType.IMAGE
-            store(context, repo, contact, payloadId, sentAt, type, ref.caption, file.absolutePath)
-            MessageNotifier.notifyIncoming(context, contact, type, ref.caption)
+            synchronized(MessageDeletion) {
+                if (store(context, repo, contact, payloadId, sentAt, type, ref.caption, file.absolutePath))
+                    MessageNotifier.notifyIncoming(context, contact, type, ref.caption)
+            }
         } catch (e: Exception) {
             Log.w(TAG, "media receive failed: ${e.message}")
             store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media couldn't be downloaded or verified]", null)
@@ -125,7 +138,11 @@ object MediaReceiver {
         type: MessageType,
         body: String,
         mediaPath: String?,
-    ) {
+    ): Boolean {
+        synchronized(MessageDeletion) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(context) || MessageDeletion.isDeleted(MessagingDb.get(context), "direct:${contact.id}", contact.nostrPubkey.orEmpty(), payloadId, sentAt)) {
+            mediaPath?.let { File(it).delete() }; return false
+        }
         repo.insertMessageSync(
             Message(
                 contactId = contact.id,
@@ -138,10 +155,12 @@ object MediaReceiver {
                 unread = true,
             )
         )
+        }
         context.sendBroadcast(Intent("com.relay.app.NEW_MESSAGE").apply {
             putExtra("contact_id", contact.id)
             setPackage(context.packageName)
         })
+        return true
     }
 
     internal fun extensionFor(mime: String): String = when (mime) {

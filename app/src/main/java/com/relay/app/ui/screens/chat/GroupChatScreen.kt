@@ -41,6 +41,7 @@ private fun GroupMessage.asMessage() = Message(
     id = id,
     contactId = senderKey?.let { com.relay.app.groups.GroupProtocol.memberId(it) } ?: contactId ?: 0L,
     body = body,
+    msgId = eventId,
     type = type,
     lat = lat,
     lng = lng,
@@ -58,13 +59,34 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val vm: GroupChatViewModel = viewModel(factory = GroupChatViewModelFactory(groupId, app))
     val group by vm.group.collectAsState()
     val messages by vm.messages.collectAsState()
+    val friends by vm.friends.collectAsState()
+    val sending by vm.sending.collectAsState()
     val error by vm.error.collectAsState()
     var replyDraft by rememberSaveable { mutableStateOf<String?>(null) }
     var inputText by rememberSaveable { mutableStateOf("") }
+    var actionMessage by remember { mutableStateOf<Message?>(null) }
+    val picker = com.relay.app.media.LocalChatMediaPicker.current
+    // Negative group targets cannot collide with positive contact ids.
+    val pickerId = -groupId - 1000000L
+    val media = picker.draftFor(pickerId)
+    var showAttach by remember { mutableStateOf(false) }
+    var showMembers by remember { mutableStateOf(false) }
     var confirmRequestLocation by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val own = remember { com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }
     val canSend = group?.sharedOwner != null && group?.members.orEmpty().any { it.nostrPubkey == own }
+    MessageActions(actionMessage, groupId, onReply = { message ->
+        replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(context).myName.ifBlank { "Me" } else messages.firstOrNull { it.id == message.id }?.senderName ?: "Someone")
+    }, onDismiss = { actionMessage = null })
+    if (showAttach) AttachSheet(onDismiss = { showAttach = false },
+        onPhoto = { showAttach = false; picker.open(pickerId, com.relay.app.media.ChatMediaSource.PHOTO) },
+        onVideo = { showAttach = false; picker.open(pickerId, com.relay.app.media.ChatMediaSource.VIDEO) },
+        onCamera = { showAttach = false; picker.open(pickerId, com.relay.app.media.ChatMediaSource.CAMERA) })
+    if (showMembers) group?.let { current ->
+        com.relay.app.ui.screens.contacts.ManageGroupSheet(current, friends, current.sharedOwner == own, own,
+            onRemove = { vm.changeMember(context, it, false) }, onAdd = { vm.changeMember(context, it, true) },
+            onDeleteGroup = { vm.deleteGroup(context) { navController.popBackStack() } }, onDismiss = { showMembers = false })
+    }
     val listState = rememberLazyListState()
     LaunchedEffect(error) { error?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show(); vm.clearError() } }
 
@@ -92,7 +114,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 memberSeeds = group?.members.orEmpty().map { GlyphGenerator.seedFor(it.nostrPubkey, null, it.name) },
                 memberCount = group?.members?.size ?: 0,
                 onBack = { navController.popBackStack() },
-                actions = {},
+                actions = { androidx.compose.material3.TextButton(onClick = { vm.refresh(); showMembers = true }) { androidx.compose.material3.Text("Members") } },
 
             )
         },
@@ -106,7 +128,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
             ) {
                 items(items, key = { it.key }) { item ->
                     ChatItemRow(item, contactName = "Someone", senderName = { names[it] }, onReply = { message ->
-                        replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(context).myName.ifBlank { "Me" } else names[message.contactId] ?: "Someone")
+                        actionMessage = message
                     })
                 }
             }
@@ -116,14 +138,22 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 Composer(
                     value = inputText,
                     onValueChange = { inputText = it.take(1000) },
-                    placeholder = "Message the group",
+                    placeholder = if (sending) "Preparing attachment…" else "Message the group",
+                    pendingMediaUri = media?.uri,
+                    pendingMediaMime = media?.mime.orEmpty(),
+                    onClearMedia = { picker.clear(pickerId) },
+                    onAttach = { showAttach = true },
                     onSend = {
-                        if (inputText.isNotBlank()) {
+                        if (!sending && (inputText.isNotBlank() || media != null)) {
                             val sentText = inputText
                             val sentDraft = replyDraft
-                            vm.sendText(com.relay.app.messaging.ReplyBody.withText(sentDraft, sentText.trim()), context) {
+                            val queued = {
                                 if (inputText == sentText && replyDraft == sentDraft) { inputText = ""; replyDraft = null }
+                                picker.clear(pickerId)
                             }
+                            val body = com.relay.app.messaging.ReplyBody.withText(sentDraft, sentText.trim())
+                            if (media != null) vm.sendMedia(context, media.uri, media.mime, body, queued)
+                            else vm.sendText(body, context, queued)
                         }
                     },
                 )

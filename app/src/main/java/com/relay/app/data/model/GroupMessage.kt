@@ -5,6 +5,7 @@ data class GroupMessage(
     val groupId: Long,
     val contactId: Long? = null,
     val body: String,
+    val eventId: String? = null,
     val senderKey: String? = null,
     val senderName: String? = null,
     val type: MessageType = MessageType.TEXT,

@@ -39,7 +39,7 @@ class ConnectionService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        if (appVisible || !com.relay.app.util.RelayPreferences(this).backgroundConnection) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(this) || appVisible || !com.relay.app.util.RelayPreferences(this).backgroundConnection) {
             stopSelf()
             return
         }
@@ -56,7 +56,7 @@ class ConnectionService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (appVisible || !com.relay.app.util.RelayPreferences(this).backgroundConnection) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(this) || appVisible || !com.relay.app.util.RelayPreferences(this).backgroundConnection) {
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -91,6 +91,7 @@ class ConnectionService : Service() {
 
         /** Starts the service. Safe to call repeatedly; swallows the OS refusing a background start. */
         fun start(context: Context) {
+            if (com.relay.app.calculator.CalculatorOnly.enabled(context)) return
             if (appVisible) return
             try {
                 ContextCompat.startForegroundService(context, Intent(context, ConnectionService::class.java))
@@ -104,7 +105,7 @@ class ConnectionService : Service() {
             context.stopService(Intent(context, ConnectionService::class.java))
         }
 
-        private fun ensureChannel(context: Context) {
+        fun ensureChannel(context: Context) {
             val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (nm.getNotificationChannel(CHANNEL_ID) != null) return
             nm.createNotificationChannel(
