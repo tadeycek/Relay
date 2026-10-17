@@ -122,10 +122,8 @@ class CalculatorSecurityTest {
         assertEquals("Hello from the test", notification.extras.getCharSequence("android.text").toString())
         assertEquals("android.app.Notification\$MessagingStyle", notification.extras.getString("android.template"))
         assertNotNull("Contact avatar is supplied to the OS", notification.getLargeIcon())
-        val rendered = PreviewAssertions.content(context, notification)
-        assertNotNull("Sender has an avatar", rendered.avatar)
-        assertEquals("A rounded square leaves its outer corner transparent", 0, android.graphics.Color.alpha(rendered.avatar.getPixel(0, 0)))
-        assertTrue("Rounded square retains pixels outside a circular crop", android.graphics.Color.alpha(rendered.avatar.getPixel(20, 20)) > 0)
+        val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
+        assertNotNull("Sender has an avatar", style.messages.last().person?.icon)
         val device = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
         device.pressHome()
         val underlyingPackage = device.currentPackageName
@@ -159,10 +157,11 @@ class CalculatorSecurityTest {
         SystemClock.sleep(300)
         val notification = manager.activeNotifications.first { it.tag == "conversation:999" }.notification
         val history = com.relay.app.messaging.NotificationPreview.history(notification)
-        val rendered = PreviewAssertions.content(context, notification)
+        val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
         assertEquals(1, history.size)
-        assertEquals("Exion", rendered.name)
-        assertEquals("Keep this preview", rendered.text)
+        assertEquals("Exion", style.messages.last().person!!.name.toString())
+        assertEquals("Keep this preview", style.messages.last().text.toString())
+        assertEquals(history.map { it.text }, style.messages.map { it.text.toString() })
         assertTrue(notification.flags and android.app.Notification.FLAG_ONLY_ALERT_ONCE != 0)
         assertFalse("Preview taps cannot launch an activity", notification.contentIntent.isActivity)
         assertTrue(notification.actions.isNullOrEmpty())

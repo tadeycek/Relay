@@ -2,7 +2,6 @@ package com.relay.app.messaging
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
@@ -11,9 +10,9 @@ import com.relay.app.ui.glyph.Corner
 import com.relay.app.ui.glyph.GlyphGenerator
 import com.relay.app.ui.glyph.GlyphSpec
 
-/** Sender avatar with the supplied decorative badge; Android retains the actual app attribution. */
+/** Unbadged sender photo. The native conversation template adds the registered application badge. */
 object NotificationAvatar {
-    fun forContact(contact: Contact, photo: Bitmap? = null, badge: Bitmap? = null): Bitmap {
+    fun forContact(contact: Contact, photo: Bitmap? = null): Bitmap {
         val size = 192
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -49,25 +48,6 @@ object NotificationAvatar {
             }
         }
         canvas.restore()
-        paint.style = Paint.Style.FILL
-        if (badge != null) {
-            // Keep the supplied rounded-square badge intact, rather than cropping it to a circle.
-            val bounds = RectF(124f, 124f, 192f, 192f)
-            canvas.save()
-            canvas.clipPath(Path().apply { addRoundRect(bounds, 20f, 20f, Path.Direction.CW) })
-            val scale = minOf(bounds.width() / badge.width, bounds.height() / badge.height)
-            val width = badge.width * scale
-            val height = badge.height * scale
-            canvas.drawBitmap(badge, null, RectF(bounds.centerX() - width / 2, bounds.centerY() - height / 2,
-                bounds.centerX() + width / 2, bounds.centerY() + height / 2), paint)
-            canvas.restore()
-            return bitmap
-        }
-        paint.color = 0xFF7D519E.toInt()
-        canvas.drawCircle(158f, 158f, 30f, paint)
-        paint.color = Color.WHITE
-        canvas.drawRoundRect(RectF(141f, 143f, 175f, 167f), 6f, 6f, paint)
-        canvas.drawPath(Path().apply { moveTo(146f, 164f); lineTo(146f, 176f); lineTo(159f, 164f); close() }, paint)
         return bitmap
     }
 }

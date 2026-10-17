@@ -1,83 +1,54 @@
-# Calculator 1.6 preview verification — 2026-10-17
+# Calculator 1.7 preview verification — 2026-10-17
 
-Changes: no startup connection-service notification while the activity is visible;
-hold-to-reply replaces the visible Reply buttons in individual and group chats;
-app-rendered direct notification content keeps the avatar rounded-square and uses
-the latest supplied purple badge.
+The supplied screenshot shows a separate leading app icon beside the custom sender
+photo. This revision removes the custom content layout and returns to native
+MessagingStyle, matching the structure of the Exion conversation reference.
 
-## Host verification
+## Host checks
 
-- Preview application and Android test APKs compile: version 1.6-preview, code 7.
-- All 257 JVM tests pass, with no failures, errors or skips. These cover existing
-  session, messaging, group, reply-codec and typing policies; they do not execute
-  Android touch/lifecycle behavior. Three new preview-history tests check ordering,
-  the five-line bound, timestamp preservation on profile refresh and isolation.
-- Lint passes with zero errors, 18 warnings and 7 information items. The APK signature and application/launcher identity
-  are checked before packaging. Package com.relay.app and the existing debug signing
-  certificate are retained; Android application identity is Viber and its supplied
-  purple phone image, while MainActivity stays Calculator with the calculator icon.
-- Host SQLite group migration/rollback/constraint checks still pass.
-- No Android device is connected and no emulator profiles were recreated. Android
-  instrumentation tests are compiled, not run. There is no claim of bug-free behavior.
+- Application/test APK compilation, all 257 JVM tests and lint pass. Tests have no
+  failures, errors or skips. JVM checks cover preview history and the existing
+  conversation/session policies, not Android's rendered notification shade.
+- Version 1.7-preview, code 8. Package com.relay.app and the existing debug signing
+  certificate are unchanged. APK signature and manifest identity are verified.
+- The compiled application label is Viber. Application icon and roundIcon point to
+  notification_sender_badge.png, preserving the supplied 66 x 64 image. MainActivity
+  retains the Calculator name and calculator launcher icon. The monochrome small
+  notification/status-bar vector is unchanged.
+- Host SQLite group-schema regression checks pass; group/database schema is unchanged.
+- No phone is connected; no emulator profiles were recreated. Android tests compile
+  but have not been run. Exact phone rendering is not verified.
 
-## Implementation checks and limits
+## Notification changes
 
-MainActivity stops ConnectionService when starting/resuming. MessagingRuntime remains
-process-wide, so stopping this foreground service does not stop the transport itself.
-When the activity stops being visible (except rotation), the optional background
-service starts. Permission dialogs that only pause the activity do not trigger it.
-The service guards against queued starts and status notifications after UI return,
-and removes its foreground notification on destruction. Background delivery remains
-opt-in/out through the existing setting, which is on by default.
+The builder uses native MessagingStyle with the sender Person, avatar, large icon
+and conversation shortcut. It supplies no custom content, expanded or heads-up views.
+Android receives the updated application icon for its native app badge. Sender
+bitmaps retain the rounded source crop but contain no painted logo, avoiding a
+second overlay. The custom layout and its rendering-only test helper are removed.
 
-Android still requires a foreground-service notification for sustained background
-work. This revision suppresses the notice while opening/using the app; it does not
-claim to hide the operating system's background-service disclosure. See the official
-[foreground-service overview](https://developer.android.com/develop/background-work/services/fgs)
-and [visible-to-background start exemption](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start).
+Existing 1.6 namespaced preview history is read and rendered through native messages.
+Older MessagingStyle histories are also supported. Both histories are bounded to
+five entries; late profile refresh preserves their original text/timestamps. Tap
+still only dismisses the preview, without launching the app, reading or deleting
+messages. Hold-to-reply and startup/background service behavior from 1.6 are retained.
 
-Each text/photo/video/location bubble uses combined tap/long-click handling. Holding
-sets the quoted reply target, including holding an existing quote. Short taps retain
-photo viewing, video playback and opening locations in Maps. Media can be held to
-reply even while its decrypted display file is not available. Reply is exposed as a
-labeled accessibility long-click action; Cancel reply clears the selected quote.
-No notification quick-reply action is added.
+Android controls the final photo mask, app-badge position, header and spacing. This
+revision does not force the same rounded-square shape on every phone. The native
+MessagingStyle/shortcut combination restores native conversation eligibility, subject
+to Android/user settings. See [Android MessagingStyle](https://developer.android.com/reference/android/app/Notification.MessagingStyle)
+and [custom-notification decoration](https://developer.android.com/about/versions/12/behavior-changes-12#custom-notifications).
 
-## Notification photo and badge
+## Phone checks still required
 
-Direct-message notifications now use DecoratedCustomViewStyle and a custom content
-ImageView to avoid the platform conversation-avatar circle. The bitmap clips the
-photo to rounded corners (radius 40 on a 192-pixel canvas). The new supplied badge
-is stored unchanged as notification_sender_badge.png and composited at the bottom
-right with rounded-square clipping, preserving its proportions. The application
-icon still uses notification_avatar_badge.png; the Calculator launcher is unchanged.
-Android retains its outer notification header; spacing and native conversation
-classification/priority can differ. See [Android custom notification guidance](https://developer.android.com/develop/ui/views/notifications/custom-notification).
+Install 1.7 on both phones, dismiss the old previews and receive fresh direct messages.
+Compare the single sender-photo/app-badge arrangement against the Exion reference.
+Check collapsed/expanded/heads-up previews, sender name/photo refresh, history,
+notification dismissal, light/dark modes and large fonts. Confirm the registered
+purple icon appears in the intended native badge position on the target Samsung UI.
+Exact rendering and OEM masking remain unverified without a connected device.
 
-Preview text/timestamps use namespaced notification extras, bounded to five entries.
-Visible older MessagingStyle histories are read for migration. Late profile refresh
-updates the sender/avatar without appending or retimestamping messages. Native group
-previews are unchanged. Android test assertions now inspect the custom content's
-actual ImageView and sender/text rather than expecting MessagingStyle metadata.
-Those tests compile but have not been run in this revision.
-
-## Phone checks still pending
-
-- Fresh launch: no separate Connected/Connecting service notice. Receive a normal
-  message notification and confirm it is unaffected.
-- Home/lock screen: background delivery continues with Android's required service
-  notice; returning removes that notice. Rapid Home/return, rotation, permission
-  dialogs, gallery return, process restart and disabling background delivery need
-  runtime verification, including Android 12+ foreground-service start rules.
-- On both phones, receive a fresh direct message after dismissing old previews.
-  Check rounded-square photos, exact new badge, collapsed/expanded/heads-up content,
-  light/dark modes, large fonts and TalkBack. Check history, profile refresh and
-  dismiss-only tapping. Android runtime/visual checks have not been performed.
-- Hold text/photo/video/location and quoted messages in individual/group chats;
-  confirm the right quote is selected and can be cancelled/sent. Short media and
-  location taps must still work. Check TalkBack's labeled Reply action.
-
-Broader device/network checks in archived reports are historical. The 1.5 shared
-conversation flows also retain their documented phone-test limitations; see
-[VERIFICATION-1.5-preview.md](VERIFICATION-1.5-preview.md). This is a debug-signed test
-preview with no independent security audit.
+The Android notification tests now assert native MessagingStyle metadata, sender
+identity/avatar, bounded history and dismiss-only behavior, rather than expecting
+custom ImageViews. Prior runtime checks and the 1.6 report are historical, not new
+phone verification. This remains a debug-signed test preview without a security audit.

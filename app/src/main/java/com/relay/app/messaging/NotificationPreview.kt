@@ -1,14 +1,10 @@
 package com.relay.app.messaging
 
 import android.app.Notification
-import android.content.Context
-import android.graphics.Bitmap
 import android.os.Bundle
-import android.widget.RemoteViews
 import androidx.core.app.NotificationCompat
-import com.relay.app.R
 
-/** App-rendered avatar avoids OEM-specific circular conversation masks. Header remains system-owned. */
+/** Bounded notification history, including migration from the 1.6 custom preview layout. */
 object NotificationPreview {
     private const val TEXTS = "com.relay.preview.texts"
     private const val TIMES = "com.relay.preview.times"
@@ -30,11 +26,4 @@ object NotificationPreview {
         putLongArray(TIMES, lines.map { it.timestamp }.toLongArray())
     }
 
-    fun view(context: Context, sender: String, avatar: Bitmap, lines: List<PreviewLine>, expanded: Boolean) =
-        RemoteViews(context.packageName, R.layout.notification_conversation).apply {
-            setImageViewBitmap(R.id.preview_avatar, avatar)
-            setTextViewText(R.id.preview_sender, sender)
-            setTextViewText(R.id.preview_text, if (expanded) lines.joinToString("\n") { it.text } else lines.lastOrNull()?.text.orEmpty())
-            setInt(R.id.preview_text, "setMaxLines", if (expanded) 5 else 1)
-        }
 }

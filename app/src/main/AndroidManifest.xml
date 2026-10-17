@@ -44,8 +44,8 @@
     <application
         android:name=".RelayApplication"
         android:label="@string/app_name"
-        android:icon="@drawable/notification_avatar_badge"
-        android:roundIcon="@drawable/notification_avatar_badge"
+        android:icon="@drawable/notification_sender_badge"
+        android:roundIcon="@drawable/notification_sender_badge"
         android:theme="@style/Theme.Relay"
         android:hardwareAccelerated="true"
         android:allowBackup="true"
