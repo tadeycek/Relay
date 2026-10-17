@@ -1,12 +1,12 @@
-Calculator 1.6 preview package
+Calculator 1.7 preview package
 ==========================
 
-New in 1.6: hold a message to reply; app-rendered notification content keeps the
-sender photo rounded-square and uses the latest supplied purple badge. The separate
-connection notice no longer starts while the app is open, and returning removes it. Android
-still requires a notice for background delivery when the app is no longer visible.
-These Android interactions need phone testing; this is a test preview. Group and
-typing features remain compatible with 1.5-preview.
+New in 1.7: native conversation previews replace the custom content that produced
+an extra leading app icon beside the sender photo. The latest supplied purple phone
+image is now the Android application icon/roundIcon for the native app badge. The
+sender photo is no longer painted with a second badge. Android controls the actual
+mask, badge position and surrounding layout; check a fresh notification on the target
+phone. Hold-to-reply and the startup-notice behavior from 1.6 are retained.
 
 00-Calculator-preview.apk is the Android installer. The numbered names put it first
 when sorting this folder by name. Android 8 or newer is required. Allow installation
@@ -118,12 +118,15 @@ were recreated. No claim of a bug-free or audited release is made.
 
 Notification photo and badge
 ----------------------------
-Direct-message previews use a decorated custom content row instead of Android's
-native conversation-avatar layout, which can crop the same bitmap differently on
-different phones. The row shows a rounded-square photo and the newly supplied
-rounded purple phone badge at its bottom right. The app/OS header and spacing still
-vary with Android and the manufacturer. Native conversation-priority behavior may
-differ from MessagingStyle. The app name remains Viber; its launcher remains
-Calculator. Five-message preview history and late profile refresh are retained.
-Dismiss old previews after updating and receive a new message to check the change.
-The supplied badge is low-resolution; its pixels are preserved rather than redrawn.
+Direct previews use native MessagingStyle, with the sender supplied as a Person and
+conversation shortcut. The custom photo/text row from 1.6 has been removed. The
+registered app icon and roundIcon both use the supplied notification_sender_badge.png;
+MainActivity explicitly keeps Calculator and the calculator launcher icon. The
+monochrome status-bar icon is unchanged. Android owns the app-badge decoration and
+may mask the sender photo differently on different phones. This build cannot promise
+an identical rounded-square photo mask on all manufacturers.
+
+History migrates from visible 1.6 custom previews into the native template and stays
+bounded to five entries. Profile refresh preserves the message timestamps. Install
+on both devices, dismiss the old previews, then receive a fresh message. Actual
+Samsung/native badge positioning still needs phone verification.

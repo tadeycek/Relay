@@ -69,13 +69,12 @@ class ProfilePhotoTest {
             android.os.SystemClock.sleep(500)
             val notification = manager.activeNotifications.first { it.tag == "conversation:${contact.id}" }.notification
             val history = com.relay.app.messaging.NotificationPreview.history(notification)
-            val rendered = PreviewAssertions.content(context, notification)
-            assertEquals("Exion preview", rendered.name)
+            val style = androidx.core.app.NotificationCompat.MessagingStyle.extractMessagingStyleFromNotification(notification)!!
+            assertEquals("Exion preview", style.messages.last().person!!.name.toString())
             assertEquals(1, history.size)
-            assertEquals(history.last().text, rendered.text)
-            assertNotNull(rendered.avatar)
-            assertEquals(0, Color.alpha(rendered.avatar.getPixel(0, 0)))
-            assertTrue(Color.alpha(rendered.avatar.getPixel(20, 20)) > 0)
+            assertEquals(history.last().text, style.messages.last().text.toString())
+            assertNotNull(style.messages.last().person!!.icon)
+            assertEquals("android.app.Notification\$MessagingStyle", notification.extras.getString("android.template"))
             assertEquals("conversation:${contact.id}", notification.shortcutId)
             assertFalse(notification.contentIntent.isActivity)
             device.openNotification()
@@ -137,16 +136,11 @@ class ProfilePhotoTest {
             val decoded = ContactPhotos.load(context, contact.id)!!
             assertEquals(64, decoded.width)
             assertTrue(Color.green(decoded.getPixel(10, 10)) > 200)
-            val badge = android.graphics.BitmapFactory.decodeResource(context.resources, com.relay.app.R.drawable.notification_sender_badge)
-            val avatar = NotificationAvatar.forContact(contact, decoded, badge)
+            val avatar = NotificationAvatar.forContact(contact, decoded)
             assertTrue(Color.green(avatar.getPixel(50, 50)) > 200)
-            val expectedBadge = badge.getPixel(badge.width / 2, badge.height / 2)
-            val actualBadge = avatar.getPixel(158, 158)
-            assertTrue("The supplied picture is composited at the bottom right",
-                kotlin.math.abs(Color.red(expectedBadge) - Color.red(actualBadge)) < 40 &&
-                kotlin.math.abs(Color.green(expectedBadge) - Color.green(actualBadge)) < 40 &&
-                kotlin.math.abs(Color.blue(expectedBadge) - Color.blue(actualBadge)) < 40)
-            badge.recycle()
+            assertEquals(0, Color.alpha(avatar.getPixel(0, 0)))
+            assertTrue("Rounded-square source is supplied before the OS applies its mask", Color.alpha(avatar.getPixel(20, 20)) > 0)
+            assertTrue("Sender image has no painted app badge", Color.green(avatar.getPixel(158, 158)) > 200)
             File(context.filesDir, "notification-avatar-preview.png").outputStream().use {
                 avatar.compress(Bitmap.CompressFormat.PNG, 100, it)
             }

@@ -1,3 +1,16 @@
+## Calculator 1.7 preview — native conversation badge placement
+
+- Removed the 1.6 custom content row that caused a separate leading app icon next to
+  the sender photo on the supplied phone screenshot. Native MessagingStyle supplies
+  one sender identity/photo to the conversation template and restores native history.
+- Registered the latest supplied purple image as application icon and roundIcon.
+  The sender bitmap is unbadged; Android handles its own app-badge overlay. The
+  Calculator activity name/icon and monochrome status-bar symbol are preserved.
+- Five-line preview history migrates from 1.6 namespaced extras. Profile refresh,
+  dismiss-only tapping, hold-to-reply and startup-notice changes remain.
+- Android owns the final photo mask and badge placement. Device appearance remains
+  unverified; no custom-layout promise of identical masks is retained.
+
 ## Calculator 1.6 preview — notification content, startup notice and hold-to-reply
 
 - A visible MainActivity stops the connection foreground service and its notice;
