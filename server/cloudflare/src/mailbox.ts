@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { AUTH_WINDOW_S, verifyRequestAuth, type AuthOutcome, type Membership } from "./auth";
+import { PushSender, serviceAccountFrom } from "./push";
 import {
   DELIVERY_ID,
   PROTOCOL_VERSION,
@@ -21,7 +22,9 @@ import {
  * Rows written are the scarcest Workers Free allowance (100,000/day), and every index entry a
  * statement touches counts. v2 cut the per-delivery and per-receipt write cost; see migrate().
  */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 7;
+/** At most one wake-up push per recipient this often; several messages in a row need only one. */
+const WAKE_INTERVAL_MS = 20_000;
 /** WebSocket frames stay well under the platform's per-message limit even when HTTP pages are larger. */
 const MAX_SOCKET_PAGE_BYTES = 512 * 1024;
 const MAX_ACK_BODY_BYTES = 4096;
@@ -45,11 +48,13 @@ type SizedDelivery = Delivery & { size: number };
 const nowS = () => Math.floor(Date.now() / 1000);
 const isSeq = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 
-function safeSend(ws: WebSocket, frame: unknown): void {
+function safeSend(ws: WebSocket, frame: unknown): boolean {
   try {
     ws.send(JSON.stringify(frame));
+    return true;
   } catch {
     // Already closing; the client recovers by catching up after reconnecting.
+    return false;
   }
 }
 
@@ -79,6 +84,10 @@ export class Mailbox extends DurableObject<Env> {
   private readonly members = new Set<string>();
   private readonly membership: Membership = { has: (pubkey: string) => this.isMember(pubkey) };
   private readonly exposeMetrics: boolean;
+  /** Null when no Firebase service account is configured: pushes are off. */
+  private readonly push: PushSender | null;
+  /** Replaceable in tests, so no request ever leaves the test runtime. */
+  private pushFetch: (request: Request) => Promise<Response> = (request) => fetch(request);
   /** New on every construction (first start, eviction, hibernation wake). Lets tests see a real restart. */
   private readonly instance = crypto.randomUUID();
   private readonly rows = { read: 0, written: 0 };
@@ -92,6 +101,8 @@ export class Mailbox extends DurableObject<Env> {
     this.limits = limitsFrom(vars);
     this.allowed = allowlistFrom(vars.ALLOWED_PUBKEYS);
     this.exposeMetrics = vars.EXPOSE_METRICS === "1";
+    const account = serviceAccountFrom(vars.FCM_SERVICE_ACCOUNT);
+    this.push = account ? new PushSender(account, (request) => this.pushFetch(request)) : null;
     this.migrate();
     for (const row of this.q<{ pubkey: string }>("SELECT pubkey FROM members")) this.members.add(row.pubkey);
     // Keepalives are answered by the runtime without waking a hibernated object.
@@ -109,6 +120,7 @@ export class Mailbox extends DurableObject<Env> {
         case "GET /v1/ws": response = await this.handleUpgrade(request); break;
         case "POST /v1/invite": response = await this.handleInvite(request); break;
         case "POST /v1/pair": response = await this.handlePair(request); break;
+        case "POST /v1/push-token": response = await this.handlePushToken(request); break;
         default: response = errorResponse(404, "not_found");
       }
     } catch (e) {
@@ -135,10 +147,14 @@ export class Mailbox extends DurableObject<Env> {
       const now = Date.now();
       const results = parsed.map((d, i) => this.store(auth.pubkey, d, hashes[i], now));
       this.prune(now);
+      const woken = new Set<string>();
       results.forEach((result, i) => {
         if (result.status === "stored") {
           const d = parsed[i];
-          this.push(d.to, { seq: result.seq, from: auth.pubkey, id: d.id, envelope: d.envelope, storedAt: now });
+          if (!this.pushLive(d.to, { seq: result.seq, from: auth.pubkey, id: d.id, envelope: d.envelope, storedAt: now }) && !woken.has(d.to)) {
+            woken.add(d.to);
+            this.ctx.waitUntil(this.wake(d.to, now));
+          }
         }
       });
       return json({ v: PROTOCOL_VERSION, results });
@@ -341,7 +357,9 @@ export class Mailbox extends DurableObject<Env> {
    * recipient who isn't connected simply misses it, which is what best-effort signals want.
    */
   private relaySignal(ws: WebSocket, session: Session, to: string, envelope: string, ref: string | undefined): void {
-    const refuse = (code: ErrorCode) => safeSend(ws, { type: "error", ref, error: { code, retryable: false } });
+    const refuse = (code: ErrorCode): void => {
+      safeSend(ws, { type: "error", ref, error: { code, retryable: false } });
+    };
     if (!PUBKEY.test(to) || !this.isMember(to)) return refuse("unknown_recipient");
     if (envelope.length === 0 || utf8.encode(envelope).byteLength > this.limits.maxSignalBytes) return refuse("envelope_too_large");
     const minute = Math.floor(Date.now() / 60_000);
@@ -353,10 +371,49 @@ export class Mailbox extends DurableObject<Env> {
     }
   }
 
-  private push(recipient: string, message: InboxMessage): void {
+  /** Sends [message] to the recipient's open sockets; false if there were none to send to. */
+  private pushLive(recipient: string, message: InboxMessage): boolean {
+    let delivered = false;
     for (const ws of this.ctx.getWebSockets(recipient)) {
-      if (this.session(ws)) safeSend(ws, { type: "message", ...message });
+      if (this.session(ws)) {
+        const sent = safeSend(ws, { type: "message", ...message });
+        delivered = sent || delivered;
+      }
     }
+    return delivered;
+  }
+
+  // ---- Push (Firebase wake-ups) ---------------------------------------------------------------
+
+  /** The phone's Firebase token, so a closed app can be woken; an empty token turns pushes off. */
+  private async handlePushToken(request: Request): Promise<Response> {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
+    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
+    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const parsed = parseJson(body);
+    const token = parsed?.token;
+    if (parsed?.v !== PROTOCOL_VERSION || typeof token !== "string" || token.length > 4096 || /\s/.test(token)) return errorResponse(400, "bad_request");
+    return this.metered(() => {
+      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      if (token === "") this.q("DELETE FROM push_tokens WHERE pubkey = ?", auth.pubkey);
+      else this.q(
+        "INSERT INTO push_tokens (pubkey, token, updated_at) VALUES (?, ?, ?) ON CONFLICT(pubkey) DO UPDATE SET last_wake_at = CASE WHEN push_tokens.token = excluded.token THEN push_tokens.last_wake_at ELSE 0 END, token = excluded.token, updated_at = excluded.updated_at",
+        auth.pubkey, token, Date.now(),
+      );
+      return json({ v: PROTOCOL_VERSION, push: token !== "" && this.push !== null });
+    });
+  }
+
+  /** Wakes a recipient who has no open socket, at most once per [WAKE_INTERVAL_MS]. */
+  private async wake(recipient: string, now: number): Promise<void> {
+    if (!this.push) return;
+    const registration = this.q<{ token: string; last_wake_at: number }>("SELECT token, last_wake_at FROM push_tokens WHERE pubkey = ?", recipient)[0];
+    if (!registration || now - registration.last_wake_at < WAKE_INTERVAL_MS) return;
+    this.q("UPDATE push_tokens SET last_wake_at = ? WHERE pubkey = ?", now, recipient);
+    const result = await this.push.wake(registration.token);
+    if (result === "unregistered") this.q("DELETE FROM push_tokens WHERE pubkey = ? AND token = ?", recipient, registration.token);
+    else if (result === "failed") console.error("wake-up push failed");
   }
 
   // ---- Storage -------------------------------------------------------------------------------
@@ -494,6 +551,7 @@ export class Mailbox extends DurableObject<Env> {
     const current = Number(this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'schema'")[0]?.value ?? 0);
     const steps: Array<() => void> = [
       () => this.schemaV1(), () => this.schemaV2(), () => this.schemaV3(), () => this.schemaV4(), () => this.schemaV5(),
+      () => this.schemaV6(), () => this.schemaV7(),
     ];
     for (let version = current + 1; version <= SCHEMA_VERSION; version++) {
       this.ctx.storage.transactionSync(() => {
@@ -571,6 +629,18 @@ export class Mailbox extends DurableObject<Env> {
   private schemaV5(): void {
     this.sql.exec("CREATE TABLE IF NOT EXISTS members (pubkey TEXT PRIMARY KEY, added_by TEXT NOT NULL, added_at INTEGER NOT NULL) WITHOUT ROWID");
     this.sql.exec("CREATE TABLE IF NOT EXISTS invites (code_hash TEXT PRIMARY KEY, inviter TEXT NOT NULL, expires_at INTEGER NOT NULL) WITHOUT ROWID");
+  }
+
+  /** Each member's Firebase token (one device per identity), for content-free wake-up pushes. */
+  private schemaV6(): void {
+    this.sql.exec("CREATE TABLE IF NOT EXISTS push_tokens (pubkey TEXT PRIMARY KEY, token TEXT NOT NULL, updated_at INTEGER NOT NULL) WITHOUT ROWID");
+  }
+
+  private schemaV7(): void {
+    const columns = this.sql.exec<{ name: string }>("PRAGMA table_info(push_tokens)").toArray();
+    if (!columns.some((column) => column.name === "last_wake_at")) {
+      this.sql.exec("ALTER TABLE push_tokens ADD COLUMN last_wake_at INTEGER NOT NULL DEFAULT 0");
+    }
   }
 }
 

@@ -10,6 +10,10 @@ def mailboxConfig = new Properties()
 def mailboxConfigFile = rootProject.file('.local/mailbox.properties')
 if (mailboxConfigFile.exists()) mailboxConfigFile.withInputStream { mailboxConfig.load(it) }
 
+// Firebase wake-up pushes (Tadej, 2026-10-18). The config file is the developer's own and gitignored;
+// without it the app builds as before and simply never receives pushes.
+if (file('google-services.json').exists()) apply plugin: 'com.google.gms.google-services'
+
 android {
     namespace 'com.relay.app'
     compileSdk 36
@@ -88,6 +92,9 @@ dependencies {
     implementation 'org.rust-nostr:nostr-sdk-kmp-android:0.44.8'
     // Mailbox socket and requests; the same version Coil already brings in.
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // Content-free wake-up pushes from the delivery server.
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-messaging'
 
     // JVM unit tests for the pure logic (payload codec, outbox policy, dedupe, QR codec, handlers).
     // org.json is included because android.jar's org.json is only stubs on the JVM.

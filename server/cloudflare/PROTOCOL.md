@@ -101,6 +101,22 @@ bytes, so a large transfer never holds up the mailbox.
 
 Files nobody collects are deleted after 8 days.
 
+### `POST /v1/push-token`
+
+`{"v":1,"token":"<Firebase registration token>"}` registers the caller's current device token; an empty
+token removes it. A member can only register their own token. Reply: `{"v":1,"push":true}` when a nonempty
+token was saved and the server has Firebase credentials, otherwise `push` is false.
+
+After storing a new message, the server attempts live delivery to the recipient's sockets. If none accepts
+it, Firebase receives a high-priority, collapsible data message containing only `{"type":"wake"}`. Google
+sees the target device and push timing, but no message content, sender or Relay identity key. The app schedules
+an inbox check with WorkManager and acknowledges only after local storage, using the usual receipt rules.
+
+Wake-ups are limited to one attempt per recipient per 20 seconds; this state survives hibernation. Refreshing
+the same token keeps the limit, while replacing it resets the limit. Only Firebase's explicit `UNREGISTERED`
+error removes a dead token. Push failures leave the stored message available for socket catch-up or polling.
+Without the `FCM_SERVICE_ACCOUNT` Worker secret, delivery continues through sockets and periodic polling.
+
 ### `GET /v1/health`
 
 Unauthenticated liveness of the edge Worker. It doesn't touch the mailbox.

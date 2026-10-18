@@ -271,6 +271,8 @@ class PeerConversationTest {
                             context.sendBroadcast(Intent("com.relay.app.NEW_MESSAGE").setPackage(context.packageName))
                         }
                         "status" -> Unit
+                        "pause_poll" -> androidx.work.WorkManager.getInstance(context)
+                            .cancelUniqueWork("relay_poll").result.get(10, TimeUnit.SECONDS)
                         "stop" -> { result(status().put("id", id).put("ok", true)); return }
                         else -> error("Unknown test action")
                     }

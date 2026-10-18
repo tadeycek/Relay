@@ -1,6 +1,15 @@
+import { generateKeyPairSync } from "node:crypto";
 import { cloudflareTest } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 import { ALLOWED, testPubkeys } from "./test/identities";
+
+// A throwaway Firebase service account: tests check the signed token against its public key, and no
+// request leaves the runtime (the mailbox's push fetch is replaced in every push test).
+const fcm = generateKeyPairSync("rsa", {
+  modulusLength: 2048,
+  privateKeyEncoding: { type: "pkcs8", format: "pem" },
+  publicKeyEncoding: { type: "spki", format: "pem" },
+});
 
 export default defineConfig({
   test: {
@@ -26,6 +35,13 @@ export default defineConfig({
           MEDIA_CHUNK_BYTES: "16384",
           MAX_MEDIA_RECIPIENTS: "4",
           SIGNALS_PER_MINUTE: "5",
+          FCM_SERVICE_ACCOUNT: JSON.stringify({
+            project_id: "relay-test",
+            client_email: "push@relay-test.iam.gserviceaccount.com",
+            private_key: fcm.privateKey,
+            token_uri: "https://oauth2.googleapis.com/token",
+          }),
+          TEST_FCM_PUBLIC_KEY: fcm.publicKey,
         },
       },
     }),

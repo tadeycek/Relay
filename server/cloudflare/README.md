@@ -19,6 +19,7 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 | `src/mailbox.ts` | The mailbox Durable Object: auth replay check, transactional store, catch-up, receipts, live signals, hibernating sockets, schema migrations |
 | `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after all confirm or 8 days |
 | `src/auth.ts` | NIP-98 request auth |
+| `src/push.ts` | Content-free Firebase wake-ups, service-account JWT signing and OAuth token caching |
 | `src/protocol.ts` | Limits, error codes, shared types |
 | `client/mailbox-client.ts` | Minimal client used by the tests and tools: signing, NIP-17 wrap and open |
 | `test/` | Vitest suites that run inside the Workers runtime (`@cloudflare/vitest-plugin`) |
@@ -28,7 +29,7 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 
 ```sh
 npm ci
-npm test            # 74 tests in the local Workers runtime, no network
+npm test            # local Workers runtime, with Firebase requests intercepted by tests
 npm run typecheck
 npm run build       # bundle dry run into dist/, deploys nothing
 ```
@@ -63,6 +64,44 @@ Bob|Alice`).
 
 Schema changes are versioned migrations in `Mailbox.migrate()`. Each step runs once, in a transaction, when
 the object next starts. Never edit a released step; add a new one.
+
+## Firebase wake-ups (optional)
+
+The Android build enables Firebase when its own `app/google-services.json` exists. Keep the downloaded
+configuration in the gitignored `.local/` directory and copy it to `app/google-services.json` before building.
+Without the file, the app continues to use sockets and periodic inbox checks. Use the Android package
+`com.relay.app` in Firebase.
+
+The server reads the Firebase service-account JSON from the Worker secret `FCM_SERVICE_ACCOUNT`. After approval
+to upload that credential, run from this directory:
+
+```sh
+npx wrangler secret put FCM_SERVICE_ACCOUNT < ../../.local/<service-account-key>.json
+```
+
+Keep the key out of Git, notes and logs. Deploy the server with its existing founders as described above;
+the v6 schema adds device tokens and v7 adds persistent wake-up throttling. Token registration uses authenticated
+`POST /v1/push-token`. Android retries failed registration with WorkManager, and refreshes it after a successful
+mailbox connection, including after a newcomer joins by pairing.
+
+For a real push test, use a Google-enabled emulator or phone. Check `MailboxPush` logs for registration
+HTTP 200, end the recipient's app process, send from the other device, and verify a notification appears
+without manually running JobScheduler. Do not use Android's Force stop for this test: the app must be opened
+again before FCM can deliver after a force stop. See Firebase's
+[delivery prerequisites](https://firebase.google.com/docs/cloud-messaging/flutter/receive-messages) and
+[Android message priority guidance](https://firebase.google.com/docs/cloud-messaging/android-message-priority).
+The app hands wake-ups to WorkManager, with expedited work on Android 12 and later. Actual delivery timing
+still depends on Android and FCM; periodic polling remains the fallback.
+
+For the emulator acceptance scenario, build and install the app and instrumentation APKs first, then run
+`python3 rebuild/dev/test-mailbox-emulators.py --founders alice --push` from the repository root. This mode
+requires successful token registration on both devices, pauses the recipient's periodic poll, ends its process,
+and checks for a new content-free FCM callback and a notification without forcing a job. The harness restarts
+the recipient afterwards to restore periodic polling. Without `--push`, it tests the polling fallback instead.
+Use `--push-only` to repeat just pairing/token-registration and the controlled closed-app FCM check.
+
+Migration v7 supports both original v6 token tables and v6 tables that already contain `last_wake_at`.
+Existing tokens, members and pending messages are preserved; the old table is never recreated.
 
 ## Free-plan budget
 

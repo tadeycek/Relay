@@ -8,7 +8,8 @@ messages travel through the mailbox too), text both ways, a photo (stored on the
 only by the recipient), and a message sent while Bob is in airplane mode, received when he comes back
 (store-and-forward and catch-up). Then a group (posts both ways, a group photo), typing indicators
 (live signals, direct and in the group), and delivery while Bob's app isn't running: Android's
-periodic background check is forced to run and must post the message notification.
+periodic background check is forced to run and must post the message notification. With --push,
+periodic polling is paused instead: a real Firebase callback and the notification must arrive unaided.
 
 The server admits its founders (ALLOWED_PUBKEYS) and whoever pairs in person with a member. The
 emulator identities are written to .local/mailbox-emulator-pubkeys.txt. --founders says who is on the
@@ -34,7 +35,11 @@ parser.add_argument('--founders', default='both', choices=['both', 'alice'], hel
 parser.add_argument('--deploy-allowlist', action='store_true', help='Redeploy the test pilot with --founders as its allowlist.')
 parser.add_argument('--repair', action='store_true', help='Forget the existing Alice/Bob pairing and pair again.')
 parser.add_argument('--shower', default='Bob', choices=['Alice', 'Bob'], help='Who shows the QR code; the other scans it.')
+parser.add_argument('--push', action='store_true', help='Verify real Firebase wake-up delivery with periodic polling paused.')
+parser.add_argument('--push-only', action='store_true', help='Run only pairing/registration and the controlled FCM delivery check.')
 args = parser.parse_args()
+if args.push_only:
+    args.push = True
 ADB = shutil.which('adb') or str(Path(os.environ.get('ANDROID_HOME', Path.home() / 'Android/Sdk')) / 'platform-tools/adb')
 PKG = 'com.relay.app'
 ROOT = Path(__file__).resolve().parents[2]
@@ -107,6 +112,11 @@ def relay_notifications(role):
     return len(re.findall(r'NotificationRecord\(.*pkg=com\.relay\.app', out))
 
 
+def push_log_count(role, message):
+    output = adb(role, 'logcat', '-d', '-v', 'brief', '-s', 'MailboxPush:I').decode(errors='replace')
+    return output.count(message)
+
+
 def run_background_check(role):
     """Forces WorkManager's periodic PollWorker (a JobScheduler job) to run now."""
     jobs = adb(role, 'shell', 'dumpsys', 'jobscheduler', 'com.relay.app').decode(errors='replace')
@@ -137,10 +147,34 @@ def deploy_allowlist(extra):
         raise RuntimeError('deploy failed:\n' + r.stdout[-2000:] + r.stderr[-2000:])
 
 
+def check_background_delivery(token):
+    open_chat('Alice', 'Bob')
+    if args.push:
+        command('Bob', 'pause_poll')
+    command('Bob', 'stop')
+    wait(lambda: not adb('Bob', 'shell', 'pidof', 'com.relay.app', check=False).strip(), "Bob's app did not stop", 30)
+    before = relay_notifications('Bob')
+    wake_before = push_log_count('Bob', 'wake-up push received') if args.push else 0
+    background = f'Delivered while Bob\'s app was closed {token}'
+    started = time.monotonic()
+    send_text('Alice', background)
+    if args.push:
+        wait(lambda: push_log_count('Bob', 'wake-up push received') > wake_before,
+             "Bob received no Firebase wake-up with his app closed", 120)
+        wait(lambda: relay_notifications('Bob') > before, "Bob's Firebase wake-up posted no notification", 90)
+        print(f"PASS: with Bob's app closed and periodic polling paused, real FCM woke it and notified ({time.monotonic() - started:.1f}s after send; no forced job)", flush=True)
+    else:
+        time.sleep(5)
+        run_background_check('Bob')
+        wait(lambda: relay_notifications('Bob') > before, "Bob's background check posted no notification", 90)
+        print("PASS: with Bob's app closed, Android's periodic background check fetched the message from the server and notified", flush=True)
+
+
 try:
     for role in peers:
         assert adb(role, 'shell', 'getprop', 'sys.boot_completed').strip() == b'1', f'{role} emulator is not booted'
         adb(role, 'shell', 'cmd', 'connectivity', 'airplane-mode', 'disable', check=False)
+    registered = {role: push_log_count(role, 'push token registration: HTTP 200') for role in peers} if args.push else {}
     for role, serial in peers.items():
         adb(role, 'shell', 'run-as', PKG, 'rm', '-f', 'files/peer-test/result.json', 'files/peer-test/command.json', check=False)
         output = (ROOT / '.local' / f'mailbox-{role.lower()}-instrument.log').open('w')
@@ -196,6 +230,16 @@ try:
         for role in peers:
             wait(lambda role=role: command(role, 'status')['transport'] == 'ONLINE', f'{role} is not online after pairing', 60)
 
+    if args.push:
+        for role in peers:
+            wait(lambda role=role: push_log_count(role, 'push token registration: HTTP 200') > registered[role],
+                 f'{role}: Firebase token was not registered', 150)
+        print('PASS: both Firebase device tokens registered with the delivery server', flush=True)
+
+    if args.push_only:
+        check_background_delivery(uuid.uuid4().hex[:8])
+        raise SystemExit(0)
+
     token = uuid.uuid4().hex[:8]
     for sender, recipient, text in [('Alice', 'Bob', f'Mailbox hello {token} 📬'), ('Bob', 'Alice', f'Mailbox reply {token} ✅')]:
         open_chat(sender, recipient)
@@ -250,17 +294,7 @@ try:
     (ROOT / '.local/mailbox-peer-result.json').write_text(json.dumps(final, indent=2, ensure_ascii=False))
     print('PASS: delivery-server conversation checked in both apps\' encrypted databases', flush=True)
 
-    # Bob's app stops entirely (the test process ends with it); Alice keeps running and sends.
-    command('Bob', 'stop')
-    wait(lambda: not adb('Bob', 'shell', 'pidof', 'com.relay.app', check=False).strip(), "Bob's app did not stop", 30)
-    before = relay_notifications('Bob')
-    background = f'Delivered while Bob\'s app was closed {token}'
-    open_chat('Alice', 'Bob')
-    send_text('Alice', background)
-    time.sleep(5)
-    run_background_check('Bob')
-    wait(lambda: relay_notifications('Bob') > before, "Bob's background check posted no notification", 90)
-    print("PASS: with Bob's app closed, Android's periodic background check fetched the message from the server and notified", flush=True)
+    check_background_delivery(token)
 finally:
     for role in peers:
         try:
@@ -278,3 +312,5 @@ finally:
         except subprocess.TimeoutExpired:
             process.terminate()
         output.close()
+    if args.push:
+        adb('Bob', 'shell', 'am', 'start', '-n', f'{PKG}/.MainActivity', check=False)

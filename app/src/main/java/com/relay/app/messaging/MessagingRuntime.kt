@@ -95,6 +95,7 @@ object MessagingRuntime {
             transport.status.collect {
                 if (it == TransportStatus.ONLINE) {
                     kick()
+                    com.relay.app.transport.mailbox.MailboxPush.refresh(appContext)
                     com.relay.app.media.ProfilePhotoSync.syncPending(appContext)
                     com.relay.app.groups.GroupMedia.retryPending(appContext)
                 }
