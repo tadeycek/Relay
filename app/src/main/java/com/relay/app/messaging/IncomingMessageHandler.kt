@@ -33,7 +33,9 @@ import com.relay.app.util.SmsMessageParser
  * Order of checks matters and is deliberate:
  *  1. Idempotency first ([SeenPayloadRepository]) — relays re-deliver, and the transport replays a
  *     multi-day window on each start; a replayed location request must never re-trigger a share and
- *     a deleted contact must not be resurrected by a replayed message.
+ *     a deleted contact must not be resurrected by a replayed message. A payload is recorded as seen
+ *     only after it was handled ([SeenGate]), so one that failed half-way is retried on the next
+ *     replay instead of being lost; the rows it stores are keyed by payload id, so a retry adds none.
  *  2. Unknown senders are admitted as `ASK`-trust contacts but rate-limited.
  *  3. Blocked contacts are dropped silently.
  */
@@ -55,7 +57,7 @@ class IncomingMessageHandler(context: Context) {
         val now = System.currentTimeMillis()
         val payload = envelope.payload
 
-        var contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
+        val contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
 
         // Typing uses the authenticated NIP-17 encrypted transport directly, without durable replay rows.
         // Group typing may come from a member who isn't a contact; TypingSignals checks the roster.
@@ -64,7 +66,15 @@ class IncomingMessageHandler(context: Context) {
             return
         }
         if (PresenceSignals.handle(appContext,contact,payload.body)) return
-        if (!seenRepo.markIfNewSync(payload.id, now)) return
+        SeenGate.run(
+            isSeen = { seenRepo.isSeenSync(payload.id) },
+            markSeen = { seenRepo.markIfNewSync(payload.id, now) },
+        ) { process(envelope, contact, now) }
+    }
+
+    private fun process(envelope: IncomingEnvelope, knownContact: Contact?, now: Long) {
+        val payload = envelope.payload
+        var contact = knownContact
 
         // Pairing messages are plain control messages. They are handled before an unknown sender would be
         // admitted as a contact: a request with a code we never showed must leave no trace at all.
@@ -195,6 +205,7 @@ class IncomingMessageHandler(context: Context) {
         pinLabel: String? = null,
         expiryAt: Long? = null,
     ) {
+        if (messageRepo.hasMsgIdSync(contact.id, payloadId)) return
         messageRepo.insertMessageSync(
             Message(
                 contactId = contact.id,
@@ -311,6 +322,18 @@ class IncomingMessageHandler(context: Context) {
 
     private companion object {
         const val TAG = "IncomingHandler"
+    }
+}
+
+/**
+ * At-least-once handling: [run] records a payload as seen only after [process] returns. If it throws
+ * (or the process dies) first, the payload stays unseen and the next replay retries it. Pure, so unit-tested.
+ */
+object SeenGate {
+    fun run(isSeen: () -> Boolean, markSeen: () -> Unit, process: () -> Unit) {
+        if (isSeen()) return
+        process()
+        markSeen()
     }
 }
 
