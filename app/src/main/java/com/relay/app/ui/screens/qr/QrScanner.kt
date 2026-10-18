@@ -203,7 +203,14 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
 
                 cameraProviderFuture.addListener({
                     if (disposed.get()) return@addListener
-                    val cameraProvider = cameraProviderFuture.get()
+                    val cameraProvider = try {
+                        cameraProviderFuture.get()
+                    } catch (e: Exception) {
+                        // No usable camera (none fitted, or another app holds it). This used to crash the
+                        // app; the preview just stays empty and "Import QR image" still works.
+                        android.util.Log.w("QrScanner", "camera unavailable: ${e.message}")
+                        return@addListener
+                    }
                     val preview = Preview.Builder().build().also {
                         it.setSurfaceProvider(previewView.surfaceProvider)
                     }

@@ -440,10 +440,29 @@ async function load(url: string, opts: { messages: number; burst: number; pauseM
 
 /** One full message path, recorded whether it passes or fails, for the availability record. */
 async function probe(url: string): Promise<boolean> {
+  // A run that hangs (network or this machine overloaded) must still leave a record, so it can't
+  // depend on the scheduler killing it: give up at 60 s, well inside the unit's 90 s limit.
+  const watchdog = setTimeout(() => {
+    record.error = `timed out at stage ${record.stage}`;
+    mkdirSync(STATE_DIR, { recursive: true });
+    appendFileSync(join(STATE_DIR, "probe.jsonl"), JSON.stringify(record) + "\n");
+    console.log(JSON.stringify(record));
+    process.exit(1);
+  }, 60_000);
+  try {
+    return await probeOnce(url);
+  } finally {
+    clearTimeout(watchdog);
+  }
+}
+
+let record: Record<string, unknown> = {};
+
+async function probeOnce(url: string): Promise<boolean> {
   const ids = loadIdentities();
   const a = new MailboxClient(url, ids.users[0]);
   const b = new MailboxClient(url, ids.users[1]);
-  const record: Record<string, unknown> = { ts: new Date().toISOString(), target: targetLabel(url), ok: false, stage: "connect" };
+  record = { ts: new Date().toISOString(), target: targetLabel(url), ok: false, stage: "connect" };
   const t0 = Date.now();
   let socket: LiveSocket | null = null;
   try {

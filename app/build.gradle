@@ -12,6 +12,10 @@ def ownerPublicKey = localOwnerConfig.getProperty('owner_pubkey', '')
 def ownerConfig = new Properties()
 // Relay recovery needs only the public owner key. Never embed local service credentials with it.
 if (!previewBuild && ownerPublicKey.isBlank()) ownerConfig.putAll(localOwnerConfig)
+// Pilot delivery server (server/cloudflare). Kept out of the repository; builds without it use relays only.
+def mailboxConfig = new Properties()
+def mailboxConfigFile = rootProject.file('.local/mailbox.properties')
+if (mailboxConfigFile.exists()) mailboxConfigFile.withInputStream { mailboxConfig.load(it) }
 
 android {
     namespace 'com.relay.app'
@@ -27,6 +31,7 @@ android {
         buildConfigField 'String', 'OWNER_PUBLIC_KEY', groovy.json.JsonOutput.toJson(ownerPublicKey)
         buildConfigField 'String', 'OWNER_SERVICE_URL', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('url', ''))
         buildConfigField 'String', 'OWNER_ENROLLMENT_TOKEN', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('enrollment_token', ''))
+        buildConfigField 'String', 'MAILBOX_URL', groovy.json.JsonOutput.toJson(mailboxConfig.getProperty('url', ''))
     }
 
     buildFeatures {
@@ -91,6 +96,8 @@ dependencies {
     // Internet transport: Nostr (NIP-17 private DMs / NIP-44 / NIP-59 gift wrap) via rust-nostr's
     // Kotlin bindings. Alpha-quality upstream; pinned and wrapped behind com.relay.app.transport.
     implementation 'org.rust-nostr:nostr-sdk-kmp-android:0.44.8'
+    // Mailbox socket and requests; the same version Coil already brings in.
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
     // JVM unit tests for the pure logic (payload codec, outbox policy, dedupe, QR codec, handlers).
     // org.json is included because android.jar's org.json is only stubs on the JVM.

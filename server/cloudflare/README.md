@@ -52,6 +52,10 @@ node tools/pilot.ts hibernate --idle 60
 node tools/pilot.ts probe          # appends to ~/.local/state/relay-mailbox/probe.jsonl
 ```
 
+The allowlist is replaced on every deploy. The Android emulator identities used by
+`rebuild/dev/test-mailbox-emulators.py` are added by running that harness with `--deploy-allowlist`
+(their keys are kept in `.local/mailbox-emulator-pubkeys.txt`); a plain deploy as above drops them.
+
 Schema changes are versioned migrations in `Mailbox.migrate()`. Each step runs once, in a transaction, when
 the object next starts. Never edit a released step; add a new one.
 

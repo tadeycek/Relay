@@ -18,7 +18,16 @@ object TorControl {
 
     private const val PROBE_TIMEOUT_MS = 1_500
 
-    fun route(context: Context): Route {
+    /**
+     * Tor mode is switched off for the delivery-server pilot (decided 2026-10-18), so every connection
+     * goes direct whatever an earlier version stored. [routeWithTor] and [RoutePolicy] stay for when
+     * it returns; the Settings section that controlled it is hidden.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun route(context: Context): Route = Route.Direct
+
+    /** The Tor-aware decision, kept for re-enabling Tor mode. */
+    fun routeWithTor(context: Context): Route {
         val prefs = RelayPreferences(context)
         if (!prefs.torEnabled) return Route.Direct
         return RoutePolicy.decide(

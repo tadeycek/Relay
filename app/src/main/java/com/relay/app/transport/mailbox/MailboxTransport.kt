@@ -1,0 +1,318 @@
+package com.relay.app.transport.mailbox
+
+import android.content.Context
+import android.util.Log
+import com.relay.app.messaging.MessagingDb
+import com.relay.app.transport.Backoff
+import com.relay.app.transport.IncomingEnvelope
+import com.relay.app.transport.PayloadCodec
+import com.relay.app.transport.RelayPayload
+import com.relay.app.transport.SendResult
+import com.relay.app.transport.Transport
+import com.relay.app.transport.TransportStatus
+import com.relay.app.transport.mailbox.MailboxProtocol.Outcome
+import com.relay.app.transport.nostr.NostrIdentity
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
+import rust.nostr.sdk.Event
+import rust.nostr.sdk.EventBuilder
+import rust.nostr.sdk.Keys
+import rust.nostr.sdk.NostrSigner
+import rust.nostr.sdk.PublicKey
+import rust.nostr.sdk.UnwrappedGift
+import rust.nostr.sdk.giftWrap
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+
+/**
+ * Relay's own encrypted mailbox (server/cloudflare, protocol v1) as a [Transport].
+ *
+ * Packets are the same NIP-17 gift wraps NostrTransport publishes, so content stays end-to-end
+ * encrypted and the recipient authenticates the sender exactly as before; only the route changes.
+ *
+ *  - Sending: `POST /v1/send` signed with NIP-98. The wrap for each (payload id, recipient) is built
+ *    once and kept in [MailboxStore] until the server confirms it, so retries are byte-identical and
+ *    the server answers "duplicate" instead of storing a second copy.
+ *  - Receiving: one WebSocket. Every packet is written to the local raw inbox before any receipt is
+ *    sent ([MailboxSession] decides when a cumulative receipt is safe), then opened and handed to the
+ *    message handler; its row is deleted once [IncomingEnvelope.onHandled] reports it was dealt with.
+ */
+class MailboxTransport(
+    context: Context,
+    baseUrl: String,
+    private val identity: () -> Keys,
+) : MailboxRoute {
+
+    constructor(context: Context, baseUrl: String) : this(context, baseUrl, { NostrIdentity.keys(context.applicationContext) })
+
+    private val appContext = context.applicationContext
+    private val base = baseUrl.trimEnd('/')
+    private val socketUrl = base.replaceFirst(Regex("^http"), "ws") + "/v1/ws"
+    private val store by lazy { MailboxStore(MessagingDb.get(appContext)) }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .writeTimeout(30, TimeUnit.SECONDS)
+        // Protocol pings keep NAT mappings open and notice dead links. Cloudflare answers them
+        // without waking the mailbox, and they aren't billed.
+        .pingInterval(25, TimeUnit.SECONDS)
+        .build()
+
+    private val lifecycleLock = Mutex()
+    private var loopJob: Job? = null
+    private var openerJob: Job? = null
+    @Volatile private var socket: WebSocket? = null
+    /** Same superseded-loop guard as NostrTransport: a stale loop must not touch shared state. */
+    @Volatile private var generation = 0
+
+    /** Seqs stored in the raw inbox and waiting to be opened, in arrival order. */
+    private val stored = Channel<Long>(Channel.UNLIMITED)
+    private val inbox = Channel<IncomingEnvelope>(Channel.UNLIMITED)
+
+    private val _status = MutableStateFlow(TransportStatus.STOPPED)
+    override val status: StateFlow<TransportStatus> = _status.asStateFlow()
+    override val incoming: Flow<IncomingEnvelope> = inbox.receiveAsFlow()
+
+    override suspend fun start() = lifecycleLock.withLock {
+        if (openerJob?.isActive != true) openerJob = scope.launch { openStored() }
+        if (loopJob?.isActive == true) return@withLock
+        val gen = ++generation
+        loopJob = scope.launch { runConnectionLoop(gen) }
+    }
+
+    override suspend fun stop() = lifecycleLock.withLock {
+        generation++
+        loopJob?.cancel()
+        loopJob = null
+        closeSocket()
+        _status.value = TransportStatus.STOPPED
+    }
+
+    override suspend fun reconnect() = lifecycleLock.withLock {
+        if (openerJob?.isActive != true) openerJob = scope.launch { openStored() }
+        generation++
+        loopJob?.cancel()
+        closeSocket()
+        _status.value = TransportStatus.CONNECTING
+        val gen = generation
+        loopJob = scope.launch { runConnectionLoop(gen) }
+    }
+
+    override suspend fun send(recipientPubkeyHex: String, payload: RelayPayload, relayHints: List<String>, ephemeral: Boolean): SendResult {
+        if (ephemeral) return SendResult.Failed("Ephemeral signals are never stored in the mailbox", retryable = false)
+        return when (val outcome = deliver(recipientPubkeyHex, payload)) {
+            Outcome.Stored -> SendResult.Sent(1)
+            Outcome.NotOnMailbox -> SendResult.Failed("Recipient is not on the mailbox", retryable = false)
+            is Outcome.Retry -> SendResult.Failed(outcome.reason, retryable = true)
+            is Outcome.Rejected -> SendResult.Failed(outcome.reason, retryable = false)
+        }
+    }
+
+    /** Hands one message to the mailbox for [recipient]. Safe to call again with the same payload. */
+    override suspend fun deliver(recipient: String, payload: RelayPayload): Outcome = withContext(Dispatchers.IO) {
+        if (!MailboxProtocol.isRecipient(recipient)) return@withContext Outcome.Rejected("Invalid recipient key")
+        if (!MailboxProtocol.isDeliveryId(payload.id)) return@withContext Outcome.NotOnMailbox
+        val envelope = try {
+            store.packet(payload.id, recipient) ?: store.savePacket(payload.id, recipient, wrap(recipient, payload))
+        } catch (e: Exception) {
+            return@withContext Outcome.Retry("Couldn't prepare the message: ${e.message}")
+        }
+        val url = "$base/v1/send"
+        val body = MailboxProtocol.sendBody(recipient, payload.id, envelope).toByteArray(Charsets.UTF_8)
+        val outcome = try {
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", MailboxAuth.header(identity(), "POST", url, body))
+                .post(body.toRequestBody(JSON))
+                .build()
+            http.newCall(request).execute().use { MailboxProtocol.sendOutcome(it.code, it.body?.string().orEmpty()) }
+        } catch (e: IOException) {
+            Outcome.Retry("Mailbox unreachable: ${e.message}")
+        } catch (e: Exception) {
+            Outcome.Retry("Mailbox request failed: ${e.message}")
+        }
+        // Only a retry needs the same bytes again.
+        if (outcome !is Outcome.Retry) runCatching { store.deletePacket(payload.id, recipient) }
+        outcome
+    }
+
+    private suspend fun wrap(recipient: String, payload: RelayPayload): String {
+        val keys = identity()
+        val receiver = PublicKey.parse(recipient)
+        val rumor = EventBuilder.privateMsgRumor(receiver, PayloadCodec.encode(payload)).build(keys.publicKey())
+        return giftWrap(NostrSigner.keys(keys), receiver, rumor, emptyList()).asJson()
+    }
+
+    // ---- receiving -----------------------------------------------------------------------------
+
+    private suspend fun runConnectionLoop(gen: Int) {
+        val failures = AtomicInteger(0)
+        while (scope.isActive && gen == generation) {
+            _status.value = TransportStatus.CONNECTING
+            val ended = CompletableDeferred<Int?>()
+            val ws = try {
+                val request = Request.Builder()
+                    .url(socketUrl)
+                    .header("Authorization", MailboxAuth.header(identity(), "GET", socketUrl))
+                    .build()
+                http.newWebSocket(request, Listener(gen, ended) { failures.set(0) })
+            } catch (e: Exception) {
+                Log.w(TAG, "couldn't open the mailbox socket: ${e.message}")
+                ended.complete(null)
+                null
+            }
+            socket = ws
+            val refusedWith = ended.await()
+            if (socket === ws) socket = null
+            if (gen != generation) return
+            _status.value = TransportStatus.OFFLINE
+            // Not on the allowlist: asking every minute only spends the mailbox's daily requests.
+            delay(if (refusedWith == 403) NOT_ALLOWED_RETRY_MS else Backoff.reconnectDelayMs(failures.incrementAndGet()))
+        }
+    }
+
+    private fun closeSocket() {
+        socket?.let { runCatching { it.close(1000, "closing") } }
+        socket = null
+    }
+
+    private inner class Listener(
+        private val gen: Int,
+        /** Completes when the socket is gone, with the HTTP status if the upgrade itself was refused. */
+        private val ended: CompletableDeferred<Int?>,
+        private val onReady: () -> Unit,
+    ) : WebSocketListener() {
+
+        private val session = MailboxSession()
+
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (gen != generation) {
+                webSocket.close(1000, "superseded")
+                return
+            }
+            when (val frame = MailboxProtocol.parseFrame(text)) {
+                is MailboxProtocol.Frame.Ready -> {
+                    _status.value = TransportStatus.ONLINE
+                    onReady()
+                    perform(webSocket, session.onReady())
+                }
+                is MailboxProtocol.Frame.Batch -> perform(webSocket, session.onBatch(frame.messages, frame.more, frame.cursor))
+                is MailboxProtocol.Frame.Message -> perform(webSocket, session.onPush(frame.message))
+                is MailboxProtocol.Frame.Error -> {
+                    // A catch-up or receipt failed on the server: start over on a fresh connection,
+                    // where a new catch-up picks up whatever is still waiting.
+                    Log.w(TAG, "mailbox error ${frame.code}; reconnecting")
+                    webSocket.close(4000, "retry")
+                }
+                else -> Unit
+            }
+        }
+
+        override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+            webSocket.close(1000, null)
+        }
+
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            ended.complete(null)
+        }
+
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            Log.w(TAG, "mailbox socket failed (${response?.code ?: "no response"}): ${t.message}")
+            ended.complete(response?.code)
+        }
+    }
+
+    /** Runs a session's actions in order, stopping (and dropping the connection) if storing fails. */
+    private fun perform(ws: WebSocket, actions: List<MailboxSession.Action>) {
+        for (action in actions) when (action) {
+            is MailboxSession.Action.Store -> {
+                val fresh = try {
+                    store.storeAll(action.messages)
+                } catch (e: Exception) {
+                    // Nothing may be acknowledged that isn't stored; the server keeps it for next time.
+                    Log.e(TAG, "couldn't store mailbox packets", e)
+                    ws.close(1011, "local store failed")
+                    return
+                }
+                fresh.forEach { stored.trySend(it) }
+            }
+            is MailboxSession.Action.Sync -> ws.send(MailboxProtocol.syncFrame(action.after))
+            is MailboxSession.Action.Ack -> ws.send(MailboxProtocol.ackFrame(action.through))
+        }
+    }
+
+    /** Opens stored packets one by one: leftovers from an earlier run first, then new arrivals. */
+    private suspend fun openStored() {
+        runCatching { store.purgePackets() }
+        runCatching { store.replayable() }.onSuccess { it.forEach { seq -> stored.send(seq) } }
+            .onFailure { Log.e(TAG, "couldn't read the mailbox inbox", it) }
+        for (seq in stored) {
+            try {
+                open(seq)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "opening mailbox packet $seq failed", e)
+            }
+        }
+    }
+
+    private suspend fun open(seq: Long) {
+        val envelope = store.envelope(seq) ?: return
+        val opened = try {
+            val event = Event.fromJson(envelope)
+            if (event.kind().asU16() != GIFT_WRAP_KIND) null
+            else {
+                val gift = UnwrappedGift.fromGiftWrap(NostrSigner.keys(identity()), event)
+                val rumor = gift.rumor()
+                val sender = gift.sender().toHex()
+                // The rumor is unsigned; its claimed author must be the key that signed the seal.
+                if (rumor.kind().asU16() != CHAT_MESSAGE_KIND || rumor.author().toHex() != sender) null
+                else PayloadCodec.decode(rumor.content())?.let { sender to it }
+            }
+        } catch (e: Exception) {
+            null
+        }
+        if (opened == null) {
+            // Not for us, corrupt, or another dialect: nothing will ever make it readable.
+            Log.d(TAG, "dropping unreadable mailbox packet $seq")
+            store.delete(seq)
+            return
+        }
+        val (sender, payload) = opened
+        inbox.send(IncomingEnvelope(sender, payload, System.currentTimeMillis(), onHandled = { runCatching { store.delete(seq) } }))
+    }
+
+    companion object {
+        private const val TAG = "MailboxTransport"
+        private val JSON = "application/json".toMediaType()
+        private val GIFT_WRAP_KIND: UShort = 1059u
+        private val CHAT_MESSAGE_KIND: UShort = 14u
+        private const val NOT_ALLOWED_RETRY_MS = 15L * 60 * 1000
+    }
+}

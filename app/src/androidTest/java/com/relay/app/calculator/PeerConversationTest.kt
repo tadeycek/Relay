@@ -80,6 +80,7 @@ class PeerConversationTest {
         fun status(): JSONObject = runBlocking {
             val records = contacts.getAllContacts()
             JSONObject().put("role", role).put("transport", Transports.get(context).status.value.name)
+                .put("mailboxEnabled", RelayPreferences(context).mailboxEnabled)
                 .put("installation", CalculatorAccessStore.get(context).credentials().first)
                 .put("pubkey", NostrIdentity.publicKeyHex(context))
                 .put("incomingPair", PairingCoordinator.incoming.value?.name ?: JSONObject.NULL)
@@ -225,6 +226,22 @@ class PeerConversationTest {
                             entry.setText(command.getString("text"))
                             device.findObject(UiSelector().description("Send")).click()
                             assertTrue(device.findObject(UiSelector().text(command.getString("text"))).waitForExists(5_000))
+                        }
+                        // Delivery-server test: the mailbox on, public relays unreachable, so every message
+                        // that still arrives provably came through the mailbox.
+                        "mailbox_only" -> {
+                            val prefs = RelayPreferences(context)
+                            check(com.relay.app.transport.mailbox.MailboxConfig.available) { "This build has no delivery server" }
+                            prefs.mailboxEnabled = true
+                            prefs.nostrRelays = listOf("wss://127.0.0.1:9")
+                            runBlocking { Transports.get(context).reconnect() }
+                        }
+                        // Puts the emulator back the way other harnesses expect it: mailbox off, default relays.
+                        "mailbox_off" -> {
+                            val prefs = RelayPreferences(context)
+                            prefs.mailboxEnabled = false
+                            prefs.nostrRelays = com.relay.app.transport.nostr.DefaultRelays.CLEARNET
+                            runBlocking { Transports.get(context).reconnect() }
                         }
                         "status" -> Unit
                         "stop" -> { result(status().put("id", id).put("ok", true)); return }

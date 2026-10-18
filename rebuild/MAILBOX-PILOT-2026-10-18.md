@@ -87,3 +87,53 @@ The app's payload-id check (#40) keeps it from showing twice.
   `~/.local/state/relay-mailbox/probe.jsonl` (`node tools/pilot.ts uptime` summarises it). It only runs while
   that machine is on, so it measures availability from one place, with gaps.
 - Behaviour from mobile networks, and from more than one client location.
+
+## C2: the Android app on the mailbox — 2026-10-18 (#45)
+
+Code: `transport/mailbox/` (client), `transport/HybridTransport.kt` (both routes), DB v22 (`mailbox_inbox`,
+`mailbox_packets`), Settings → Connection switch, `rebuild/dev/test-mailbox-emulators.py` (live harness).
+
+- **Tor mode off.** `TorControl.route()` always returns direct and the Settings section is hidden. The
+  Tor-aware logic is kept as `routeWithTor()` for a later return.
+- **Both routes receive.** Builds with a delivery server (`.local/mailbox.properties`, gitignored) always
+  receive from the mailbox and from Nostr. The switch "Send through Relay's delivery server" only picks the
+  sending route and is on by default. A pilot user whose friend sends through the mailbox therefore always
+  gets the message. An install that isn't on the allowlist is refused and only retries every 15 minutes.
+- **Sending:** mailbox first, falling back to Nostr only for recipients who aren't on it, or when this
+  install isn't. A busy or unreachable mailbox is retried by the outbox, never silently bypassed. Typing and
+  presence signals are marked ephemeral and always use Nostr: the 20-second presence heartbeat alone would
+  otherwise use up the Free write allowance.
+- **No loss on the phone.** Every packet is written to the encrypted `mailbox_inbox` before the server gets a
+  receipt. It's opened and handled from there, and deleted only when the handler reports it handled
+  (`IncomingEnvelope.onHandled`; the calculator-only mode defers instead). A packet that keeps failing is
+  dropped after 5 app starts rather than blocking the cumulative receipt.
+- **Receipt ordering** (`MailboxSession`): nothing is acknowledged until the first catch-up has completed. A
+  live push can arrive before the batch that holds older messages, and acknowledging it early would delete
+  them unread.
+- **Stable retries:** the gift wrap for each (payload id, recipient) is saved in `mailbox_packets` on the
+  first attempt and resent byte-for-byte, so the server answers `duplicate` instead of storing a second copy.
+- **Found and fixed on the way:** the QR scanner crashed the app when no camera could be opened
+  (`QrScanner.kt`, `cameraProviderFuture.get()`). It now leaves the preview empty, and image import still
+  works.
+
+### Evidence
+
+- Unit tests: 323 pass, including the receipt state machine, protocol parsing and outcome mapping, and the
+  hybrid routing rules (with fakes).
+- **Live, real app, two emulators, through the deployed pilot, with Nostr pointed at an unreachable address
+  so the mailbox is the only route:**
+  - QR pairing and mutual verification.
+  - Text both ways (1.8 s with healthy emulators, ~5 s on memory-starved ones, including UI automation).
+  - A photo (blob upload direct to Blossom; its reference via the mailbox).
+  - A message sent while Bob was in airplane mode, held by the server and delivered 4–5.5 s after his
+    network returned.
+  - Alice's emulator was upgraded from 1.8-preview with its data, so the DB upgrade to v22 ran on real data.
+- Both emulator identities are now on the pilot's allowlist (`.local/mailbox-emulator-pubkeys.txt`); the
+  harness restores both apps to "send via relays, default relays" when it ends.
+
+### Not covered yet
+
+- Old/new client mix on public relays. The hybrid logic is unit-tested; a live mixed run needs reachable
+  public relays.
+- Delivery while the app is closed: unchanged, as there is no background service or push (FCM). That's C3.
+- Real phones, mobile networks, and group chats through the mailbox (the group fan-out uses the same per-recipient path).

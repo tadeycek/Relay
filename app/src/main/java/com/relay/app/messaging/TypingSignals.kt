@@ -53,7 +53,7 @@ object TypingSignals {
             if (transport.status.value != TransportStatus.ONLINE || System.currentTimeMillis() - signal.time > TypingBody.TTL) return@launchIo
             withTimeoutOrNull(2500) {
                 transport.send(recipient, RelayPayload(PayloadCodec.newId(), signal.time,
-                    TypingBody.format(signal)), relayHints)
+                    TypingBody.format(signal)), relayHints, ephemeral = true)
             }
         }
     }

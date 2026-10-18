@@ -60,7 +60,7 @@ fun AccountPageContent(page: AccountPage, vm: SettingsViewModel) {
 fun accountPageSummary(page: AccountPage, vm: SettingsViewModel): String = when (page) {
     AccountPage.NOTIFICATIONS -> if (vm.incomingMessageNotification) "Messages on" else "Messages off"
     AccountPage.LOCATION -> if (vm.locationRequestFrom == RelayPreferences.FROM_NOBODY) "No one can ask" else "Contacts can ask"
-    AccountPage.PRIVACY -> if (vm.torEnabled) "Tor on" else "Tor off"
+    AccountPage.PRIVACY -> if (vm.shareActivity) "Active status on" else "Active status off"
     AccountPage.SECURITY -> if (vm.appLock) "App lock on" else "App lock off"
     AccountPage.CONNECTION -> connectionText(vm.connectionStatus)
     AccountPage.APPEARANCE -> when (vm.theme) {
@@ -162,33 +162,8 @@ private fun PrivacyPage(vm: SettingsViewModel) {
         supporting = "Verified friends can see approximate activity while private screens are open. Status expires after one minute without an update.")
     ToggleRow("Typing indicators", vm.typingIndicators, vm::updateTypingIndicators,
         supporting = "Let verified friends see when you type. Indicators disappear automatically.")
-    ToggleRow(
-        "Hide my IP address from relays",
-        vm.torEnabled,
-        vm::updateTorEnabled,
-        supporting = "Sends everything through Tor. Needs the Orbot app.",
-    )
-    if (vm.torEnabled) {
-        ListRow(
-            headline = "Tor status",
-            supporting = when (vm.connectionStatus) {
-                TransportStatus.ONLINE -> "Connected through Tor"
-                TransportStatus.CONNECTING -> "Connecting through Tor"
-                TransportStatus.WAITING_FOR_TOR -> "Tor isn't running. Messages are waiting. Start Orbot to continue."
-                else -> "Not connected"
-            },
-        )
-        ToggleRow(
-            "If Tor is unavailable, connect directly",
-            vm.torFallbackToDirect,
-            vm::updateTorFallbackToDirect,
-            supporting = "Off keeps you private: nothing is sent until Tor is running. On sends directly, which reveals your IP address.",
-        )
-    }
-    SectionHeader("Set up Tor")
-    TorSetupGuide(orbotInstalled = vm.orbotInstalled, onOpenOrbot = vm::openOrbot)
-    SectionHeader("What Tor does and doesn't do")
-    TorExplanation()
+    // Tor mode is switched off for the delivery-server pilot (2026-10-18); TorSetupGuide and
+    // TorExplanation stay in TorGuide.kt for when it returns.
 }
 
 @Composable
@@ -238,6 +213,16 @@ private fun ConnectionPage(vm: SettingsViewModel) {
         onClick = vm::reconnectNow,
         trailing = { Text("Reconnect", style = MaterialTheme.typography.labelLarge, color = Accent) },
     )
+    if (vm.mailboxAvailable) {
+        ToggleRow(
+            "Send through Relay's delivery server (pilot)",
+            vm.mailboxEnabled,
+            vm::updateMailboxEnabled,
+            supporting = "Messages to contacts in the pilot go through Relay's own server; everyone else is reached through public relays. " +
+                "Messages from the server keep arriving either way. They stay end-to-end encrypted and are deleted from the server once " +
+                "delivered; the server can see who messages whom, and when.",
+        )
+    }
     Text("No running-in-background notification. Messages are received while the process is active or during Android's periodic background checks (15-minute minimum; battery restrictions can delay them longer). Open the app for prompt delivery.",
         modifier = Modifier.padding(RelaySpacing.lg), color = TextSecondary)
 

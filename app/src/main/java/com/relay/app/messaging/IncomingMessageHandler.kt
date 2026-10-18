@@ -52,8 +52,12 @@ class IncomingMessageHandler(context: Context) {
     private val locationRequestCooldown = CooldownLimiter(30_000L)
     private val readReceiptCooldown = CooldownLimiter(30_000L)
 
-    fun handle(envelope: IncomingEnvelope) {
-        if (com.relay.app.calculator.CalculatorOnly.enabled(appContext)) return
+    /**
+     * Returns true once the message has been dealt with (stored, applied or deliberately ignored) and
+     * false when it was deferred, so a transport keeps its copy for later. Throws if handling failed.
+     */
+    fun handle(envelope: IncomingEnvelope): Boolean {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(appContext)) return false
         val now = System.currentTimeMillis()
         val payload = envelope.payload
 
@@ -63,13 +67,14 @@ class IncomingMessageHandler(context: Context) {
         // Group typing may come from a member who isn't a contact; TypingSignals checks the roster.
         if (payload.body.startsWith(TypingBody.PREFIX)) {
             TypingSignals.handle(appContext, envelope.senderPubkeyHex, contact, payload.body)
-            return
+            return true
         }
-        if (PresenceSignals.handle(appContext,contact,payload.body)) return
+        if (PresenceSignals.handle(appContext,contact,payload.body)) return true
         SeenGate.run(
             isSeen = { seenRepo.isSeenSync(payload.id) },
             markSeen = { seenRepo.markIfNewSync(payload.id, now) },
         ) { process(envelope, contact, now) }
+        return true
     }
 
     private fun process(envelope: IncomingEnvelope, knownContact: Contact?, now: Long) {

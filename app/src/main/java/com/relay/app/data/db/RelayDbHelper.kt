@@ -52,6 +52,7 @@ class RelayDbHelper(context: Context) :
         createConversationExtras(db)
         db.execSQL(com.relay.app.messaging.PresenceSignals.CREATE)
         db.execSQL(com.relay.app.groups.SharedGroups.CREATE_PENDING)
+        createMailbox(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -142,6 +143,7 @@ class RelayDbHelper(context: Context) :
             if (oldVersion >= 19) db.execSQL("ALTER TABLE reactions ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0")
             db.execSQL("UPDATE reactions SET received_at=?", arrayOf(System.currentTimeMillis()))
         }
+        if (oldVersion < 22) createMailbox(db)
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.
@@ -151,6 +153,11 @@ class RelayDbHelper(context: Context) :
                     "${DatabaseContract.Contacts.COL_NAME} WHERE ${DatabaseContract.Contacts.COL_ORIGINAL_NAME} IS NULL"
             )
         }
+    }
+
+    private fun createMailbox(db: SQLiteDatabase) {
+        db.execSQL(com.relay.app.transport.mailbox.MailboxStore.CREATE_INBOX)
+        db.execSQL(com.relay.app.transport.mailbox.MailboxStore.CREATE_PACKETS)
     }
 
     private fun createConversationExtras(db: SQLiteDatabase) {

@@ -72,7 +72,8 @@ object MessagingRuntime {
             val handler = IncomingMessageHandler(appContext)
             transport.incoming.collect { envelope ->
                 try {
-                    handler.handle(envelope)
+                    // Only now may a transport drop its durable copy; a failure leaves it to be offered again.
+                    if (handler.handle(envelope)) envelope.onHandled?.invoke()
                 } catch (e: Exception) {
                     // One bad message must never stop the receive loop.
                     Log.e(TAG, "handling incoming message failed", e)

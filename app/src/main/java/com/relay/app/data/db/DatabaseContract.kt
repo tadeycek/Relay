@@ -2,7 +2,7 @@ package com.relay.app.data.db
 
 object DatabaseContract {
     const val DB_NAME = "relay.db"
-    const val DB_VERSION = 21
+    const val DB_VERSION = 22
 
     object Contacts {
         const val TABLE = "contacts"

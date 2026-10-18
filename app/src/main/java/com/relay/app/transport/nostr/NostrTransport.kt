@@ -119,10 +119,12 @@ class NostrTransport(
         loopJob = scope.launch { runConnectionLoop(gen) }
     }
 
+    // Relays keep nothing durable for us either way, so ephemeral signals take the same path.
     override suspend fun send(
         recipientPubkeyHex: String,
         payload: RelayPayload,
         relayHints: List<String>,
+        ephemeral: Boolean,
     ): SendResult {
         val c = client ?: return SendResult.Failed("Transport not connected", retryable = true)
         val me = identity()
