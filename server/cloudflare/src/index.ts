@@ -3,7 +3,7 @@ import { PROTOCOL_VERSION, errorResponse, json, limitsFrom } from "./protocol";
 export { Mailbox } from "./mailbox";
 export { MediaBlob } from "./media";
 
-const MAILBOX_ROUTES = new Set(["/v1/send", "/v1/inbox", "/v1/ack", "/v1/ws"]);
+const MAILBOX_ROUTES = new Set(["/v1/send", "/v1/inbox", "/v1/ack", "/v1/ws", "/v1/invite", "/v1/pair"]);
 const MEDIA_ROUTE = /^\/v1\/media\/([0-9a-f]{64})$/;
 
 /**

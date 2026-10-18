@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { AUTH_WINDOW_S, verifyRequestAuth, type AuthOutcome } from "./auth";
+import { AUTH_WINDOW_S, verifyRequestAuth, type AuthOutcome, type Membership } from "./auth";
 import {
   DELIVERY_ID,
   PROTOCOL_VERSION,
@@ -21,7 +21,7 @@ import {
  * Rows written are the scarcest Workers Free allowance (100,000/day), and every index entry a
  * statement touches counts. v2 cut the per-delivery and per-receipt write cost; see migrate().
  */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 /** WebSocket frames stay well under the platform's per-message limit even when HTTP pages are larger. */
 const MAX_SOCKET_PAGE_BYTES = 512 * 1024;
 const MAX_ACK_BODY_BYTES = 4096;
@@ -73,7 +73,11 @@ function safeClose(ws: WebSocket, code: number, reason: string): void {
 export class Mailbox extends DurableObject<Env> {
   private readonly sql: SqlStorage;
   private readonly limits: Limits;
+  /** Founders, set at deploy time (ALLOWED_PUBKEYS). Everyone else joins by QR pairing ([members]). */
   private readonly allowed: Set<string>;
+  /** People admitted through pairing; a few dozen at most, so kept in memory and reloaded on start. */
+  private readonly members = new Set<string>();
+  private readonly membership: Membership = { has: (pubkey: string) => this.isMember(pubkey) };
   private readonly exposeMetrics: boolean;
   /** New on every construction (first start, eviction, hibernation wake). Lets tests see a real restart. */
   private readonly instance = crypto.randomUUID();
@@ -89,6 +93,7 @@ export class Mailbox extends DurableObject<Env> {
     this.allowed = allowlistFrom(vars.ALLOWED_PUBKEYS);
     this.exposeMetrics = vars.EXPOSE_METRICS === "1";
     this.migrate();
+    for (const row of this.q<{ pubkey: string }>("SELECT pubkey FROM members")) this.members.add(row.pubkey);
     // Keepalives are answered by the runtime without waking a hibernated object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
@@ -102,6 +107,8 @@ export class Mailbox extends DurableObject<Env> {
         case "GET /v1/inbox": response = await this.handleInbox(request, url); break;
         case "POST /v1/ack": response = await this.handleAck(request); break;
         case "GET /v1/ws": response = await this.handleUpgrade(request); break;
+        case "POST /v1/invite": response = await this.handleInvite(request); break;
+        case "POST /v1/pair": response = await this.handlePair(request); break;
         default: response = errorResponse(404, "not_found");
       }
     } catch (e) {
@@ -117,7 +124,7 @@ export class Mailbox extends DurableObject<Env> {
   private async handleSend(request: Request): Promise<Response> {
     const body = await request.arrayBuffer();
     if (body.byteLength > this.limits.maxRequestBytes) return errorResponse(413, "request_too_large");
-    const auth = await verifyRequestAuth(request, body, nowS(), this.allowed);
+    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
     const parsed = parseSend(body, this.limits);
     if ("code" in parsed) return errorResponse(parsed.status, parsed.code);
@@ -139,7 +146,7 @@ export class Mailbox extends DurableObject<Env> {
   }
 
   private async handleInbox(request: Request, url: URL): Promise<Response> {
-    const auth = await verifyRequestAuth(request, null, nowS(), this.allowed);
+    const auth = await verifyRequestAuth(request, null, nowS(), this.membership);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
     // The mailbox is always the caller's own: there is deliberately no way to name another recipient.
     const query = parseInboxQuery(url, this.limits);
@@ -154,7 +161,7 @@ export class Mailbox extends DurableObject<Env> {
   private async handleAck(request: Request): Promise<Response> {
     const body = await request.arrayBuffer();
     if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
-    const auth = await verifyRequestAuth(request, body, nowS(), this.allowed);
+    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
     const through = parseAck(body);
     if (through === null) return errorResponse(400, "bad_request");
@@ -169,7 +176,7 @@ export class Mailbox extends DurableObject<Env> {
 
   private async handleUpgrade(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return errorResponse(426, "upgrade_required");
-    const auth = await verifyRequestAuth(request, null, nowS(), this.allowed);
+    const auth = await verifyRequestAuth(request, null, nowS(), this.membership);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
     const recorded = this.metered(() => (this.recordAuth(auth) ? json(null) : errorResponse(401, "auth_replayed")));
     if (!recorded.ok) return recorded;
@@ -187,6 +194,87 @@ export class Mailbox extends DurableObject<Env> {
     server.serializeAttachment(session);
     safeSend(server, { type: "ready", v: PROTOCOL_VERSION, instance: this.instance, expiresAt: session.expiresAt });
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // ---- Membership (joining by QR pairing) ----------------------------------------------------
+
+  isMember(pubkey: string): boolean {
+    return this.allowed.has(pubkey) || this.members.has(pubkey);
+  }
+
+  /** For the media store, which keeps no member list of its own. */
+  async areMembers(pubkeys: string[]): Promise<boolean[]> {
+    return pubkeys.map((p) => this.isMember(p));
+  }
+
+  /**
+   * A member showing their QR registers its one-time code (only its SHA-256), so whoever scans it in
+   * person can join. Codes expire with the invitation; each member keeps only their newest few.
+   */
+  private async handleInvite(request: Request): Promise<Response> {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
+    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
+    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const value = parseJson(body);
+    const code = value?.code;
+    const expiresAt = value?.expiresAt;
+    const now = Date.now();
+    if (value?.v !== PROTOCOL_VERSION || typeof code !== "string" || !PUBKEY.test(code) || !Number.isSafeInteger(expiresAt)) {
+      return errorResponse(400, "bad_request");
+    }
+    const until = Math.min(expiresAt as number, now + this.limits.inviteMaxTtlMs);
+    return this.metered(() => {
+      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      this.q("DELETE FROM invites WHERE expires_at < ?", now);
+      this.q("INSERT INTO invites (code_hash, inviter, expires_at) VALUES (?, ?, ?) ON CONFLICT(code_hash) DO NOTHING", code, auth.pubkey, until);
+      this.q(
+        "DELETE FROM invites WHERE inviter = ? AND code_hash NOT IN (SELECT code_hash FROM invites WHERE inviter = ? ORDER BY expires_at DESC LIMIT ?)",
+        auth.pubkey, auth.pubkey, this.limits.maxInvitesPerMember,
+      );
+      return json({ v: PROTOCOL_VERSION, expiresAt: until });
+    });
+  }
+
+  /**
+   * Called by the phone that scanned [peer]'s QR, just before it sends the pairing request. A member
+   * vouches for the peer they are pairing with in person; a newcomer joins with the code from a
+   * member's QR (once, before it expires). Says whether both can now use the mailbox.
+   */
+  private async handlePair(request: Request): Promise<Response> {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
+    // Anyone may ask: a newcomer isn't a member yet. What they get depends on what they can prove.
+    const auth = await verifyRequestAuth(request, body, nowS(), null);
+    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const value = parseJson(body);
+    const peer = value?.peer;
+    const code = value?.code;
+    if (value?.v !== PROTOCOL_VERSION || typeof peer !== "string" || !PUBKEY.test(peer) || peer === auth.pubkey ||
+        typeof code !== "string" || code.length === 0 || code.length > 128) {
+      return errorResponse(400, "bad_request");
+    }
+    const codeHash = await sha256Hex(code);
+    return this.metered(() => {
+      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      const now = Date.now();
+      if (this.isMember(auth.pubkey)) {
+        if (!this.isMember(peer)) this.admit(peer, auth.pubkey, now);
+      } else {
+        const invite = this.q<{ inviter: string }>(
+          "DELETE FROM invites WHERE code_hash = ? AND inviter = ? AND expires_at >= ? RETURNING inviter",
+          codeHash, peer, now,
+        )[0];
+        if (invite && this.isMember(invite.inviter)) this.admit(auth.pubkey, invite.inviter, now);
+      }
+      return json({ v: PROTOCOL_VERSION, you: this.isMember(auth.pubkey), peer: this.isMember(peer) });
+    });
+  }
+
+  private admit(pubkey: string, by: string, now: number): void {
+    if (this.allowed.size + this.members.size >= this.limits.maxMembers) return;
+    this.q("INSERT INTO members (pubkey, added_by, added_at) VALUES (?, ?, ?) ON CONFLICT(pubkey) DO NOTHING", pubkey, by, now);
+    this.members.add(pubkey);
   }
 
   // ---- WebSocket (hibernation API) -----------------------------------------------------------
@@ -241,7 +329,7 @@ export class Mailbox extends DurableObject<Env> {
       safeClose(ws, 4001, "auth_expired");
       return null;
     }
-    if (!this.allowed.has(s.pubkey)) {
+    if (!this.isMember(s.pubkey)) {
       safeClose(ws, 4003, "not_allowed");
       return null;
     }
@@ -254,7 +342,7 @@ export class Mailbox extends DurableObject<Env> {
    */
   private relaySignal(ws: WebSocket, session: Session, to: string, envelope: string, ref: string | undefined): void {
     const refuse = (code: ErrorCode) => safeSend(ws, { type: "error", ref, error: { code, retryable: false } });
-    if (!PUBKEY.test(to) || !this.allowed.has(to)) return refuse("unknown_recipient");
+    if (!PUBKEY.test(to) || !this.isMember(to)) return refuse("unknown_recipient");
     if (envelope.length === 0 || utf8.encode(envelope).byteLength > this.limits.maxSignalBytes) return refuse("envelope_too_large");
     const minute = Math.floor(Date.now() / 60_000);
     const count = session.signalWindow === minute ? (session.signalCount ?? 0) + 1 : 1;
@@ -276,7 +364,7 @@ export class Mailbox extends DurableObject<Env> {
   private store(sender: string, d: SizedDelivery, hash: string, now: number): DeliveryResult {
     const reject = (code: ErrorCode, retryable: boolean): DeliveryResult =>
       ({ to: d.to, id: d.id, status: "rejected", error: { code, retryable } });
-    if (!this.allowed.has(d.to)) return reject("unknown_recipient", false);
+    if (!this.isMember(d.to)) return reject("unknown_recipient", false);
     if (d.size > this.limits.maxEnvelopeBytes) return reject("envelope_too_large", false);
     try {
       return this.ctx.storage.transactionSync((): DeliveryResult => {
@@ -404,7 +492,9 @@ export class Mailbox extends DurableObject<Env> {
   private migrate(): void {
     this.sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const current = Number(this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'schema'")[0]?.value ?? 0);
-    const steps: Array<() => void> = [() => this.schemaV1(), () => this.schemaV2(), () => this.schemaV3(), () => this.schemaV4()];
+    const steps: Array<() => void> = [
+      () => this.schemaV1(), () => this.schemaV2(), () => this.schemaV3(), () => this.schemaV4(), () => this.schemaV5(),
+    ];
     for (let version = current + 1; version <= SCHEMA_VERSION; version++) {
       this.ctx.storage.transactionSync(() => {
         steps[version - 1]();
@@ -475,6 +565,12 @@ export class Mailbox extends DurableObject<Env> {
     this.sql.exec("DROP INDEX IF EXISTS deliveries_delivered");
     this.sql.exec("ALTER TABLE deliveries DROP COLUMN delivered_at");
     this.sql.exec("ALTER TABLE pending_bytes DROP COLUMN acked_through");
+  }
+
+  /** Joining by QR pairing: admitted members, and one-time invites (code hashes) from members' QR codes. */
+  private schemaV5(): void {
+    this.sql.exec("CREATE TABLE IF NOT EXISTS members (pubkey TEXT PRIMARY KEY, added_by TEXT NOT NULL, added_at INTEGER NOT NULL) WITHOUT ROWID");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS invites (code_hash TEXT PRIMARY KEY, inviter TEXT NOT NULL, expires_at INTEGER NOT NULL) WITHOUT ROWID");
   }
 }
 

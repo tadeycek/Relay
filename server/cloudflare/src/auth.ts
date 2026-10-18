@@ -47,11 +47,14 @@ function decodeEvent(header: string | null): VerifiedEvent | null {
 
 const tag = (event: VerifiedEvent, name: string): string | undefined => event.tags.find((t) => t[0] === name)?.[1];
 
+/** Who may make the request: members only, or (null) any key that proves itself, e.g. to join. */
+export type Membership = { has(pubkey: string): boolean } | null;
+
 export async function verifyRequestAuth(
   request: Request,
   body: ArrayBuffer | null,
   nowS: number,
-  allowed: ReadonlySet<string>,
+  allowed: Membership,
 ): Promise<AuthOutcome> {
   const header = request.headers.get("Authorization");
   if (!header) return fail("auth_missing");
@@ -73,7 +76,7 @@ export async function verifyRequestAuth(
 
   // Checks the id is the event hash and the BIP-340 signature is by `pubkey`.
   if (!verifyEvent(event)) return fail("auth_invalid");
-  if (!allowed.has(event.pubkey)) return fail("not_allowed", 403);
+  if (allowed && !allowed.has(event.pubkey)) return fail("not_allowed", 403);
 
   return { ok: true, pubkey: event.pubkey, eventId: event.id, createdAt: event.created_at };
 }

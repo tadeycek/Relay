@@ -54,7 +54,7 @@ describe("schema migration", () => {
       totalRow: state.storage.sql.exec("SELECT COUNT(*) AS n FROM pending_bytes WHERE scope = '*'").one().n,
       tables: state.storage.sql.exec("SELECT name, sql FROM sqlite_master WHERE type IN ('table', 'index') AND name NOT LIKE 'sqlite_%'").toArray(),
     }));
-    expect(layout.schema).toBe("4");
+    expect(layout.schema).toBe("5");
     // The v1 dedup record is gone; only the two waiting messages remain.
     expect(layout.rows).toBe(2);
     expect(layout.deliveryColumns).not.toContain("delivered_at");
@@ -67,6 +67,8 @@ describe("schema migration", () => {
     expect(ddl).not.toHaveProperty("deliveries_pending");
     expect(ddl).not.toHaveProperty("auth_seen_expiry");
     expect(ddl).not.toHaveProperty("deliveries_delivered");
+    expect(ddl.members).toMatch(/WITHOUT ROWID/);
+    expect(ddl.invites).toMatch(/WITHOUT ROWID/);
 
     // Sequence numbers keep growing after the migration, so client cursors stay valid.
     const third = await sendDm(0, 1, "after migration");

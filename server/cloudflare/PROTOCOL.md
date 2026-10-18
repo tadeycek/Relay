@@ -29,7 +29,21 @@ Nostr identity key (the key the app pairs by QR):
 | `nonce` | Random hex. Not checked, but without it two identical requests in the same second share an event id and the second is refused as a replay. |
 
 The server refuses an event older or newer than 60 s, one whose id it has already accepted, a bad signature,
-any tag mismatch, and any key not on the deployment's allowlist (`ALLOWED_PUBKEYS`).
+any tag mismatch, and any key that isn't a member.
+
+## Membership: founders, then in-person QR pairing
+
+**Founders** are the keys in the deployment's `ALLOWED_PUBKEYS`. Everyone else joins when they pair in person
+with a member (decided 2026-10-18). Pairing messages travel through the server themselves, so this happens at
+scan time, before the pairing request is sent:
+
+| Request | Who | Effect |
+|---|---|---|
+| `POST /v1/invite {"v":1,"code":<sha256 hex of the QR's one-time code>,"expiresAt":<ms>}` | a member showing their QR | Registers the code as a one-time invite (at most 1 h; a member keeps their newest 20). |
+| `POST /v1/pair {"v":1,"peer":<pubkey from the QR>,"code":<the QR's one-time code>}` | the phone that scanned a QR; **any** signed key | A member caller admits `peer` (vouching). A newcomer is admitted if `peer` registered this code, it hasn't expired, and it wasn't used. Reply: `{"v":1,"you":bool,"peer":bool}` — whether each can now use the server. |
+
+The server stores only code hashes. A newcomer can't vouch for anyone or register invites. At most 100 people
+(`MAX_MEMBERS`) can be admitted this way.
 
 ## HTTP
 

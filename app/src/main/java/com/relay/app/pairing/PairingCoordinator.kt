@@ -107,6 +107,21 @@ object PairingCoordinator {
     // ---- initiator ------------------------------------------------------------------------------
 
     /**
+     * On a delivery-server build both phones must be on the server before the pairing request can
+     * travel: the scanner vouches for the peer, or joins with the peer's one-time code. Network; call
+     * off the main thread, before [startOutgoing]. True when pairing can go ahead.
+     */
+    fun joinDeliveryServer(context: Context, scanned: QrContactCode.ScannedContact): Boolean {
+        if (!com.relay.app.transport.mailbox.MailboxConfig.available) return true
+        val peer = scanned.nostrPubkeyHex ?: return false
+        val nonce = scanned.pairNonce ?: return false
+        val ok = com.relay.app.transport.mailbox.MailboxMembership.pair(context, peer, nonce) == true
+        // Just admitted: connect now rather than after a back-off from an earlier refusal.
+        if (ok) com.relay.app.messaging.MessagingRuntime.onForeground(context)
+        return ok
+    }
+
+    /**
      * The user said yes to adding a scanned contact. Sends the request and starts waiting. Returns false
      * if it could not be started (no keys yet, or the code has no pairing field).
      */

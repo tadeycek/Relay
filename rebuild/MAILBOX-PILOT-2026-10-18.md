@@ -189,3 +189,22 @@ Two app bugs found and fixed:
 - **A newly allowlisted phone waited up to 15 minutes.** An install refused before its key was added slept out a
   15-minute back-off. Now it's 5 minutes, and opening the app (`MainActivity.onResume` →
   `MessagingRuntime.onForeground`) or a reconnect retries immediately.
+
+## Joining by QR pairing — 2026-10-18
+
+Tadej chose: new people get onto the server by pairing in person with someone already on it, so no redeploy is
+needed per person. The deploy-time allowlist now only lists the founders.
+
+- **Server (schema v5):** `members` and `invites` tables. A member showing a QR registers its one-time code's
+  SHA-256 as an invite (`POST /v1/invite`). The scanner calls `POST /v1/pair {peer, code}` before sending the
+  pairing request: a member vouches for the peer, and a newcomer is admitted with the peer's unexpired, unused
+  invite. The media store asks the mailbox who is a member (Durable Object RPC). Capped at 100 people.
+  96 server tests, including 7 joining tests.
+- **App:** `PairingCoordinator.joinDeliveryServer` runs before the pairing request, with a clear error if
+  neither phone is on the server. The QR screen registers each code as an invite and retries the connection
+  every 5 s while not online, so a newcomer sees the pairing request as soon as they're let in.
+- **Live, both ways:** with only Alice as a founder, (1) Bob showed his QR and Alice's scan vouched him in;
+  (2) after wiping Bob (new key), Alice showed her QR and Bob joined with its invite. Each time the full scenario
+  followed: texts, photo, offline catch-up, group with photo, typing, and closed-app delivery.
+- Harness fixes for UI races: chats are opened through People → contact (a group row can mention the peer),
+  and the opened chat is checked to be the peer's before typing.

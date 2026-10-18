@@ -158,6 +158,16 @@ export class MailboxClient {
     return this.request("DELETE", `/v1/media/${hash}`);
   }
 
+  /** A member showing a QR: lets whoever scans this one-time [code] in person join. */
+  async invite(code: string, expiresAt: number): Promise<Reply> {
+    return this.request("POST", "/v1/invite", { v: 1, code: await sha256Hex(code), expiresAt });
+  }
+
+  /** The phone that scanned [peer]'s QR (with one-time [code]): vouch for them, or join with their invite. */
+  pair(peer: string, code: string): Promise<Reply> {
+    return this.request("POST", "/v1/pair", { v: 1, peer, code });
+  }
+
   socketUrl(): string {
     return this.base.replace(/^http/, "ws") + "/v1/ws";
   }

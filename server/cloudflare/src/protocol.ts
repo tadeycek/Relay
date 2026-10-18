@@ -45,6 +45,10 @@ export interface Limits {
   maxMediaRecipients: number;
   mediaLifetimeMs: number;
   mediaChunkBytes: number;
+  /** Pilot safety net: at most this many people, founders included, can be admitted by pairing. */
+  maxMembers: number;
+  inviteMaxTtlMs: number;
+  maxInvitesPerMember: number;
 }
 
 const KIB = 1024;
@@ -74,6 +78,10 @@ export const DEFAULT_LIMITS: Limits = {
   mediaLifetimeMs: 8 * DAY,
   // Well under the 2 MB a single SQLite value may hold in a Durable Object.
   mediaChunkBytes: 1 * MIB,
+  maxMembers: 100,
+  // The app's QR invitations live 30 minutes.
+  inviteMaxTtlMs: 60 * 60 * 1000,
+  maxInvitesPerMember: 20,
 };
 
 /** Optional numeric overrides from Worker vars (strings), e.g. small caps in tests. */
@@ -101,6 +109,9 @@ export function limitsFrom(env: Partial<Record<string, unknown>>): Limits {
     maxMediaRecipients: pick("MAX_MEDIA_RECIPIENTS", DEFAULT_LIMITS.maxMediaRecipients),
     mediaLifetimeMs: pick("MEDIA_LIFETIME_MS", DEFAULT_LIMITS.mediaLifetimeMs),
     mediaChunkBytes: pick("MEDIA_CHUNK_BYTES", DEFAULT_LIMITS.mediaChunkBytes),
+    maxMembers: pick("MAX_MEMBERS", DEFAULT_LIMITS.maxMembers),
+    inviteMaxTtlMs: pick("INVITE_MAX_TTL_MS", DEFAULT_LIMITS.inviteMaxTtlMs),
+    maxInvitesPerMember: pick("MAX_INVITES_PER_MEMBER", DEFAULT_LIMITS.maxInvitesPerMember),
   };
 }
 

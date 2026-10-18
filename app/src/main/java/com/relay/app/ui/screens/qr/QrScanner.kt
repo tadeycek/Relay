@@ -106,11 +106,14 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
         if (value.pairNonce != null) {
             // Mutual pairing: send the request and wait for their yes. Nothing is trusted until then.
             coroutineScope.launch(Dispatchers.IO) {
-                val started = PairingCoordinator.startOutgoing(context, value)
+                val joined = PairingCoordinator.joinDeliveryServer(context, value)
+                val started = joined && PairingCoordinator.startOutgoing(context, value)
                 withContext(Dispatchers.Main) {
                     if (!started) {
                         scanned = false
-                        errorMsg = "Couldn't start. Try again."
+                        errorMsg = if (!joined) "Couldn't reach Relay's server, or neither of you is on it yet. " +
+                            "One of you needs to be. Check the connection and try again."
+                            else "Couldn't start. Try again."
                     }
                 }
             }

@@ -222,10 +222,24 @@ private fun MyCodeTab(
             // An unused code rotates, so a code someone photographed earlier stops working.
             LaunchedEffect(Unit) {
                 PairingCoordinator.startShowingCode()
+                var ticks = 0
                 while (true) {
                     delay(1_000)
                     nowMs = System.currentTimeMillis()
                     PairingCoordinator.refreshShownCode()
+                    // A newcomer showing a code is let onto the delivery server the moment a member scans
+                    // it; retry the connection often while here so their pairing request isn't kept waiting.
+                    if (com.relay.app.transport.mailbox.MailboxConfig.available && ++ticks % 5 == 0 &&
+                        com.relay.app.transport.Transports.get(context).status.value != com.relay.app.transport.TransportStatus.ONLINE) {
+                        com.relay.app.messaging.MessagingRuntime.onForeground(context)
+                    }
+                }
+            }
+            // Each code shown is also an invite: someone new who scans it can join the delivery server.
+            LaunchedEffect(invitation) {
+                val active = invitation ?: return@LaunchedEffect
+                if (com.relay.app.transport.mailbox.MailboxConfig.available) withContext(Dispatchers.IO) {
+                    com.relay.app.transport.mailbox.MailboxMembership.invite(context, active.nonce, active.expiresAtMs)
                 }
             }
             LaunchedEffect(prefs.myName, invitation) {

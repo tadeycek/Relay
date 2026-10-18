@@ -10,10 +10,12 @@ only by the recipient), and a message sent while Bob is in airplane mode, receiv
 (live signals, direct and in the group), and delivery while Bob's app isn't running: Android's
 periodic background check is forced to run and must post the message notification.
 
-The pilot only admits allowlisted identities. The emulator identities are written to
-.local/mailbox-emulator-pubkeys.txt; --deploy-allowlist redeploys the test pilot with them added to
-the synthetic pilot identities (server/cloudflare/tools/pilot.ts allowlist). Never run against
-personal app data. Artifacts stay under .local/.
+The server admits its founders (ALLOWED_PUBKEYS) and whoever pairs in person with a member. The
+emulator identities are written to .local/mailbox-emulator-pubkeys.txt. --founders says who is on the
+deployed allowlist (both, or only Alice, so Bob has to join by pairing); --deploy-allowlist redeploys
+the test pilot to match. With --repair the existing pairing is forgotten first, and --shower picks who
+shows the QR (Bob showing tests a member vouching; Alice showing tests joining with her invite). Never run
+against personal app data. Artifacts stay under .local/.
 """
 from pathlib import Path
 import argparse
@@ -28,7 +30,10 @@ import uuid
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--alice', default='emulator-5554')
 parser.add_argument('--bob', default='emulator-5556')
-parser.add_argument('--deploy-allowlist', action='store_true', help='Redeploy the test pilot with these emulator identities allowed.')
+parser.add_argument('--founders', default='both', choices=['both', 'alice'], help='Who is on the allowlist (founders).')
+parser.add_argument('--deploy-allowlist', action='store_true', help='Redeploy the test pilot with --founders as its allowlist.')
+parser.add_argument('--repair', action='store_true', help='Forget the existing Alice/Bob pairing and pair again.')
+parser.add_argument('--shower', default='Bob', choices=['Alice', 'Bob'], help='Who shows the QR code; the other scans it.')
 args = parser.parse_args()
 ADB = shutil.which('adb') or str(Path(os.environ.get('ANDROID_HOME', Path.home() / 'Android/Sdk')) / 'platform-tools/adb')
 PKG = 'com.relay.app'
@@ -148,38 +153,48 @@ try:
     assert keys['Alice'] != keys['Bob'], 'Must use two independently generated identities'
     (ROOT / '.local/mailbox-emulator-pubkeys.txt').write_text('\n'.join(keys.values()) + '\n')
     print(f'PASS: two installs with independent identities (Alice {keys["Alice"][:8]}…, Bob {keys["Bob"][:8]}…)', flush=True)
+    founders = ['Alice'] if args.founders == 'alice' else list(peers)
     if args.deploy_allowlist:
-        deploy_allowlist(list(keys.values()))
-        print('PASS: test pilot redeployed with both emulator identities on the allowlist', flush=True)
+        deploy_allowlist([keys[role] for role in founders])
+        print(f'PASS: test pilot redeployed with {" and ".join(founders)} as founders', flush=True)
         # An app refused before its key was added waits out a back-off; reconnecting retries now.
         for role in peers:
             command(role, 'reconnect')
 
     for role in peers:
         assert initial[role]['route'] == 'MailboxTransport', f"{role} runs {initial[role]['route']}, not the delivery server"
+    for role in founders:
         wait(lambda role=role: command(role, 'status')['transport'] == 'ONLINE', f'{role} could not reach the delivery server', 90)
-    print('PASS: both apps online through the delivery server only (no Nostr transport exists)', flush=True)
+    print(f'PASS: {" and ".join(founders)} online through the delivery server only (no Nostr transport exists)', flush=True)
 
-    # A peer that was wiped has a new key; drop its stale contact so names stay unambiguous.
+    # A peer that was wiped has a new key; drop its stale contact so names stay unambiguous. With
+    # --repair every contact of that name goes, so the two pair again.
     for role, peer in [('Alice', 'Bob'), ('Bob', 'Alice')]:
-        initial[role] = command(role, 'forget_stale', peer=peer, keep=keys[peer])
+        initial[role] = command(role, 'forget_stale', peer=peer, keep='-' if args.repair else keys[peer])
     paired = all(any(c['name'] == peer and c['verified'] and c['hasKey'] for c in initial[role]['contacts'])
                  for role, peer in [('Alice', 'Bob'), ('Bob', 'Alice')])
     if paired:
         print('PASS: reusing the already verified Alice/Bob contacts', flush=True)
     else:
-        command('Bob', 'show_qr')
-        screenshot = adb('Bob', 'exec-out', 'screencap', '-p')
-        (ROOT / '.local/mailbox-bob-qr.png').write_bytes(screenshot)
-        adb('Alice', 'shell', "run-as com.relay.app sh -c 'cat > files/peer-test/peer-qr.png'", input=screenshot)
-        command('Alice', 'scan_image')
-        command('Alice', 'confirm_add', peer='Bob')
-        wait(lambda: command('Bob', 'status').get('incomingPair') == 'Alice', "Bob never received Alice's pairing request", 100)
-        command('Bob', 'accept_incoming', peer='Alice')
+        shower = args.shower
+        scanner = 'Alice' if shower == 'Bob' else 'Bob'
+        command(shower, 'show_qr')
+        time.sleep(3)  # the shown code is registered as an invite in the background
+        screenshot = adb(shower, 'exec-out', 'screencap', '-p')
+        (ROOT / '.local' / f'mailbox-{shower.lower()}-qr.png').write_bytes(screenshot)
+        adb(scanner, 'shell', "run-as com.relay.app sh -c 'cat > files/peer-test/peer-qr.png'", input=screenshot)
+        command(scanner, 'scan_image')
+        command(scanner, 'confirm_add', peer=shower)
+        wait(lambda: command(shower, 'status').get('incomingPair') == scanner, f"{shower} never received {scanner}'s pairing request", 100)
+        command(shower, 'accept_incoming', peer=scanner)
         for role in peers:
             wait(lambda role=role: ((v := command(role, 'status')).get('outgoingPair') is None and v.get('incomingPair') is None
                                     and any(c['verified'] and c['hasKey'] for c in v['contacts'])), f'{role} was not mutually verified', 100)
-        print('PASS: QR pairing and mutual verification, all through the delivery server', flush=True)
+        joined = [role for role in peers if role not in founders]
+        how = f' ({", ".join(joined)} joined the server by this pairing: ' + ('vouched for by the scanner)' if scanner in founders else 'with the shower\'s invite)') if joined else ''
+        print(f'PASS: QR pairing and mutual verification, all through the delivery server{how}', flush=True)
+        for role in peers:
+            wait(lambda role=role: command(role, 'status')['transport'] == 'ONLINE', f'{role} is not online after pairing', 60)
 
     token = uuid.uuid4().hex[:8]
     for sender, recipient, text in [('Alice', 'Bob', f'Mailbox hello {token} 📬'), ('Bob', 'Alice', f'Mailbox reply {token} ✅')]:

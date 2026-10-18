@@ -44,8 +44,9 @@ node tools/pilot.ts load  --url http://127.0.0.1:8799
 
 ## Deploy the test pilot (C1)
 
-Test pilot only: synthetic identities, no real chats. The `ALLOWED_PUBKEYS` value is passed at deploy time and
-never committed.
+Test pilot only: synthetic identities, no real chats. `ALLOWED_PUBKEYS` (the founders) is passed at deploy time
+and never committed. Everyone else joins by pairing in person with a member, so a deploy doesn't need the full
+list (see PROTOCOL.md, "Membership").
 
 ```sh
 npx wrangler deploy --var "ALLOWED_PUBKEYS:$(node tools/pilot.ts allowlist)" --var EXPOSE_METRICS:1
@@ -55,9 +56,10 @@ node tools/pilot.ts hibernate --idle 60
 node tools/pilot.ts probe          # appends to ~/.local/state/relay-mailbox/probe.jsonl
 ```
 
-The allowlist is replaced on every deploy. The Android emulator identities used by
-`rebuild/dev/test-mailbox-emulators.py` are added by running that harness with `--deploy-allowlist`
-(their keys are kept in `.local/mailbox-emulator-pubkeys.txt`); a plain deploy as above drops them.
+The founders list is replaced on every deploy; people admitted by pairing are kept in the mailbox's database.
+The Android emulator harness `rebuild/dev/test-mailbox-emulators.py` can redeploy with its identities as
+founders (`--deploy-allowlist`, `--founders both|alice`), and tests both ways of joining (`--repair --shower
+Bob|Alice`).
 
 Schema changes are versioned migrations in `Mailbox.migrate()`. Each step runs once, in a transaction, when
 the object next starts. Never edit a released step; add a new one.

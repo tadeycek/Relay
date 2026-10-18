@@ -43,7 +43,7 @@ describe("media store", () => {
     expect((await client(2).getMedia(put.hash)).status).toBe(404);
     // The uploader already has the file; the server doesn't hand it back.
     expect((await client(0).getMedia(put.hash)).status).toBe(404);
-    expect((await client(OUTSIDER).getMedia(put.hash)).status).toBe(403);
+    expect((await client(OUTSIDER).getMedia(put.hash)).status).toBe(404);
     const anonymous = await worker(new Request(`${BASE}/v1/media/${put.hash}`));
     expect(anonymous.status).toBe(401);
   });

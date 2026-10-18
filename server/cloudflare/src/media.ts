@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { AUTH_WINDOW_S, verifyRequestAuth } from "./auth";
-import { PROTOCOL_VERSION, PUBKEY, allowlistFrom, errorResponse, json, limitsFrom, sha256Hex, type Limits } from "./protocol";
+import { PROTOCOL_VERSION, PUBKEY, errorResponse, json, limitsFrom, sha256Hex, type Limits } from "./protocol";
 
 const SCHEMA_VERSION = 1;
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -22,14 +22,12 @@ const nowS = () => Math.floor(Date.now() / 1000);
 export class MediaBlob extends DurableObject<Env> {
   private readonly sql: SqlStorage;
   private readonly limits: Limits;
-  private readonly allowed: Set<string>;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.sql = ctx.storage.sql;
     const vars = env as unknown as Record<string, unknown>;
     this.limits = limitsFrom(vars);
-    this.allowed = allowlistFrom(vars.ALLOWED_PUBKEYS);
     this.migrate();
   }
 
@@ -63,14 +61,16 @@ export class MediaBlob extends DurableObject<Env> {
     const body = await request.arrayBuffer();
     if (body.byteLength === 0) return errorResponse(400, "bad_request");
     if (body.byteLength > this.limits.maxMediaBytes) return errorResponse(413, "request_too_large");
-    const auth = await verifyRequestAuth(request, body, nowS(), this.allowed);
+    const auth = await verifyRequestAuth(request, body, nowS(), null);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
     // The address is the content: it can't be stored under someone else's hash.
     if ((await sha256Hex(body)) !== hash) return errorResponse(400, "bad_request");
     const recipients = [...new Set((request.headers.get("x-relay-recipients") ?? "").split(",").map((r) => r.trim().toLowerCase()).filter(Boolean))];
     if (recipients.length === 0 || recipients.length > this.limits.maxMediaRecipients) return errorResponse(400, "bad_request");
     if (!recipients.every((r) => PUBKEY.test(r))) return errorResponse(400, "bad_request");
-    if (!recipients.every((r) => this.allowed.has(r))) return errorResponse(400, "unknown_recipient");
+    const [uploaderIsMember, ...recipientsAreMembers] = await this.areMembers([auth.pubkey, ...recipients]);
+    if (!uploaderIsMember) return errorResponse(403, "not_allowed");
+    if (!recipientsAreMembers.every(Boolean)) return errorResponse(400, "unknown_recipient");
 
     const now = Date.now();
     const outcome = this.ctx.storage.transactionSync((): "replayed" | "stored" | "duplicate" => {
@@ -92,7 +92,7 @@ export class MediaBlob extends DurableObject<Env> {
   }
 
   private async get(request: Request, hash: string): Promise<Response> {
-    const auth = await verifyRequestAuth(request, null, nowS(), this.allowed);
+    const auth = await verifyRequestAuth(request, null, nowS(), null);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
     if (!this.recordAuth(auth.eventId, auth.createdAt)) return errorResponse(401, "auth_replayed");
     if (!this.isRecipient(auth.pubkey)) return this.missingOrForbidden();
@@ -108,7 +108,7 @@ export class MediaBlob extends DurableObject<Env> {
   }
 
   private async confirm(request: Request, hash: string): Promise<Response> {
-    const auth = await verifyRequestAuth(request, null, nowS(), this.allowed);
+    const auth = await verifyRequestAuth(request, null, nowS(), null);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
     if (!this.recordAuth(auth.eventId, auth.createdAt)) return errorResponse(401, "auth_replayed");
     if (!this.isRecipient(auth.pubkey)) return this.missingOrForbidden();
@@ -119,6 +119,12 @@ export class MediaBlob extends DurableObject<Env> {
     return json({ v: PROTOCOL_VERSION, remaining, hash });
   }
 
+  /** Membership lives in the mailbox object (founders plus everyone admitted by pairing). */
+  private areMembers(pubkeys: string[]): Promise<boolean[]> {
+    return this.env.MAILBOX.get(this.env.MAILBOX.idFromName("pilot")).areMembers(pubkeys);
+  }
+
+  /** Recipients were members when the file was uploaded; only they can read or confirm it. */
   private isRecipient(pubkey: string): boolean {
     return this.sql.exec("SELECT 1 FROM recipients WHERE pubkey = ?", pubkey).toArray().length > 0;
   }

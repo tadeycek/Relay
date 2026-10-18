@@ -174,15 +174,13 @@ class PeerConversationTest {
                         "chat" -> {
                             unlockRoot(); tap("Messages")
                             val peer = command.getString("peer")
-                            val conversation = device.findObject(UiSelector().text(peer))
-                            if (conversation.waitForExists(3_000)) {
-                                conversation.click()
-                            } else {
-                                tap("People")
-                                assertTrue(device.findObject(UiSelector().text("Contacts")).waitForExists(5_000))
-                                tap(peer); tap("Message")
-                            }
+                            // Always through People: a group row in Messages can mention the peer too.
+                            tap("People")
+                            assertTrue(device.findObject(UiSelector().text("Contacts")).waitForExists(5_000))
+                            tap(peer); tap("Message")
                             assertTrue(device.findObject(UiSelector().description("Send")).waitForExists(10_000))
+                            // Lists can reorder under the tap (e.g. presence changing); make sure the chat is the peer's.
+                            assertTrue("Opened the chat with $peer", device.findObject(UiSelector().text(peer)).waitForExists(3_000))
                         }
                         "photo" -> {
                             val fixture = File(directory, "fixture-photo.png")
