@@ -8,7 +8,8 @@ messages travel through the mailbox too), text both ways, a photo (stored on the
 only by the recipient), and a message sent while Bob is in airplane mode, received when he comes back
 (store-and-forward and catch-up). Then a group (posts both ways, a group photo), typing indicators
 (live signals, direct and in the group), and delivery while Bob's app isn't running: Android's
-periodic background check is forced to run and must post the message notification. With --push,
+periodic background check is forced to run and the message notification is checked. This does not
+isolate periodic polling when Firebase is also configured. With --push,
 periodic polling is paused instead: a real Firebase callback and the notification must arrive unaided.
 
 The server admits its founders (ALLOWED_PUBKEYS) and whoever pairs in person with a member. The
@@ -107,9 +108,16 @@ def group_message(result, group, body, sent=False, image=False):
                                           for m in g['messages']) for g in result['groups'])
 
 
-def relay_notifications(role):
+def relay_notification_contains(role, message):
     out = adb(role, 'shell', 'dumpsys', 'notification', '--noredact').decode(errors='replace')
-    return len(re.findall(r'NotificationRecord\(.*pkg=com\.relay\.app', out))
+    active = out.partition('  Notification List:')[2]
+    active = re.split(r'\n  \S', active, maxsplit=1)[0]
+    expected = f'android.text=String ({message})'
+    for record in re.split(r'\n\s*NotificationRecord\(', active)[1:]:
+        header, _, body = record.partition('\n')
+        if re.search(r'\bpkg=com\.relay\.app(?:\s|$)', header) and expected in (line.strip() for line in body.splitlines()):
+            return True
+    return False
 
 
 def push_log_count(role, message):
@@ -153,7 +161,6 @@ def check_background_delivery(token):
         command('Bob', 'pause_poll')
     command('Bob', 'stop')
     wait(lambda: not adb('Bob', 'shell', 'pidof', 'com.relay.app', check=False).strip(), "Bob's app did not stop", 30)
-    before = relay_notifications('Bob')
     wake_before = push_log_count('Bob', 'wake-up push received') if args.push else 0
     background = f'Delivered while Bob\'s app was closed {token}'
     started = time.monotonic()
@@ -161,13 +168,13 @@ def check_background_delivery(token):
     if args.push:
         wait(lambda: push_log_count('Bob', 'wake-up push received') > wake_before,
              "Bob received no Firebase wake-up with his app closed", 120)
-        wait(lambda: relay_notifications('Bob') > before, "Bob's Firebase wake-up posted no notification", 90)
+        wait(lambda: relay_notification_contains('Bob', background), "Bob's Firebase wake-up posted no matching notification", 90)
         print(f"PASS: with Bob's app closed and periodic polling paused, real FCM woke it and notified ({time.monotonic() - started:.1f}s after send; no forced job)", flush=True)
     else:
         time.sleep(5)
         run_background_check('Bob')
-        wait(lambda: relay_notifications('Bob') > before, "Bob's background check posted no notification", 90)
-        print("PASS: with Bob's app closed, Android's periodic background check fetched the message from the server and notified", flush=True)
+        wait(lambda: relay_notification_contains('Bob', background), "Bob has no matching message notification after the background check", 90)
+        print("PASS: with Bob's app closed, the exact message notification was verified; periodic job forced (FCM not isolated)", flush=True)
 
 
 try:

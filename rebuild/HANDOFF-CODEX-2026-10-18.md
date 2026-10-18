@@ -1,8 +1,10 @@
 # Handoff to Codex — Relay delivery server (2026-10-18, evening)
 
-> Latest status: the test Worker now runs schema v7 with Firebase configured, and controlled closed-app
-> FCM delivery passed on emulators. Tadej approved committing and pushing to PR #44 and will merge it himself. Read the final
-> "Firebase live acceptance completed" section for the current state; earlier entries are historical.
+> Latest status: Firebase/v7 source is pushed to PR #44, still unmerged. The original signing
+> key is recovered, a versionCode-13 signed update APK is built, 19 selected device tests pass and an offline
+> 1.11 → 1.12 emulator update preserves the checked fixtures. Read the final "Signed update candidate" section;
+> earlier entries are historical. Publication of the signing/version/test follow-ups is now explicitly approved;
+> confirm the published revision in Git and PR #44. Tadej merges himself.
 
 Written by Claude because Tadej is low on Claude usage. Read this first, then
 `rebuild/MAILBOX-PILOT-2026-10-18.md` (full results) and `server/cloudflare/PROTOCOL.md` (wire contract).
@@ -276,3 +278,48 @@ implementation, v7 migration, regression tests, emulator harness and documentati
 The earlier pending commit/push approval entries are historical. Merge remains exclusively Tadej's action;
 real-phone and production acceptance are still pending. Commit and remote publication are recorded by Git
 and the PR, avoiding a self-referential commit hash in this document.
+
+## Signed update candidate — 2026-10-18
+
+Tadej approved investigating the remaining video-expiry assertion, configuring Relay-only original-key
+release signing, increasing versionCode and building an update APK. The existing global debug key and
+the main performance checkout remain unchanged. No production deployment or merge occurred.
+
+- Original private-key entry is under ignored `.local/original-signing-20261018-sdwh0rw9/`; local
+  `.local/signing.properties` is mode 600 and ignored. Never commit or share signing inputs/passwords.
+  Release signing does not alter debug signing. Firebase Android config and an HTTPS mailbox URL are
+  also required for `assembleRelease`/`bundleRelease`; the missing-signing guard was tested.
+- Candidate: `/home/tadej/Downloads/Relay-1.12-preview.apk`, `com.relay.app`, versionCode **13**,
+  versionName **1.12-preview**, non-debuggable, original certificate SHA-256
+  `06a3d4109ba2322fcb2251f4c4ad97fed523eac1db00dc8bedb3201201de2da9`.
+  APK SHA-256: `33b981152163ffb391bf86109eedb24bb0e9a77b225ee10d31af0f9b73e4ff4d`.
+  This uses the **test pilot**, not a new production server. Install as an update; never uninstall or
+  clear storage to bypass a mismatch. See `rebuild/DISTRIBUTION-1.12-preview.md`.
+- Current builds/lint and all **317 Android unit tests** pass. Previous server tests remain 110 plus
+  typecheck and 12/12 live checks; server code/deployment did not change in this step.
+- Latest selected device suite: **19/19**. Legacy UiSelector queries depended on a sometimes-null active
+  root; the video-expiry test now uses all-window `By` queries and retains gate, closed media, stopped
+  playback and cleared plaintext-cache assertions. Focused video repeats pass 3/3 per device after an
+  unrelated System UI startup ANR on Bob blocked its first attempt. No app/session behavior changed.
+- Latest controlled FCM proof: **3.3 seconds**, recipient process absent, periodic polling paused,
+  fresh callback and exact new message in the active notification, no forced periodic job. Normal-mode
+  forced-job testing with Firebase enabled is **not isolated proof of polling fallback**.
+- Actual published 1.11 (versionCode 12) was installed on a new, offline `RelayUpgradeApi36` AVD and
+  updated using the signed release with `adb install -r`. UID and six fixture-file hashes match before
+  first launch; original PIN enforcement, profile name, encrypted identity, database secret and a
+  synthetic private file persist after launch. No existing message-history fixture or real phone was
+  tested in this upgrade check. This dedicated AVD is retained for reuse, not deleted.
+- Private evidence: `.local/signed-update-20261018-hSGL7b/RESULTS.md` and sibling logs/scripts.
+  Build before starting emulators and stop Gradle first. API-36 clamps requested 1024 MB to 2560 MB
+  per VM; headless/two cores/SwiftShader plus a <2 GiB host-memory stop guard were used. Run the
+  dedicated update AVD only after stopping Alice and Bob. All three VMs are stopped; the ordinary
+  10-minute probe timer remains active. No OOM observed.
+
+`release/nostr-version` is already pushed at pre-Cloudflare `fab14d0e6aecbded01e91027a13fd30c6a63e251`.
+The candidate was built from base `dc10526` plus the signing/version, four instrumentation/harness fixes
+and distribution/handoff documentation in this follow-up. Tadej subsequently explicitly requested:
+"commit and push this latest changes". Publish these follow-ups to the existing PR #44, not a duplicate;
+the final published revision is recorded by Git and the PR. Keep auto-merge disabled and leave the merge
+to Tadej. No APK upload, production deployment or additional real-phone acceptance is implied by publishing.
+Next: original-key update on real phones, QR admission through an admitted member,
+peer/push/Doze/mobile-network acceptance, then separately approved production.

@@ -11,8 +11,10 @@ import android.nfc.NfcAdapter
 import android.os.Build
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -172,11 +174,22 @@ class PeerConversationTest {
                         "confirm_add" -> tap("Add ${command.getString("peer")}")
                         "accept_incoming" -> tap("Add ${command.getString("peer")}")
                         "chat" -> {
-                            unlockRoot(); tap("Messages")
+                            unlockRoot()
                             val peer = command.getString("peer")
                             // Always through People: a group row in Messages can mention the peer too.
-                            tap("People")
-                            assertTrue(device.findObject(UiSelector().text("Contacts")).waitForExists(5_000))
+                            val peopleTab = device.findObjects(By.text("People")).maxByOrNull { it.visibleBounds.centerY() }
+                            assertNotNull("People navigation tab is visible", peopleTab)
+                            peopleTab!!.click()
+                            assertTrue("People screen is open", device.findObject(
+                                UiSelector().description("Add a person by scanning their code")).waitForExists(10_000))
+                            val peopleList = UiScrollable(UiSelector().scrollable(true))
+                            if (!device.findObject(UiSelector().text("Contacts")).waitForExists(1_000)) {
+                                assertTrue("People list is visible", peopleList.waitForExists(10_000))
+                                assertTrue("Contacts section is reachable", peopleList.scrollIntoView(UiSelector().text("Contacts")))
+                            }
+                            if (!device.findObject(UiSelector().text(peer)).waitForExists(1_000)) {
+                                assertTrue("Contact $peer is reachable", peopleList.scrollIntoView(UiSelector().text(peer)))
+                            }
                             tap(peer); tap("Message")
                             assertTrue(device.findObject(UiSelector().description("Send")).waitForExists(10_000))
                             // Lists can reorder under the tap (e.g. presence changing); make sure the chat is the peer's.

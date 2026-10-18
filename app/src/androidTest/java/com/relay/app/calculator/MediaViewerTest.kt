@@ -7,6 +7,7 @@ import android.graphics.Color
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.SystemClock
+import android.util.Log
 import android.view.View
 import android.view.ViewGroup
 import android.view.inspector.WindowInspector
@@ -15,8 +16,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiSelector
+import androidx.test.uiautomator.Until
 import com.relay.app.MainActivity
 import com.relay.app.crypto.RelayFileCrypto
 import com.relay.app.data.model.Message
@@ -143,20 +146,24 @@ class MediaViewerTest {
             waitFor("Closing media releases playback") { !first.isPlaying }
             play.click()
             val second = openedPlayer()
+            val expiryStarted = SystemClock.elapsedRealtime()
             instrumentation.runOnMainSync {
                 val activity = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
                     .filterIsInstance<MainActivity>().first()
                 val session = ViewModelProvider(activity)[CalculatorSession::class.java]
                 session.expireIfNeeded(session.deadline)
+                assertEquals(0L, session.deadline)
             }
-            device.waitForIdle()
-            val expiredGate = device.findObject(UiSelector().text("C")).waitForExists(15_000)
+            val expiredGate = device.wait(Until.hasObject(By.pkg(context.packageName).text("C")), 15_000)
             if (!expiredGate) device.dumpWindowHierarchy(File(context.filesDir, "expiry-failure.xml"))
             assertTrue("Expired media session returns to Calculator", expiredGate)
+            assertTrue("Session expiry removes the private media window", device.wait(
+                Until.gone(By.pkg(context.packageName).desc("Close media")), 5_000))
             waitFor("Session expiry stops playback") { !second.isPlaying }
             waitFor("Session expiry removes the private plaintext view files") {
                 File(context.cacheDir, "private-media-view").listFiles().isNullOrEmpty()
             }
+            Log.i("RelayMediaExpiryTest", "Calculator gate, stopped playback and cleared view cache verified in ${SystemClock.elapsedRealtime() - expiryStarted} ms")
         }
     }
 }

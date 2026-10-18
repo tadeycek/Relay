@@ -10,6 +10,11 @@ def mailboxConfig = new Properties()
 def mailboxConfigFile = rootProject.file('.local/mailbox.properties')
 if (mailboxConfigFile.exists()) mailboxConfigFile.withInputStream { mailboxConfig.load(it) }
 
+def releaseSigning = new Properties()
+def releaseSigningFile = rootProject.file('.local/signing.properties')
+if (releaseSigningFile.exists()) releaseSigningFile.withInputStream { releaseSigning.load(it) }
+def releaseSigningReady = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].every { releaseSigning.getProperty(it) }
+
 // Firebase wake-up pushes (Tadej, 2026-10-18). The config file is the developer's own and gitignored;
 // without it the app builds as before and simply never receives pushes.
 if (file('google-services.json').exists()) apply plugin: 'com.google.gms.google-services'
@@ -22,8 +27,8 @@ android {
         applicationId 'com.relay.app'
         minSdk 26
         targetSdk 36
-        versionCode 12
-        versionName previewBuild ? '1.11-preview' : '1.11'
+        versionCode 13
+        versionName previewBuild ? '1.12-preview' : '1.12'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         buildConfigField 'String', 'MAILBOX_URL', groovy.json.JsonOutput.toJson(mailboxConfig.getProperty('url', ''))
     }
@@ -42,8 +47,20 @@ android {
         jvmTarget = '17'
     }
 
+    signingConfigs {
+        if (releaseSigningReady) {
+            relayRelease {
+                storeFile rootProject.file(releaseSigning.getProperty('storeFile'))
+                storePassword releaseSigning.getProperty('storePassword')
+                keyAlias releaseSigning.getProperty('keyAlias')
+                keyPassword releaseSigning.getProperty('keyPassword')
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseSigningReady) signingConfig signingConfigs.relayRelease
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
@@ -113,6 +130,12 @@ dependencies {
 // A distributed app talks only to Relay's own delivery server, so a release must have one built in.
 gradle.taskGraph.whenReady { graph ->
     if (graph.allTasks.any { it.name in ['assembleRelease', 'bundleRelease'] }) {
+        if (!releaseSigningReady || !rootProject.file(releaseSigning.getProperty('storeFile')).isFile()) {
+            throw new GradleException('Configure the original signing keystore in .local/signing.properties before a release build.')
+        }
+        if (!file('google-services.json').isFile()) {
+            throw new GradleException('Add the Firebase Android configuration at app/google-services.json before a release build.')
+        }
         if (!mailboxConfig.getProperty('url', '').startsWith('https://')) {
             throw new GradleException('Set url=https://... in .local/mailbox.properties (the delivery server) before a release build.')
         }
