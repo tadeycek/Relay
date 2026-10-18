@@ -18,7 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -29,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -94,6 +94,17 @@ class MailboxTransport(
     /** Same superseded-loop guard as NostrTransport: a stale loop must not touch shared state. */
     @Volatile private var generation = 0
 
+    /** Live signals in flight, by ref, so a refusal can be traced to its recipient. Bounded: successes get no reply. */
+    private val signalRefs = object : LinkedHashMap<String, String>(64, 0.75f, false) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 128
+    }
+    private val signalCounter = java.util.concurrent.atomic.AtomicLong()
+    /** Recipients the server says aren't on it: no live signals for them until the time stored. */
+    private val noSignalsUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    /** Cuts a back-off sleep short: [start] on a running transport means "try now". */
+    private val wake = Channel<Unit>(Channel.CONFLATED)
+
     /** Seqs stored in the raw inbox and waiting to be opened, in arrival order. */
     private val stored = Channel<Long>(Channel.UNLIMITED)
     private val inbox = Channel<IncomingEnvelope>(Channel.UNLIMITED)
@@ -104,7 +115,10 @@ class MailboxTransport(
 
     override suspend fun start() = lifecycleLock.withLock {
         if (openerJob?.isActive != true) openerJob = scope.launch { openStored() }
-        if (loopJob?.isActive == true) return@withLock
+        if (loopJob?.isActive == true) {
+            wake.trySend(Unit)
+            return@withLock
+        }
         val gen = ++generation
         loopJob = scope.launch { runConnectionLoop(gen) }
     }
@@ -141,12 +155,16 @@ class MailboxTransport(
     private suspend fun signal(recipient: String, payload: RelayPayload): SendResult {
         val ws = live ?: return SendResult.Failed("Not connected", retryable = false)
         if (!MailboxProtocol.isRecipient(recipient)) return SendResult.Failed("Invalid recipient key", retryable = false)
+        // Presence goes to every contact every 20 s; don't keep offering it to people not on the server.
+        if ((noSignalsUntil[recipient] ?: 0) > System.currentTimeMillis()) return SendResult.Failed("Not on the delivery server", retryable = false)
         val envelope = try {
             wrap(recipient, payload)
         } catch (e: Exception) {
             return SendResult.Failed("Couldn't prepare the signal: ${e.message}", retryable = false)
         }
-        return if (ws.send(MailboxProtocol.signalFrame(recipient, envelope))) SendResult.Sent(1)
+        val ref = "s" + signalCounter.incrementAndGet()
+        synchronized(signalRefs) { signalRefs[ref] = recipient }
+        return if (ws.send(MailboxProtocol.signalFrame(recipient, envelope, ref))) SendResult.Sent(1)
             else SendResult.Failed("Not connected", retryable = false)
     }
 
@@ -208,8 +226,10 @@ class MailboxTransport(
             if (socket === ws) socket = null
             if (gen != generation) return
             _status.value = TransportStatus.OFFLINE
-            // Not on the allowlist: asking every minute only spends the mailbox's daily requests.
-            delay(if (refusedWith == 403) NOT_ALLOWED_RETRY_MS else Backoff.reconnectDelayMs(failures.incrementAndGet()))
+            // Not on the allowlist: asking every minute only spends the mailbox's daily requests. Opening
+            // the app (or a network change) still retries straight away, e.g. right after being added.
+            val wait = if (refusedWith == 403) NOT_ALLOWED_RETRY_MS else Backoff.reconnectDelayMs(failures.incrementAndGet())
+            withTimeoutOrNull(wait) { wake.receive() }
         }
     }
 
@@ -246,10 +266,16 @@ class MailboxTransport(
                     unwrap(frame.envelope)?.let { (sender, payload) -> inbox.send(IncomingEnvelope(sender, payload, System.currentTimeMillis())) }
                 }
                 is MailboxProtocol.Frame.Error -> {
-                    // A catch-up or receipt failed on the server: start over on a fresh connection,
-                    // where a new catch-up picks up whatever is still waiting.
-                    Log.w(TAG, "mailbox error ${frame.code}; reconnecting")
-                    webSocket.close(4000, "retry")
+                    val signalRecipient = frame.ref?.let { ref -> synchronized(signalRefs) { signalRefs.remove(ref) } }
+                    if (signalRecipient != null) {
+                        // A refused typing/presence signal is harmless; it must never cost the connection.
+                        if (frame.code == "unknown_recipient") noSignalsUntil[signalRecipient] = System.currentTimeMillis() + NO_SIGNALS_MS
+                    } else {
+                        // A catch-up or receipt failed on the server: start over on a fresh connection,
+                        // where a new catch-up picks up whatever is still waiting.
+                        Log.w(TAG, "mailbox error ${frame.code} for ${frame.ref}; reconnecting")
+                        webSocket.close(4000, "retry")
+                    }
                 }
                 else -> Unit
             }
@@ -340,6 +366,7 @@ class MailboxTransport(
         private val JSON = "application/json".toMediaType()
         private val GIFT_WRAP_KIND: UShort = 1059u
         private val CHAT_MESSAGE_KIND: UShort = 14u
-        private const val NOT_ALLOWED_RETRY_MS = 15L * 60 * 1000
+        private const val NOT_ALLOWED_RETRY_MS = 5L * 60 * 1000
+        private const val NO_SIGNALS_MS = 60L * 60 * 1000
     }
 }

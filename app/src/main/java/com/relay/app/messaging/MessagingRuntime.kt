@@ -51,6 +51,15 @@ object MessagingRuntime {
         }
     }
 
+    /**
+     * The app is in front of the user: a transport waiting out a back-off (e.g. after being refused
+     * before its key was allowlisted) tries again now instead of minutes later.
+     */
+    fun onForeground(context: Context) {
+        if (!started) return ensureStarted(context)
+        scope.launch { Transports.get(context.applicationContext).start() }
+    }
+
     fun ensureStarted(context: Context) {
         if (com.relay.app.calculator.CalculatorOnly.enabled(context)) return
         if (started) return

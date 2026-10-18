@@ -166,3 +166,26 @@ codes in a row wipe Relay; photos move from public Blossom servers to Relay's ow
   held while Bob was in airplane mode and delivered 4.0 s after reconnecting.
 - The wipe on the real UI: 10 wrong codes on Bob's calculator → the app ended, with 10 preference files, 1
   database and 3 files before and none after.
+
+## Groups, typing and closed-app delivery — 2026-10-18 (no phones needed)
+
+The live scenario (`rebuild/dev/test-mailbox-emulators.py`) now also covers, all through the delivery server
+with no relay:
+
+- **Groups:** a group created by Alice reaches Bob; posts both ways; a group photo stored for the members only,
+  downloaded and decrypted by Bob.
+- **Typing indicators,** direct and in the group, passed live and never stored.
+- **Closed-app delivery:** Bob's app process stopped, Alice sends, and Android's periodic background check
+  (WorkManager `PollWorker`, forced to run through JobScheduler) fetches the message from the server and posts
+  the notification. On a real phone this check runs about every 15 minutes, and Android can delay it longer;
+  prompt notifications with the app closed would need push.
+
+Two app bugs found and fixed:
+
+- **Refused live signals dropped the connection.** Presence goes to every contact every 20 s. For contacts not
+  on the server, the "unknown recipient" reply was treated like a failed catch-up, so the socket was rebuilt
+  each time. Requests now carry a `ref`: a refused signal only stops signals to that recipient for an hour, and
+  only failed catch-ups or receipts reconnect. 0 reconnect warnings after the fix.
+- **A newly allowlisted phone waited up to 15 minutes.** An install refused before its key was added slept out a
+  15-minute back-off. Now it's 5 minutes, and opening the app (`MainActivity.onResume` →
+  `MessagingRuntime.onForeground`) or a reconnect retries immediately.

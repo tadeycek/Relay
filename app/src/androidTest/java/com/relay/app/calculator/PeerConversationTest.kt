@@ -77,16 +77,35 @@ class PeerConversationTest {
             assertTrue(device.findObject(UiSelector().text("Account")).waitForExists(5_000))
         }
         val contacts = ContactRepository(MessagingDb.get(context))
+        fun groupId(name: String): Long = runBlocking {
+            com.relay.app.data.repository.GroupRepository(MessagingDb.get(context)).getAllGroups().first { it.name == name }.id
+        }
         fun status(): JSONObject = runBlocking {
             val records = contacts.getAllContacts()
             JSONObject().put("role", role).put("transport", Transports.get(context).status.value.name)
                 .put("route", Transports.get(context)::class.simpleName)
+                .put("typing", JSONArray(com.relay.app.messaging.TypingSignals.entries.value.values.map { it.name }))
+                .put("groups", JSONArray().apply {
+                    val own = NostrIdentity.publicKeyHex(context)
+                    val db = MessagingDb.get(context)
+                    for (group in com.relay.app.data.repository.GroupRepository(db).getAllGroups()) {
+                        put(JSONObject().put("name", group.name).put("id", group.id).put("messages", JSONArray().apply {
+                            for (m in com.relay.app.data.repository.GroupMessageRepository(db).getMessages(group.id)) {
+                                put(JSONObject().put("body", m.body).put("sent", m.senderKey == null || m.senderKey == own)
+                                    .put("type", m.type.name)
+                                    .put("mediaHash", m.mediaUri?.let { path -> runCatching {
+                                        MediaCrypto.sha256Hex(RelayFileCrypto.readDecrypted(context, File(path)))
+                                    }.getOrNull() } ?: JSONObject.NULL))
+                            }
+                        }))
+                    }
+                })
                 .put("pubkey", NostrIdentity.publicKeyHex(context))
                 .put("incomingPair", PairingCoordinator.incoming.value?.name ?: JSONObject.NULL)
                 .put("selfPhotoHash", com.relay.app.media.ContactPhotos.selfUpdate(context).jpeg?.let { MediaCrypto.sha256Hex(it) } ?: JSONObject.NULL)
                 .put("outgoingPair", PairingCoordinator.outgoing.value?.name ?: JSONObject.NULL)
                 .put("contacts", JSONArray().apply {
-                    for (contact in records) put(JSONObject().put("name", contact.name).put("id", contact.id)
+                    for (contact in records) put(JSONObject().put("name", contact.name).put("id", contact.id).put("pubkey", contact.nostrPubkey ?: JSONObject.NULL)
                         .put("verified", contact.qrVerified).put("hasKey", contact.publicKey != null)
                         .put("photoHash", runCatching {
                             MediaCrypto.sha256Hex(RelayFileCrypto.readDecrypted(context,
@@ -224,6 +243,34 @@ class PeerConversationTest {
                             entry.setText(command.getString("text"))
                             device.findObject(UiSelector().description("Send")).click()
                             assertTrue(device.findObject(UiSelector().text(command.getString("text"))).waitForExists(5_000))
+                        }
+                        // Group and typing traffic, driven through the app's own functions rather than the UI,
+                        // so the delivery path is what's under test.
+                        "create_group" -> {
+                            val peer = runBlocking { contacts.getAllContacts() }.first { it.name == command.getString("peer") }
+                            com.relay.app.groups.SharedGroups.create(context, command.getString("name"), listOf(peer.id))
+                        }
+                        "group_send" -> com.relay.app.groups.SharedGroups.send(context, groupId(command.getString("group")), command.getString("text"))
+                        "group_photo" -> {
+                            val copy = File(context.cacheDir, "group-fixture.png")
+                            File(directory, "fixture-photo.png").copyTo(copy, overwrite = true)
+                            com.relay.app.media.PendingAttachments.stage(context, groupId(command.getString("group")), true, copy, "image/png", command.getString("text"))
+                            com.relay.app.messaging.MessagingRuntime.kick()
+                        }
+                        "typing" -> {
+                            val group = command.optString("group")
+                            if (group.isNotEmpty()) com.relay.app.messaging.TypingSignals.send(context, groupId = groupId(group), typing = true)
+                            else com.relay.app.messaging.TypingSignals.send(context,
+                                contactId = runBlocking { contacts.getAllContacts() }.first { it.name == command.getString("peer") }.id, typing = true)
+                        }
+                        "reconnect" -> runBlocking { Transports.get(context).reconnect() }
+                        // A peer that wiped its app comes back with a new key; its old contact must go.
+                        "forget_stale" -> runBlocking {
+                            for (c in contacts.getAllContacts()) {
+                                if (c.name == command.getString("peer") && c.nostrPubkey != command.getString("keep")) contacts.deleteContact(c.id)
+                            }
+                            // Lists reload on this broadcast; without it the deleted chat stays on screen.
+                            context.sendBroadcast(Intent("com.relay.app.NEW_MESSAGE").setPackage(context.packageName))
                         }
                         "status" -> Unit
                         "stop" -> { result(status().put("id", id).put("ok", true)); return }

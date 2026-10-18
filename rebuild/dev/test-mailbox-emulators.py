@@ -6,7 +6,9 @@ like test-two-emulators.py. Such a build talks only to the delivery server: the 
 the running transport is the mailbox (no Nostr relay is ever contacted). Then: QR pairing (its
 messages travel through the mailbox too), text both ways, a photo (stored on the server, readable
 only by the recipient), and a message sent while Bob is in airplane mode, received when he comes back
-(store-and-forward and catch-up).
+(store-and-forward and catch-up). Then a group (posts both ways, a group photo), typing indicators
+(live signals, direct and in the group), and delivery while Bob's app isn't running: Android's
+periodic background check is forced to run and must post the message notification.
 
 The pilot only admits allowlisted identities. The emulator identities are written to
 .local/mailbox-emulator-pubkeys.txt; --deploy-allowlist redeploys the test pilot with them added to
@@ -17,6 +19,7 @@ from pathlib import Path
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -89,6 +92,26 @@ def has_message(result, body, sent):
     return any(m['body'] == body and m['sent'] == sent for c in result['contacts'] for m in c['messages'])
 
 
+def group_message(result, group, body, sent=False, image=False):
+    return any(g['name'] == group and any(m['body'] == body and m['sent'] == sent and (not image or (m['type'] == 'IMAGE' and m['mediaHash']))
+                                          for m in g['messages']) for g in result['groups'])
+
+
+def relay_notifications(role):
+    out = adb(role, 'shell', 'dumpsys', 'notification', '--noredact').decode(errors='replace')
+    return len(re.findall(r'NotificationRecord\(.*pkg=com\.relay\.app', out))
+
+
+def run_background_check(role):
+    """Forces WorkManager's periodic PollWorker (a JobScheduler job) to run now."""
+    jobs = adb(role, 'shell', 'dumpsys', 'jobscheduler', 'com.relay.app').decode(errors='replace')
+    ids = set(re.findall(r'JOB #u\d+a\d+/(\d+): \S+ com\.relay\.app/androidx\.work\.impl\.background\.systemjob\.SystemJobService', jobs))
+    assert ids, f'{role}: no scheduled background job found'
+    for job in ids:
+        adb(role, 'shell', 'cmd', 'jobscheduler', 'run', '-f', 'com.relay.app', job, check=False)
+    return ids
+
+
 def send_text(role, text):
     """Sends through the UI. A starved emulator can draw the new bubble after the harness's 5 s check;
     delivery is what this test is about, so the sender's own database decides whether it was sent."""
@@ -128,12 +151,18 @@ try:
     if args.deploy_allowlist:
         deploy_allowlist(list(keys.values()))
         print('PASS: test pilot redeployed with both emulator identities on the allowlist', flush=True)
+        # An app refused before its key was added waits out a back-off; reconnecting retries now.
+        for role in peers:
+            command(role, 'reconnect')
 
     for role in peers:
         assert initial[role]['route'] == 'MailboxTransport', f"{role} runs {initial[role]['route']}, not the delivery server"
         wait(lambda role=role: command(role, 'status')['transport'] == 'ONLINE', f'{role} could not reach the delivery server', 90)
     print('PASS: both apps online through the delivery server only (no Nostr transport exists)', flush=True)
 
+    # A peer that was wiped has a new key; drop its stale contact so names stay unambiguous.
+    for role, peer in [('Alice', 'Bob'), ('Bob', 'Alice')]:
+        initial[role] = command(role, 'forget_stale', peer=peer, keep=keys[peer])
     paired = all(any(c['name'] == peer and c['verified'] and c['hasKey'] for c in initial[role]['contacts'])
                  for role, peer in [('Alice', 'Bob'), ('Bob', 'Alice')])
     if paired:
@@ -181,11 +210,42 @@ try:
     wait(lambda: has_message(command('Bob', 'status'), offline, False), 'Bob did not catch up after reconnecting', 120)
     print(f'PASS: message held by the server while Bob was offline, delivered on reconnect ({time.monotonic() - started:.1f}s after the network returned)', flush=True)
 
+    group = f'Pilot {token}'
+    command('Alice', 'create_group', name=group, peer='Bob')
+    wait(lambda: any(g['name'] == group for g in command('Bob', 'status')['groups']), 'Bob never got the new group', 100)
+    print('PASS: group created; its roster reached Bob through the delivery server', flush=True)
+    for sender, recipient, text in [('Alice', 'Bob', f'Group hello {token}'), ('Bob', 'Alice', f'Group reply {token}')]:
+        command(sender, 'group_send', group=group, text=text)
+        wait(lambda r=recipient, t=text: group_message(command(r, 'status'), group, t), f'{recipient} did not get the group post {text!r}', 60)
+        print(f'PASS: {sender} → group → {recipient} post', flush=True)
+    caption = f'Group photo {token}'
+    command('Alice', 'group_photo', group=group, text=caption)
+    wait(lambda: group_message(command('Bob', 'status'), group, caption, image=True), 'Bob did not get the group photo', 150)
+    print('PASS: group photo stored on the delivery server for the members only, downloaded and decrypted by Bob', flush=True)
+
+    command('Alice', 'typing', peer='Bob')
+    wait(lambda: 'Alice' in command('Bob', 'status')['typing'], 'Bob never saw Alice typing (direct)', 20)
+    command('Alice', 'typing', group=group)
+    wait(lambda: 'Alice' in command('Bob', 'status')['typing'], 'Bob never saw Alice typing (group)', 20)
+    print('PASS: typing indicators passed live through the server, direct and in the group (never stored)', flush=True)
+
     final = {role: command(role, 'status') for role in peers}
     for role in peers:
         (ROOT / '.local' / f'mailbox-{role.lower()}-conversation.png').write_bytes(adb(role, 'exec-out', 'screencap', '-p'))
     (ROOT / '.local/mailbox-peer-result.json').write_text(json.dumps(final, indent=2, ensure_ascii=False))
     print('PASS: delivery-server conversation checked in both apps\' encrypted databases', flush=True)
+
+    # Bob's app stops entirely (the test process ends with it); Alice keeps running and sends.
+    command('Bob', 'stop')
+    wait(lambda: not adb('Bob', 'shell', 'pidof', 'com.relay.app', check=False).strip(), "Bob's app did not stop", 30)
+    before = relay_notifications('Bob')
+    background = f'Delivered while Bob\'s app was closed {token}'
+    open_chat('Alice', 'Bob')
+    send_text('Alice', background)
+    time.sleep(5)
+    run_background_check('Bob')
+    wait(lambda: relay_notifications('Bob') > before, "Bob's background check posted no notification", 90)
+    print("PASS: with Bob's app closed, Android's periodic background check fetched the message from the server and notified", flush=True)
 finally:
     for role in peers:
         try:

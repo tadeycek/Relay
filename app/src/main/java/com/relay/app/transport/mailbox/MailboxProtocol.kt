@@ -22,7 +22,8 @@ object MailboxProtocol {
         data class Batch(val messages: List<MailboxMessage>, val more: Boolean, val cursor: Long) : Frame
         data class Message(val message: MailboxMessage) : Frame
         data class Acked(val through: Long) : Frame
-        data class Error(val code: String, val retryable: Boolean) : Frame
+        /** [ref] echoes the request that failed: [SYNC_REF], [ACK_REF] or a signal's own ref. */
+        data class Error(val code: String, val retryable: Boolean, val ref: String? = null) : Frame
         /** A typing or presence signal passed straight through; nothing about it was stored. */
         data class Signal(val envelope: String) : Frame
         data object Other : Frame
@@ -35,7 +36,9 @@ object MailboxProtocol {
             "batch" -> Frame.Batch(messages(o.getJSONArray("messages")), o.getBoolean("more"), o.getLong("cursor"))
             "message" -> message(o)?.let { Frame.Message(it) } ?: Frame.Other
             "acked" -> Frame.Acked(o.getLong("through"))
-            "error" -> o.getJSONObject("error").let { Frame.Error(it.optString("code"), it.optBoolean("retryable")) }
+            "error" -> o.getJSONObject("error").let {
+                Frame.Error(it.optString("code"), it.optBoolean("retryable"), o.optString("ref").takeIf { r -> r.isNotEmpty() })
+            }
             "signal" -> o.optString("envelope").takeIf { it.isNotEmpty() }?.let { Frame.Signal(it) } ?: Frame.Other
             else -> Frame.Other
         }
@@ -52,12 +55,16 @@ object MailboxProtocol {
         return if (seq > 0 && envelope.isNotEmpty()) MailboxMessage(seq, envelope) else null
     }
 
-    fun syncFrame(after: Long): String = JSONObject().put("type", "sync").put("after", after).toString()
+    const val SYNC_REF = "sync"
+    const val ACK_REF = "ack"
 
-    fun ackFrame(through: Long): String = JSONObject().put("type", "ack").put("through", through).toString()
+    fun syncFrame(after: Long): String = JSONObject().put("type", "sync").put("after", after).put("ref", SYNC_REF).toString()
 
-    fun signalFrame(recipient: String, envelope: String): String =
-        JSONObject().put("type", "signal").put("to", recipient).put("envelope", envelope).toString()
+    fun ackFrame(through: Long): String = JSONObject().put("type", "ack").put("through", through).put("ref", ACK_REF).toString()
+
+    /** [ref] lets an error reply be traced back to this signal (and its recipient). */
+    fun signalFrame(recipient: String, envelope: String, ref: String): String =
+        JSONObject().put("type", "signal").put("to", recipient).put("envelope", envelope).put("ref", ref).toString()
 
     fun sendBody(recipient: String, id: String, envelope: String): String = JSONObject()
         .put("v", VERSION)

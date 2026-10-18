@@ -20,6 +20,9 @@ class MailboxProtocolTest {
         assertEquals(Frame.Message(MailboxMessage(7, "w7")), MailboxProtocol.parseFrame("""{"type":"message","seq":7,"from":"a","id":"i","envelope":"w7"}"""))
         assertEquals(Frame.Acked(7), MailboxProtocol.parseFrame("""{"type":"acked","acked":2,"through":7}"""))
         assertEquals(Frame.Error("storage_error", true), MailboxProtocol.parseFrame("""{"type":"error","error":{"code":"storage_error","retryable":true}}"""))
+        // The ref says which request failed, so a refused signal isn't mistaken for a failed catch-up.
+        assertEquals(Frame.Error("unknown_recipient", false, "s7"),
+            MailboxProtocol.parseFrame("""{"type":"error","ref":"s7","error":{"code":"unknown_recipient","retryable":false}}"""))
     }
 
     @Test
@@ -34,8 +37,12 @@ class MailboxProtocolTest {
     @Test
     fun buildsRequests() {
         // Compared as parsed JSON: key order isn't part of the protocol.
-        JSONObject(MailboxProtocol.syncFrame(12)).let { assertEquals("sync", it.getString("type")); assertEquals(12L, it.getLong("after")) }
-        JSONObject(MailboxProtocol.ackFrame(12)).let { assertEquals("ack", it.getString("type")); assertEquals(12L, it.getLong("through")) }
+        JSONObject(MailboxProtocol.syncFrame(12)).let {
+            assertEquals("sync", it.getString("type")); assertEquals(12L, it.getLong("after")); assertEquals(MailboxProtocol.SYNC_REF, it.getString("ref"))
+        }
+        JSONObject(MailboxProtocol.ackFrame(12)).let {
+            assertEquals("ack", it.getString("type")); assertEquals(12L, it.getLong("through")); assertEquals(MailboxProtocol.ACK_REF, it.getString("ref"))
+        }
         val body = JSONObject(MailboxProtocol.sendBody("ab".repeat(32), "id-1", "wrap"))
         assertEquals(1, body.getInt("v"))
         val d = body.getJSONArray("deliveries").getJSONObject(0)
@@ -85,10 +92,11 @@ class MailboxProtocolTest {
     fun parsesAndBuildsLiveSignals() {
         assertEquals(Frame.Signal("wrap"), MailboxProtocol.parseFrame("""{"type":"signal","from":"a","envelope":"wrap"}"""))
         assertEquals(Frame.Other, MailboxProtocol.parseFrame("""{"type":"signal","from":"a"}"""))
-        JSONObject(MailboxProtocol.signalFrame("ab".repeat(32), "wrap")).let {
+        JSONObject(MailboxProtocol.signalFrame("ab".repeat(32), "wrap", "s1")).let {
             assertEquals("signal", it.getString("type"))
             assertEquals("ab".repeat(32), it.getString("to"))
             assertEquals("wrap", it.getString("envelope"))
+            assertEquals("s1", it.getString("ref"))
         }
     }
 }
