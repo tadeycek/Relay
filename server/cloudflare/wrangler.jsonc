@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Test pilot only (C1): synthetic identities, no production chat. Production gets its own name.
+  "name": "relay-mailbox-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+  "workers_dev": true,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [
+      { "name": "MAILBOX", "class_name": "Mailbox" },
+      { "name": "MEDIA", "class_name": "MediaBlob" }
+    ]
+  },
+  // SQLite-backed Durable Objects are the storage backend available on Workers Free.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Mailbox"] },
+    { "tag": "v2", "new_sqlite_classes": ["MediaBlob"] }
+  ],
+  "vars": {
+    // Set per deployment with `--var ALLOWED_PUBKEYS:...`; empty admits nobody.
+    "ALLOWED_PUBKEYS": "",
+    // "1" adds an x-relay-sql-rows header (row counts only) for measuring Free-plan usage.
+    "EXPOSE_METRICS": "0"
+  },
+  "observability": { "enabled": true }
+}

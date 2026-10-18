@@ -89,6 +89,15 @@
             android:name=".sms.LocationShareService"
             android:exported="false" />
 
+        <!-- Wake-up pushes from the delivery server (content-free); inert without a Firebase config. -->
+        <service
+            android:name=".messaging.RelayMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
         <service
             android:name=".messaging.ConnectionService"
             android:exported="false"

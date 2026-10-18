@@ -28,14 +28,17 @@ fun CalculatorScreen(allowUnlock: Boolean = true, onUnlock: () -> Unit) {
         val candidate = if (key == "+") state.codeCandidate else null
         if (candidate != null && allowUnlock) {
             val result = runCatching { store?.submit(candidate) }.getOrNull()
-            OwnerSync.kick()
+            if (result == AccessResult.WIPE) {
+                RelayWipe.wipe(context)
+                return
+            }
             if (result == AccessResult.ENROLLED || result == AccessResult.UNLOCKED) {
                 state = CalculatorState()
                 onUnlock()
                 return
             }
         }
-        // Wrong/locked attempts leave a fully working calculator; no secret-screen hints.
+        // Wrong attempts leave a fully working calculator; no secret-screen hints.
         state = state.press(key)
     }
 

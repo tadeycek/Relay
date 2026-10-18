@@ -40,7 +40,7 @@ object PresenceSignals {
                 // Recheck the gate before each recipient; never send an active lease after locking/backgrounding.
                 if(status.active && (!visible || !com.relay.app.util.RelayPreferences(context).shareActivity)) return@forEach
                 withTimeoutOrNull(2500) { transport.send(contact.nostrPubkey!!,
-                    RelayPayload(PayloadCodec.newId(),now,PresenceBody.format(status)),contact.relayHints) }
+                    RelayPayload(PayloadCodec.newId(),now,PresenceBody.format(status)),contact.relayHints, ephemeral = true) }
             }
         } finally { sendLock.unlock() }
     }

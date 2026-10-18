@@ -11,8 +11,10 @@ import android.nfc.NfcAdapter
 import android.os.Build
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
 import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
+import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.barcode.BarcodeScanning
@@ -77,17 +79,35 @@ class PeerConversationTest {
             assertTrue(device.findObject(UiSelector().text("Account")).waitForExists(5_000))
         }
         val contacts = ContactRepository(MessagingDb.get(context))
+        fun groupId(name: String): Long = runBlocking {
+            com.relay.app.data.repository.GroupRepository(MessagingDb.get(context)).getAllGroups().first { it.name == name }.id
+        }
         fun status(): JSONObject = runBlocking {
             val records = contacts.getAllContacts()
             JSONObject().put("role", role).put("transport", Transports.get(context).status.value.name)
-                .put("installation", CalculatorAccessStore.get(context).credentials().first)
+                .put("route", Transports.get(context)::class.simpleName)
+                .put("typing", JSONArray(com.relay.app.messaging.TypingSignals.entries.value.values.map { it.name }))
+                .put("groups", JSONArray().apply {
+                    val own = NostrIdentity.publicKeyHex(context)
+                    val db = MessagingDb.get(context)
+                    for (group in com.relay.app.data.repository.GroupRepository(db).getAllGroups()) {
+                        put(JSONObject().put("name", group.name).put("id", group.id).put("messages", JSONArray().apply {
+                            for (m in com.relay.app.data.repository.GroupMessageRepository(db).getMessages(group.id)) {
+                                put(JSONObject().put("body", m.body).put("sent", m.senderKey == null || m.senderKey == own)
+                                    .put("type", m.type.name)
+                                    .put("mediaHash", m.mediaUri?.let { path -> runCatching {
+                                        MediaCrypto.sha256Hex(RelayFileCrypto.readDecrypted(context, File(path)))
+                                    }.getOrNull() } ?: JSONObject.NULL))
+                            }
+                        }))
+                    }
+                })
                 .put("pubkey", NostrIdentity.publicKeyHex(context))
                 .put("incomingPair", PairingCoordinator.incoming.value?.name ?: JSONObject.NULL)
-                .put("ownerRecoveryPubkey", CalculatorAccessStore.get(context).ownerRelayKeys().publicKey().toHex())
                 .put("selfPhotoHash", com.relay.app.media.ContactPhotos.selfUpdate(context).jpeg?.let { MediaCrypto.sha256Hex(it) } ?: JSONObject.NULL)
                 .put("outgoingPair", PairingCoordinator.outgoing.value?.name ?: JSONObject.NULL)
                 .put("contacts", JSONArray().apply {
-                    for (contact in records) put(JSONObject().put("name", contact.name).put("id", contact.id)
+                    for (contact in records) put(JSONObject().put("name", contact.name).put("id", contact.id).put("pubkey", contact.nostrPubkey ?: JSONObject.NULL)
                         .put("verified", contact.qrVerified).put("hasKey", contact.publicKey != null)
                         .put("photoHash", runCatching {
                             MediaCrypto.sha256Hex(RelayFileCrypto.readDecrypted(context,
@@ -154,17 +174,26 @@ class PeerConversationTest {
                         "confirm_add" -> tap("Add ${command.getString("peer")}")
                         "accept_incoming" -> tap("Add ${command.getString("peer")}")
                         "chat" -> {
-                            unlockRoot(); tap("Messages")
+                            unlockRoot()
                             val peer = command.getString("peer")
-                            val conversation = device.findObject(UiSelector().text(peer))
-                            if (conversation.waitForExists(3_000)) {
-                                conversation.click()
-                            } else {
-                                tap("People")
-                                assertTrue(device.findObject(UiSelector().text("Contacts")).waitForExists(5_000))
-                                tap(peer); tap("Message")
+                            // Always through People: a group row in Messages can mention the peer too.
+                            val peopleTab = device.findObjects(By.text("People")).maxByOrNull { it.visibleBounds.centerY() }
+                            assertNotNull("People navigation tab is visible", peopleTab)
+                            peopleTab!!.click()
+                            assertTrue("People screen is open", device.findObject(
+                                UiSelector().description("Add a person by scanning their code")).waitForExists(10_000))
+                            val peopleList = UiScrollable(UiSelector().scrollable(true))
+                            if (!device.findObject(UiSelector().text("Contacts")).waitForExists(1_000)) {
+                                assertTrue("People list is visible", peopleList.waitForExists(10_000))
+                                assertTrue("Contacts section is reachable", peopleList.scrollIntoView(UiSelector().text("Contacts")))
                             }
+                            if (!device.findObject(UiSelector().text(peer)).waitForExists(1_000)) {
+                                assertTrue("Contact $peer is reachable", peopleList.scrollIntoView(UiSelector().text(peer)))
+                            }
+                            tap(peer); tap("Message")
                             assertTrue(device.findObject(UiSelector().description("Send")).waitForExists(10_000))
+                            // Lists can reorder under the tap (e.g. presence changing); make sure the chat is the peer's.
+                            assertTrue("Opened the chat with $peer", device.findObject(UiSelector().text(peer)).waitForExists(3_000))
                         }
                         "photo" -> {
                             val fixture = File(directory, "fixture-photo.png")
@@ -226,7 +255,37 @@ class PeerConversationTest {
                             device.findObject(UiSelector().description("Send")).click()
                             assertTrue(device.findObject(UiSelector().text(command.getString("text"))).waitForExists(5_000))
                         }
+                        // Group and typing traffic, driven through the app's own functions rather than the UI,
+                        // so the delivery path is what's under test.
+                        "create_group" -> {
+                            val peer = runBlocking { contacts.getAllContacts() }.first { it.name == command.getString("peer") }
+                            com.relay.app.groups.SharedGroups.create(context, command.getString("name"), listOf(peer.id))
+                        }
+                        "group_send" -> com.relay.app.groups.SharedGroups.send(context, groupId(command.getString("group")), command.getString("text"))
+                        "group_photo" -> {
+                            val copy = File(context.cacheDir, "group-fixture.png")
+                            File(directory, "fixture-photo.png").copyTo(copy, overwrite = true)
+                            com.relay.app.media.PendingAttachments.stage(context, groupId(command.getString("group")), true, copy, "image/png", command.getString("text"))
+                            com.relay.app.messaging.MessagingRuntime.kick()
+                        }
+                        "typing" -> {
+                            val group = command.optString("group")
+                            if (group.isNotEmpty()) com.relay.app.messaging.TypingSignals.send(context, groupId = groupId(group), typing = true)
+                            else com.relay.app.messaging.TypingSignals.send(context,
+                                contactId = runBlocking { contacts.getAllContacts() }.first { it.name == command.getString("peer") }.id, typing = true)
+                        }
+                        "reconnect" -> runBlocking { Transports.get(context).reconnect() }
+                        // A peer that wiped its app comes back with a new key; its old contact must go.
+                        "forget_stale" -> runBlocking {
+                            for (c in contacts.getAllContacts()) {
+                                if (c.name == command.getString("peer") && c.nostrPubkey != command.getString("keep")) contacts.deleteContact(c.id)
+                            }
+                            // Lists reload on this broadcast; without it the deleted chat stays on screen.
+                            context.sendBroadcast(Intent("com.relay.app.NEW_MESSAGE").setPackage(context.packageName))
+                        }
                         "status" -> Unit
+                        "pause_poll" -> androidx.work.WorkManager.getInstance(context)
+                            .cancelUniqueWork("relay_poll").result.get(10, TimeUnit.SECONDS)
                         "stop" -> { result(status().put("id", id).put("ok", true)); return }
                         else -> error("Unknown test action")
                     }

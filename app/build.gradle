@@ -5,13 +5,19 @@ plugins {
 }
 
 def previewBuild = providers.gradleProperty('relayPreview').getOrElse('false').toBoolean()
-def localOwnerConfig = new Properties()
-def ownerConfigFile = rootProject.file('.local/owner-config.properties')
-if (ownerConfigFile.exists()) ownerConfigFile.withInputStream { localOwnerConfig.load(it) }
-def ownerPublicKey = localOwnerConfig.getProperty('owner_pubkey', '')
-def ownerConfig = new Properties()
-// Relay recovery needs only the public owner key. Never embed local service credentials with it.
-if (!previewBuild && ownerPublicKey.isBlank()) ownerConfig.putAll(localOwnerConfig)
+// Pilot delivery server (server/cloudflare). Kept out of the repository; builds without it use relays only.
+def mailboxConfig = new Properties()
+def mailboxConfigFile = rootProject.file('.local/mailbox.properties')
+if (mailboxConfigFile.exists()) mailboxConfigFile.withInputStream { mailboxConfig.load(it) }
+
+def releaseSigning = new Properties()
+def releaseSigningFile = rootProject.file('.local/signing.properties')
+if (releaseSigningFile.exists()) releaseSigningFile.withInputStream { releaseSigning.load(it) }
+def releaseSigningReady = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].every { releaseSigning.getProperty(it) }
+
+// Firebase wake-up pushes (Tadej, 2026-10-18). The config file is the developer's own and gitignored;
+// without it the app builds as before and simply never receives pushes.
+if (file('google-services.json').exists()) apply plugin: 'com.google.gms.google-services'
 
 android {
     namespace 'com.relay.app'
@@ -21,12 +27,10 @@ android {
         applicationId 'com.relay.app'
         minSdk 26
         targetSdk 36
-        versionCode 12
-        versionName previewBuild ? '1.11-preview' : '1.11'
+        versionCode 13
+        versionName previewBuild ? '1.12-preview' : '1.12'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
-        buildConfigField 'String', 'OWNER_PUBLIC_KEY', groovy.json.JsonOutput.toJson(ownerPublicKey)
-        buildConfigField 'String', 'OWNER_SERVICE_URL', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('url', ''))
-        buildConfigField 'String', 'OWNER_ENROLLMENT_TOKEN', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('enrollment_token', ''))
+        buildConfigField 'String', 'MAILBOX_URL', groovy.json.JsonOutput.toJson(mailboxConfig.getProperty('url', ''))
     }
 
     buildFeatures {
@@ -43,8 +47,20 @@ android {
         jvmTarget = '17'
     }
 
+    signingConfigs {
+        if (releaseSigningReady) {
+            relayRelease {
+                storeFile rootProject.file(releaseSigning.getProperty('storeFile'))
+                storePassword releaseSigning.getProperty('storePassword')
+                keyAlias releaseSigning.getProperty('keyAlias')
+                keyPassword releaseSigning.getProperty('keyPassword')
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (releaseSigningReady) signingConfig signingConfigs.relayRelease
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
@@ -91,6 +107,11 @@ dependencies {
     // Internet transport: Nostr (NIP-17 private DMs / NIP-44 / NIP-59 gift wrap) via rust-nostr's
     // Kotlin bindings. Alpha-quality upstream; pinned and wrapped behind com.relay.app.transport.
     implementation 'org.rust-nostr:nostr-sdk-kmp-android:0.44.8'
+    // Mailbox socket and requests; the same version Coil already brings in.
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // Content-free wake-up pushes from the delivery server.
+    implementation platform('com.google.firebase:firebase-bom:33.7.0')
+    implementation 'com.google.firebase:firebase-messaging'
 
     // JVM unit tests for the pure logic (payload codec, outbox policy, dedupe, QR codec, handlers).
     // org.json is included because android.jar's org.json is only stubs on the JVM.
@@ -106,12 +127,17 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
 
-// A distributed app pins the owner recovery public key (or explicitly configures legacy HTTPS).
+// A distributed app talks only to Relay's own delivery server, so a release must have one built in.
 gradle.taskGraph.whenReady { graph ->
     if (graph.allTasks.any { it.name in ['assembleRelease', 'bundleRelease'] }) {
-        if (!(ownerPublicKey ==~ /[0-9a-f]{64}/) && (!ownerConfig.getProperty('url', '').startsWith('https://') ||
-                ownerConfig.getProperty('enrollment_token', '').isBlank())) {
-            throw new GradleException('Run owner/run.sh --prepare to configure the owner public key before a release build.')
+        if (!releaseSigningReady || !rootProject.file(releaseSigning.getProperty('storeFile')).isFile()) {
+            throw new GradleException('Configure the original signing keystore in .local/signing.properties before a release build.')
+        }
+        if (!file('google-services.json').isFile()) {
+            throw new GradleException('Add the Firebase Android configuration at app/google-services.json before a release build.')
+        }
+        if (!mailboxConfig.getProperty('url', '').startsWith('https://')) {
+            throw new GradleException('Set url=https://... in .local/mailbox.properties (the delivery server) before a release build.')
         }
     }
 }

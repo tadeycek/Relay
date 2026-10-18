@@ -4,7 +4,10 @@ import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
@@ -40,8 +43,23 @@ class PollWorker(context: Context, params: WorkerParameters) : CoroutineWorker(c
 
     companion object {
         private const val UNIQUE_NAME = "relay_poll"
+        private const val WAKE_NAME = "relay_wake"
         private const val CONNECT_WAIT_MS = 30_000L
         private const val DRAIN_WINDOW_MS = 15_000L
+
+        /**
+         * The same check, run once and as soon as possible: a wake-up push said a message is waiting.
+         * Expedited, so Android runs it promptly even with the app closed.
+         */
+        fun wakeNow(context: Context) {
+            val builder = OneTimeWorkRequestBuilder<PollWorker>()
+                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            // Before Android 12 expedited work runs as a foreground service with a notification, which
+            // this app deliberately never shows; there it runs as ordinary immediate work.
+            if (android.os.Build.VERSION.SDK_INT >= 31) builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            val request = builder.build()
+            WorkManager.getInstance(context).enqueueUniqueWork(WAKE_NAME, ExistingWorkPolicy.REPLACE, request)
+        }
 
         fun schedule(context: Context) {
             val request = PeriodicWorkRequestBuilder<PollWorker>(15, TimeUnit.MINUTES)

@@ -16,9 +16,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import com.relay.app.calculator.CalculatorAccessStore
 import com.relay.app.data.model.PinExpiry
 import com.relay.app.transport.TransportStatus
 import com.relay.app.ui.components.ChoiceRow
@@ -60,7 +57,7 @@ fun AccountPageContent(page: AccountPage, vm: SettingsViewModel) {
 fun accountPageSummary(page: AccountPage, vm: SettingsViewModel): String = when (page) {
     AccountPage.NOTIFICATIONS -> if (vm.incomingMessageNotification) "Messages on" else "Messages off"
     AccountPage.LOCATION -> if (vm.locationRequestFrom == RelayPreferences.FROM_NOBODY) "No one can ask" else "Contacts can ask"
-    AccountPage.PRIVACY -> if (vm.torEnabled) "Tor on" else "Tor off"
+    AccountPage.PRIVACY -> if (vm.shareActivity) "Active status on" else "Active status off"
     AccountPage.SECURITY -> if (vm.appLock) "App lock on" else "App lock off"
     AccountPage.CONNECTION -> connectionText(vm.connectionStatus)
     AccountPage.APPEARANCE -> when (vm.theme) {
@@ -162,52 +159,18 @@ private fun PrivacyPage(vm: SettingsViewModel) {
         supporting = "Verified friends can see approximate activity while private screens are open. Status expires after one minute without an update.")
     ToggleRow("Typing indicators", vm.typingIndicators, vm::updateTypingIndicators,
         supporting = "Let verified friends see when you type. Indicators disappear automatically.")
-    ToggleRow(
-        "Hide my IP address from relays",
-        vm.torEnabled,
-        vm::updateTorEnabled,
-        supporting = "Sends everything through Tor. Needs the Orbot app.",
-    )
-    if (vm.torEnabled) {
-        ListRow(
-            headline = "Tor status",
-            supporting = when (vm.connectionStatus) {
-                TransportStatus.ONLINE -> "Connected through Tor"
-                TransportStatus.CONNECTING -> "Connecting through Tor"
-                TransportStatus.WAITING_FOR_TOR -> "Tor isn't running. Messages are waiting. Start Orbot to continue."
-                else -> "Not connected"
-            },
-        )
-        ToggleRow(
-            "If Tor is unavailable, connect directly",
-            vm.torFallbackToDirect,
-            vm::updateTorFallbackToDirect,
-            supporting = "Off keeps you private: nothing is sent until Tor is running. On sends directly, which reveals your IP address.",
-        )
-    }
-    SectionHeader("Set up Tor")
-    TorSetupGuide(orbotInstalled = vm.orbotInstalled, onOpenOrbot = vm::openOrbot)
-    SectionHeader("What Tor does and doesn't do")
-    TorExplanation()
+    // Tor mode is switched off for the delivery-server pilot (2026-10-18); TorSetupGuide and
+    // TorExplanation stay in TorGuide.kt for when it returns.
 }
 
 @Composable
 private fun SecurityPage(vm: SettingsViewModel) {
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
-    val recoveryId = remember { CalculatorAccessStore.get(context).credentials().first }
     EmergencyReset()
     SectionHeader("Calculator access")
-    Text("Three wrong codes lock messaging until the owner clears the lockout. " +
-        "The owner receives a random installation ID and access reports, not your messages or code.",
+    Text("${com.relay.app.calculator.AccessPolicy.WIPE_AFTER} wrong codes in a row erase all of Relay's messages, contacts, " +
+        "photos and keys on this phone, as if it had just been installed. The calculator keeps working.",
         style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
-    ListRow(
-        headline = "Recovery ID",
-        supporting = recoveryId,
-        onClick = { clipboard.setText(AnnotatedString(recoveryId)) },
-        trailing = { Text("Copy", style = MaterialTheme.typography.labelLarge, color = Accent) },
-    )
-    OwnerDiagnosticsSettings()
     SectionHeader("Device lock")
     ToggleRow(
         "App lock",
@@ -238,6 +201,11 @@ private fun ConnectionPage(vm: SettingsViewModel) {
         onClick = vm::reconnectNow,
         trailing = { Text("Reconnect", style = MaterialTheme.typography.labelLarge, color = Accent) },
     )
+    if (vm.mailboxAvailable) {
+        Text("Messages, photos and typing go only through Relay's own delivery server; no public relay is used. " +
+            "Everything stays end-to-end encrypted and is deleted from the server once delivered. The server can see who " +
+            "messages whom, and when.", modifier = Modifier.padding(RelaySpacing.lg), color = TextSecondary)
+    }
     Text("No running-in-background notification. Messages are received while the process is active or during Android's periodic background checks (15-minute minimum; battery restrictions can delay them longer). Open the app for prompt delivery.",
         modifier = Modifier.padding(RelaySpacing.lg), color = TextSecondary)
 

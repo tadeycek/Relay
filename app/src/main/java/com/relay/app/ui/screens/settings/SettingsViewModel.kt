@@ -86,6 +86,9 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         torInfoExpanded = !torInfoExpanded
     }
 
+    /** Whether this build delivers through Relay's own server (shown on the Connection page). */
+    val mailboxAvailable = com.relay.app.transport.mailbox.MailboxConfig.available
+
     /** Switching Tor on or off changes how every connection is made, so reconnect straight away. */
     fun updateTorEnabled(v: Boolean) {
         prefs.torEnabled = v

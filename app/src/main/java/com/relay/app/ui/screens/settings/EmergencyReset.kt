@@ -37,7 +37,12 @@ fun EmergencyReset() {
             scope.launch {
                 val result = withContext(Dispatchers.IO) { runCatching { CalculatorAccessStore.get(context).submit(code) } }.getOrNull()
                 code = ""
-                if (result != AccessResult.UNLOCKED) { error = "Code rejected. Wrong codes count toward the three-attempt lockout."; busy = false; return@launch }
+                if (result == AccessResult.WIPE) { com.relay.app.calculator.RelayWipe.wipe(context); return@launch }
+                if (result != AccessResult.UNLOCKED) {
+                    error = "Code rejected. ${com.relay.app.calculator.AccessPolicy.WIPE_AFTER} wrong codes in a row erase everything."
+                    busy = false
+                    return@launch
+                }
                 // A confirmed destructive operation is process-owned, so leaving this screen cannot stop it halfway.
                 CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                     try {

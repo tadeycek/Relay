@@ -210,7 +210,10 @@ class MainActivity : FragmentActivity() {
         // A quick Home/return can pause and resume without ever reaching onStop/onStart.
         calculatorSession.expireIfNeeded()
         calculatorUnlocked.value = calculatorSession.isActive()
-        if (!com.relay.app.calculator.CalculatorOnly.enabled(this)) ConnectionService.onAppForeground(this)
+        if (!com.relay.app.calculator.CalculatorOnly.enabled(this)) {
+            ConnectionService.onAppForeground(this)
+            com.relay.app.messaging.MessagingRuntime.onForeground(this)
+        }
     }
 
     private fun closePrivateScreens() {

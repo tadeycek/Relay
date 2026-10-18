@@ -1,6 +1,7 @@
 package com.relay.app.calculator
 
 import android.app.NotificationManager
+import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import com.relay.app.data.model.MessageType
 import com.relay.app.data.repository.ContactRepository
@@ -18,12 +19,19 @@ class ConversationRegressionTest {
         val repo = ContactRepository(MessagingDb.get(context))
         val contact = repo.findOrCreateByNostrSync(rust.nostr.sdk.Keys.generate().publicKey().toHex(), "Mute test")
         val nm = context.getSystemService(NotificationManager::class.java)
+        fun awaitNotification(visible: Boolean) {
+            val deadline = SystemClock.elapsedRealtime() + 5_000
+            while (nm.activeNotifications.any { it.tag == "conversation:${contact.id}" } != visible &&
+                SystemClock.elapsedRealtime() < deadline) SystemClock.sleep(30)
+        }
         try {
             ConversationNotifications.setMuted(context, contact.id, false, false)
             val before = ConversationNotifications.token(context, contact.id)
             MessageNotifier.notifyIncoming(context, contact, MessageType.TEXT, "Before mute")
+            awaitNotification(true)
             assertTrue(nm.activeNotifications.any { it.tag == "conversation:${contact.id}" })
             ConversationNotifications.setMuted(context, contact.id, false, true)
+            awaitNotification(false)
             assertFalse(nm.activeNotifications.any { it.tag == "conversation:${contact.id}" })
             assertNull(ConversationNotifications.token(context, contact.id))
             assertNotNull(ConversationNotifications.token(context, contact.id, true))
@@ -33,6 +41,7 @@ class ConversationRegressionTest {
             MessageNotifier.notifyIncoming(context, contact, MessageType.IMAGE, "Delayed download", before)
             assertFalse(nm.activeNotifications.any { it.tag == "conversation:${contact.id}" })
             MessageNotifier.notifyIncoming(context, contact, MessageType.TEXT, "Future message")
+            awaitNotification(true)
             assertTrue(nm.activeNotifications.any { it.tag == "conversation:${contact.id}" })
         } finally {
             MessageNotifier.cancel(context, contact.id)

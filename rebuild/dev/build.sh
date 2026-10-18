@@ -4,6 +4,5 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 source rebuild/dev/env.sh
-owner/run.sh --prepare
 if [[ $# == 0 ]]; then set -- assembleDebug; fi
 exec ./gradlew --no-daemon --max-workers=2 -Dorg.gradle.java.home="$JAVA_HOME" "$@"

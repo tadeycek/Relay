@@ -72,7 +72,7 @@ try:
     initial={role:wait(lambda role=role:state(role),f'{role} did not start',100) for role in peers}
     assert initial['Alice']['pubkey']!=initial['Bob']['pubkey'],'Must use two independently generated identities'
     with (ROOT/'.local/fresh-install-test-ids.txt').open('a') as output:
-        for role,value in initial.items():output.write(value['installation']+'\n')
+        for role,value in initial.items():output.write(value['pubkey']+'\n')
     print('PASS: two separate Android installs and independent cryptographic identities',flush=True)
     for role in peers:
         wait(lambda role=role:command(role,'status')['transport']=='ONLINE',f'{role} could not reach the default public relays',90)

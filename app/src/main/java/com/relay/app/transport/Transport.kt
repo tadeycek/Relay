@@ -28,9 +28,15 @@ interface Transport {
 
     /**
      * Publishes [payload] to [recipientPubkeyHex]. [relayHints] are extra relays to try besides the
-     * configured defaults (e.g. the contact's inbox relays learned at pairing).
+     * configured defaults (e.g. the contact's inbox relays learned at pairing). [ephemeral] marks
+     * best-effort signals (typing, presence) that must never be stored for later delivery.
      */
-    suspend fun send(recipientPubkeyHex: String, payload: RelayPayload, relayHints: List<String> = emptyList()): SendResult
+    suspend fun send(
+        recipientPubkeyHex: String,
+        payload: RelayPayload,
+        relayHints: List<String> = emptyList(),
+        ephemeral: Boolean = false,
+    ): SendResult
 }
 
 enum class TransportStatus {
@@ -44,6 +50,12 @@ data class IncomingEnvelope(
     val senderPubkeyHex: String,
     val payload: RelayPayload,
     val receivedAtMs: Long,
+    /**
+     * Called once the message has been handled (stored or deliberately dropped), so a transport
+     * that keeps a durable copy until then can let it go. Not called when handling failed or was
+     * deferred, so the copy is offered again later.
+     */
+    val onHandled: (() -> Unit)? = null,
 )
 
 sealed class SendResult {

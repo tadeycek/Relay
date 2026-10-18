@@ -77,7 +77,12 @@ object PendingAttachments {
             }
             try {
                 check(System.currentTimeMillis() - job.created < 7L * 24 * 60 * 60 * 1000) { "Attachment expired" }
-                val ref = MediaSender.uploadBytes(context, RelayFileCrypto.readDecrypted(context, File(job.path)), job.mime, job.caption)
+                // Exactly who will get the message: only they may download the file from the server.
+                val recipients = if (job.group) {
+                    val stored = SharedGroups.get(db, job.target) ?: error("Group no longer exists")
+                    SharedGroups.recipients(db, stored.state, NostrIdentity.publicKeyHex(context)).map { it.key }
+                } else listOfNotNull(ContactRepository(db).getByIdSync(job.target)?.nostrPubkey)
+                val ref = MediaSender.uploadBytes(context, RelayFileCrypto.readDecrypted(context, File(job.path)), job.mime, job.caption, recipients)
                 // Keep lock ordering consistent with incoming/deletion and group send paths.
                 synchronized(SharedGroups) { synchronized(MessageDeletion) {
                     val sql = db.writableDatabase
