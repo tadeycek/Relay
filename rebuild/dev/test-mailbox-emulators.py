@@ -2,10 +2,11 @@
 """Live test of the delivery-server pilot (server/cloudflare) with the real app on two emulators.
 
 Build with .local/mailbox.properties (url=<pilot>) and install the app and test APKs on both first,
-like test-two-emulators.py. Both apps switch the mailbox on and point Nostr at an unreachable
-address, so every message that arrives provably came through the mailbox. Then: QR pairing (its
-messages travel through the mailbox too), text both ways, a photo, and a message sent while Bob is in
-airplane mode, received when he comes back (store-and-forward and catch-up).
+like test-two-emulators.py. Such a build talks only to the delivery server: the harness checks that
+the running transport is the mailbox (no Nostr relay is ever contacted). Then: QR pairing (its
+messages travel through the mailbox too), text both ways, a photo (stored on the server, readable
+only by the recipient), and a message sent while Bob is in airplane mode, received when he comes back
+(store-and-forward and catch-up).
 
 The pilot only admits allowlisted identities. The emulator identities are written to
 .local/mailbox-emulator-pubkeys.txt; --deploy-allowlist redeploys the test pilot with them added to
@@ -129,10 +130,9 @@ try:
         print('PASS: test pilot redeployed with both emulator identities on the allowlist', flush=True)
 
     for role in peers:
-        command(role, 'mailbox_only')
-        wait(lambda role=role: (s := command(role, 'status'))['transport'] == 'ONLINE' and s['mailboxEnabled'],
-             f'{role} could not reach the delivery server', 90)
-    print('PASS: both apps online through the delivery server, with public relays unreachable', flush=True)
+        assert initial[role]['route'] == 'MailboxTransport', f"{role} runs {initial[role]['route']}, not the delivery server"
+        wait(lambda role=role: command(role, 'status')['transport'] == 'ONLINE', f'{role} could not reach the delivery server', 90)
+    print('PASS: both apps online through the delivery server only (no Nostr transport exists)', flush=True)
 
     paired = all(any(c['name'] == peer and c['verified'] and c['hasKey'] for c in initial[role]['contacts'])
                  for role, peer in [('Alice', 'Bob'), ('Bob', 'Alice')])
@@ -167,7 +167,7 @@ try:
     command('Alice', 'photo', text=caption)
     wait(lambda: any(m['body'] == caption and not m['sent'] and m['type'] == 'IMAGE' and m['mediaHash']
                      for c in command('Bob', 'status')['contacts'] for m in c['messages']), 'Bob did not get the photo', 150)
-    print('PASS: Alice → Bob photo (encrypted blob upload; its reference delivered through the delivery server)', flush=True)
+    print('PASS: Alice → Bob photo, encrypted and stored on the delivery server for Bob only', flush=True)
 
     adb('Bob', 'shell', 'cmd', 'connectivity', 'airplane-mode', 'enable')
     time.sleep(5)
@@ -194,10 +194,6 @@ finally:
             pass
     for role, process, output in processes:
         if process.poll() is None:
-            try:
-                command(role, 'mailbox_off')
-            except Exception as error:
-                print(f'WARNING: {role} still has the mailbox on and relays unreachable: {error}', flush=True)
             try:
                 command(role, 'stop')
             except Exception:

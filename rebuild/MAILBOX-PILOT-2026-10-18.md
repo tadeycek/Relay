@@ -137,3 +137,32 @@ Code: `transport/mailbox/` (client), `transport/HybridTransport.kt` (both routes
   public relays.
 - Delivery while the app is closed: unchanged, as there is no background service or push (FCM). That's C3.
 - Real phones, mobile networks, and group chats through the mailbox (the group fan-out uses the same per-recipient path).
+
+## No public relays; owner recovery removed — 2026-10-18 (#46)
+
+Tadej's decisions: no Nostr relays anywhere; owner recovery and the Control Panel removed; 10 wrong calculator
+codes in a row wipe Relay; photos move from public Blossom servers to Relay's own server.
+
+- **Server.** Live signals: typing and presence pass socket to socket, never stored (no rows written),
+  ≤16 KiB, rate-limited per socket. Media: one Durable Object per encrypted file (`MediaBlob`), chunked,
+  downloadable only by the recipients named at upload, deleted once all confirm or after 8 days (alarm).
+  Waiting messages are dropped after 8 days. 89 server tests.
+- **App.** Builds with a server use only `MailboxTransport`; `NostrTransport` is never constructed (it is kept
+  for development builds without a server). Typing and presence go over the socket as live signals.
+  Photos and videos upload to the server for exactly the message's recipients, and each recipient confirms
+  after storing. References to any other host are never fetched. The both-routes `HybridTransport` and its
+  sending switch were removed. Release builds now require a delivery-server URL.
+- **Owner recovery removed:** OwnerRelaySync, OwnerSync, owner diagnostics, the recovery ID and the owner build
+  config, plus the `owner/` Control Panel. Leftover owner keys (including the private recovery key) are deleted
+  from the calculator's encrypted preferences on first start. Local `.local/` data was not touched.
+- **Calculator:** 10 wrong codes in a row trigger `RelayWipe`, the system's clear-app-data (with a manual erase
+  fallback); a correct code resets the count.
+
+### Evidence
+
+- 317 app unit tests and 89 server tests pass.
+- Live through the redeployed pilot with the real app on two emulators (`test-mailbox-emulators.py`): both apps
+  run only `MailboxTransport`; text both ways; a photo stored on the server for the recipient only; a message
+  held while Bob was in airplane mode and delivered 4.0 s after reconnecting.
+- The wipe on the real UI: 10 wrong codes on Bob's calculator → the app ended, with 10 preference files, 1
+  database and 3 files before and none after.

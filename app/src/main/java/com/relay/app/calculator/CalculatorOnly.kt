@@ -37,12 +37,36 @@ object CalculatorOnly {
     /** Called before startup and after shutting down the messaging runtime. Repeatable. */
     fun clean(context: Context) {
         check(enabled(context))
+        erasePrivateData(context, keep = "calculator-only")
+    }
+
+    /** Every database, file, preference and Keystore key the app holds, except [keep] in no-backup files. */
+    internal fun erasePrivateData(context: Context, keep: String? = null) {
         context.databaseList().forEach { context.deleteDatabase(it) }
         listOf(context.filesDir, context.cacheDir, context.codeCacheDir, File(context.applicationInfo.dataDir, "shared_prefs")).forEach { dir ->
             dir.listFiles()?.forEach { check(it.deleteRecursively()) { "Couldn't erase private app data" } }
         }
-        context.noBackupFilesDir.listFiles()?.filter { it.name != "calculator-only" }?.forEach { it.deleteRecursively() }
+        context.noBackupFilesDir.listFiles()?.filter { it.name != keep }?.forEach { it.deleteRecursively() }
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         store.aliases().toList().forEach { store.deleteEntry(it) }
+    }
+}
+
+/**
+ * Too many wrong calculator codes: erase all of Relay's data on this phone, so it is exactly as if
+ * Relay had just been installed. The calculator stays; messaging needs a new code and re-pairing.
+ */
+object RelayWipe {
+    fun wipe(context: Context) {
+        val app = context.applicationContext
+        // The system's "Clear data": databases, files, preferences and this app's Keystore keys, then
+        // the process ends. The manual erase is only a fallback for when the system refuses.
+        val cleared = runCatching {
+            (app.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager).clearApplicationUserData()
+        }.getOrDefault(false)
+        if (!cleared) {
+            runCatching { CalculatorOnly.erasePrivateData(app) }
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
     }
 }

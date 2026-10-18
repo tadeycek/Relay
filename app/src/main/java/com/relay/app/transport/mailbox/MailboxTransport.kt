@@ -59,12 +59,14 @@ import java.util.concurrent.atomic.AtomicInteger
  *  - Receiving: one WebSocket. Every packet is written to the local raw inbox before any receipt is
  *    sent ([MailboxSession] decides when a cumulative receipt is safe), then opened and handed to the
  *    message handler; its row is deleted once [IncomingEnvelope.onHandled] reports it was dealt with.
+ *  - Typing and presence ([send] with `ephemeral`): gift-wrapped like messages but passed over the open
+ *    socket to the recipient's open socket and never stored; a recipient who isn't connected misses it.
  */
 class MailboxTransport(
     context: Context,
     baseUrl: String,
     private val identity: () -> Keys,
-) : MailboxRoute {
+) : Transport {
 
     constructor(context: Context, baseUrl: String) : this(context, baseUrl, { NostrIdentity.keys(context.applicationContext) })
 
@@ -87,6 +89,8 @@ class MailboxTransport(
     private var loopJob: Job? = null
     private var openerJob: Job? = null
     @Volatile private var socket: WebSocket? = null
+    /** The socket after the server greeted it, i.e. one that can carry live signals right now. */
+    @Volatile private var live: WebSocket? = null
     /** Same superseded-loop guard as NostrTransport: a stale loop must not touch shared state. */
     @Volatile private var generation = 0
 
@@ -124,7 +128,7 @@ class MailboxTransport(
     }
 
     override suspend fun send(recipientPubkeyHex: String, payload: RelayPayload, relayHints: List<String>, ephemeral: Boolean): SendResult {
-        if (ephemeral) return SendResult.Failed("Ephemeral signals are never stored in the mailbox", retryable = false)
+        if (ephemeral) return signal(recipientPubkeyHex, payload)
         return when (val outcome = deliver(recipientPubkeyHex, payload)) {
             Outcome.Stored -> SendResult.Sent(1)
             Outcome.NotOnMailbox -> SendResult.Failed("Recipient is not on the mailbox", retryable = false)
@@ -133,8 +137,21 @@ class MailboxTransport(
         }
     }
 
+    /** Best effort, never stored: only works while connected, and is simply dropped otherwise. */
+    private suspend fun signal(recipient: String, payload: RelayPayload): SendResult {
+        val ws = live ?: return SendResult.Failed("Not connected", retryable = false)
+        if (!MailboxProtocol.isRecipient(recipient)) return SendResult.Failed("Invalid recipient key", retryable = false)
+        val envelope = try {
+            wrap(recipient, payload)
+        } catch (e: Exception) {
+            return SendResult.Failed("Couldn't prepare the signal: ${e.message}", retryable = false)
+        }
+        return if (ws.send(MailboxProtocol.signalFrame(recipient, envelope))) SendResult.Sent(1)
+            else SendResult.Failed("Not connected", retryable = false)
+    }
+
     /** Hands one message to the mailbox for [recipient]. Safe to call again with the same payload. */
-    override suspend fun deliver(recipient: String, payload: RelayPayload): Outcome = withContext(Dispatchers.IO) {
+    suspend fun deliver(recipient: String, payload: RelayPayload): Outcome = withContext(Dispatchers.IO) {
         if (!MailboxProtocol.isRecipient(recipient)) return@withContext Outcome.Rejected("Invalid recipient key")
         if (!MailboxProtocol.isDeliveryId(payload.id)) return@withContext Outcome.NotOnMailbox
         val envelope = try {
@@ -199,6 +216,7 @@ class MailboxTransport(
     private fun closeSocket() {
         socket?.let { runCatching { it.close(1000, "closing") } }
         socket = null
+        live = null
     }
 
     private inner class Listener(
@@ -217,12 +235,16 @@ class MailboxTransport(
             }
             when (val frame = MailboxProtocol.parseFrame(text)) {
                 is MailboxProtocol.Frame.Ready -> {
+                    live = webSocket
                     _status.value = TransportStatus.ONLINE
                     onReady()
                     perform(webSocket, session.onReady())
                 }
                 is MailboxProtocol.Frame.Batch -> perform(webSocket, session.onBatch(frame.messages, frame.more, frame.cursor))
                 is MailboxProtocol.Frame.Message -> perform(webSocket, session.onPush(frame.message))
+                is MailboxProtocol.Frame.Signal -> scope.launch {
+                    unwrap(frame.envelope)?.let { (sender, payload) -> inbox.send(IncomingEnvelope(sender, payload, System.currentTimeMillis())) }
+                }
                 is MailboxProtocol.Frame.Error -> {
                     // A catch-up or receipt failed on the server: start over on a fresh connection,
                     // where a new catch-up picks up whatever is still waiting.
@@ -238,10 +260,12 @@ class MailboxTransport(
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (live === webSocket) live = null
             ended.complete(null)
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (live === webSocket) live = null
             Log.w(TAG, "mailbox socket failed (${response?.code ?: "no response"}): ${t.message}")
             ended.complete(response?.code)
         }
@@ -282,22 +306,25 @@ class MailboxTransport(
         }
     }
 
+    /** Decrypts a gift wrap addressed to this install and authenticates its sender, or null. */
+    private suspend fun unwrap(envelope: String): Pair<String, RelayPayload>? = try {
+        val event = Event.fromJson(envelope)
+        if (event.kind().asU16() != GIFT_WRAP_KIND) null
+        else {
+            val gift = UnwrappedGift.fromGiftWrap(NostrSigner.keys(identity()), event)
+            val rumor = gift.rumor()
+            val sender = gift.sender().toHex()
+            // The rumor is unsigned; its claimed author must be the key that signed the seal.
+            if (rumor.kind().asU16() != CHAT_MESSAGE_KIND || rumor.author().toHex() != sender) null
+            else PayloadCodec.decode(rumor.content())?.let { sender to it }
+        }
+    } catch (e: Exception) {
+        null
+    }
+
     private suspend fun open(seq: Long) {
         val envelope = store.envelope(seq) ?: return
-        val opened = try {
-            val event = Event.fromJson(envelope)
-            if (event.kind().asU16() != GIFT_WRAP_KIND) null
-            else {
-                val gift = UnwrappedGift.fromGiftWrap(NostrSigner.keys(identity()), event)
-                val rumor = gift.rumor()
-                val sender = gift.sender().toHex()
-                // The rumor is unsigned; its claimed author must be the key that signed the seal.
-                if (rumor.kind().asU16() != CHAT_MESSAGE_KIND || rumor.author().toHex() != sender) null
-                else PayloadCodec.decode(rumor.content())?.let { sender to it }
-            }
-        } catch (e: Exception) {
-            null
-        }
+        val opened = unwrap(envelope)
         if (opened == null) {
             // Not for us, corrupt, or another dialect: nothing will ever make it readable.
             Log.d(TAG, "dropping unreadable mailbox packet $seq")

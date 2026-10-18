@@ -1,7 +1,5 @@
 package com.relay.app.transport.mailbox
 
-import com.relay.app.transport.HybridStatus
-import com.relay.app.transport.TransportStatus
 import com.relay.app.transport.mailbox.MailboxProtocol.Frame
 import com.relay.app.transport.mailbox.MailboxProtocol.Outcome
 import org.json.JSONObject
@@ -84,13 +82,13 @@ class MailboxProtocolTest {
     }
 
     @Test
-    fun eitherRouteBeingOnlineMeansOnline() {
-        val s = TransportStatus.entries
-        assertEquals(TransportStatus.ONLINE, HybridStatus.combine(TransportStatus.OFFLINE, TransportStatus.ONLINE))
-        assertEquals(TransportStatus.ONLINE, HybridStatus.combine(TransportStatus.ONLINE, TransportStatus.STOPPED))
-        assertEquals(TransportStatus.CONNECTING, HybridStatus.combine(TransportStatus.OFFLINE, TransportStatus.CONNECTING))
-        assertEquals(TransportStatus.OFFLINE, HybridStatus.combine(TransportStatus.OFFLINE, TransportStatus.STOPPED))
-        // With the mailbox switched off, the hybrid reports exactly what Nostr reports.
-        for (nostr in s) if (nostr != TransportStatus.WAITING_FOR_TOR) assertEquals(nostr, HybridStatus.combine(nostr, TransportStatus.STOPPED))
+    fun parsesAndBuildsLiveSignals() {
+        assertEquals(Frame.Signal("wrap"), MailboxProtocol.parseFrame("""{"type":"signal","from":"a","envelope":"wrap"}"""))
+        assertEquals(Frame.Other, MailboxProtocol.parseFrame("""{"type":"signal","from":"a"}"""))
+        JSONObject(MailboxProtocol.signalFrame("ab".repeat(32), "wrap")).let {
+            assertEquals("signal", it.getString("type"))
+            assertEquals("ab".repeat(32), it.getString("to"))
+            assertEquals("wrap", it.getString("envelope"))
+        }
     }
 }

@@ -13,6 +13,8 @@ import com.relay.app.messaging.MessageDeletion
 import com.relay.app.messaging.MessageNotifier
 import com.relay.app.messaging.MessagingDb
 import com.relay.app.messaging.Outgoing
+import com.relay.app.transport.mailbox.MailboxConfig
+import com.relay.app.transport.mailbox.MailboxMedia
 import com.relay.app.util.RelayPreferences
 import java.io.File
 import java.util.concurrent.Semaphore
@@ -28,7 +30,7 @@ object MediaSender {
     }
 
     fun send(context: Context, contact: Contact, file: File, mime: String, caption: String): Result {
-        val ref = try { upload(context, file, mime, caption) } catch (e: Exception) { return Result.Failed(e.message ?: "Upload failed") }
+        val ref = try { upload(context, file, mime, caption, listOfNotNull(contact.nostrPubkey)) } catch (e: Exception) { return Result.Failed(e.message ?: "Upload failed") }
         val msgId = Outgoing.enqueue(context, contact, MediaBody.format(ref))
             ?: return Result.Failed("Couldn't queue the message")
         return Result.Sent(msgId)
@@ -40,27 +42,41 @@ object MediaSender {
         return target
     }
 
-    fun upload(context: Context, file: File, mime: String, caption: String): MediaRef {
-        return uploadBytes(context, file.readBytes(), mime, caption)
+    fun upload(context: Context, file: File, mime: String, caption: String, recipients: List<String>): MediaRef {
+        return uploadBytes(context, file.readBytes(), mime, caption, recipients)
     }
 
-    fun uploadBytes(context: Context, plain: ByteArray, mime: String, caption: String): MediaRef {
+    /**
+     * Encrypts and uploads; only [recipients] (Nostr pubkeys) may download it from Relay's own server,
+     * which deletes it once they all have it. Builds without a server use Blossom instead.
+     */
+    fun uploadBytes(context: Context, plain: ByteArray, mime: String, caption: String, recipients: List<String>): MediaRef {
         if (plain.isEmpty() || plain.size > MediaBody.MAX_MEDIA_BYTES) error("File is too large")
 
-        val client = blossomClientFor(context) ?: error(TOR_UNAVAILABLE_MESSAGE)
         val encrypted = MediaCrypto.encrypt(plain)
         val blobSha256 = MediaCrypto.sha256Hex(encrypted.blob)
-        val servers = RelayPreferences(context).blossomServers
-        val uploaded = client.upload(servers, encrypted.blob, blobSha256, "application/octet-stream")
-        if (uploaded == null) {
-            // The friendly message can't explain a server's own error text, but logcat can: pull it
-            // when a report says uploads are failing.
-            Log.w(TAG, "upload failed to all of $servers: ${client.lastUploadError}")
-            error("Upload failed - check your connection and try again")
+        val url = if (MailboxConfig.available) {
+            try {
+                MailboxMedia.upload(context, encrypted.blob, blobSha256, recipients)
+            } catch (e: Exception) {
+                Log.w(TAG, "upload to the delivery server failed: ${e.message}")
+                error("Upload failed - check your connection and try again")
+            }
+        } else {
+            val client = blossomClientFor(context) ?: error(TOR_UNAVAILABLE_MESSAGE)
+            val servers = RelayPreferences(context).blossomServers
+            val uploaded = client.upload(servers, encrypted.blob, blobSha256, "application/octet-stream")
+            if (uploaded == null) {
+                // The friendly message can't explain a server's own error text, but logcat can: pull it
+                // when a report says uploads are failing.
+                Log.w(TAG, "upload failed to all of $servers: ${client.lastUploadError}")
+                error("Upload failed - check your connection and try again")
+            }
+            uploaded.url
         }
 
         return MediaRef(
-            url = uploaded.url,
+            url = url,
             sha256Hex = blobSha256,
             keyBase64 = encrypted.keyBase64,
             mime = mime,
@@ -94,9 +110,11 @@ object MediaReceiver {
             return
         }
 
-        val client = blossomClientFor(context)
-        if (client == null) {
-            store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media not downloaded: Tor is turned on but isn't running]", null)
+        val fetch = mediaFetcher(context, ref.url)
+        if (fetch == null) {
+            val notice = if (MailboxConfig.available) "[Media from an older version of Relay isn't available]"
+                else "[Media not downloaded: Tor is turned on but isn't running]"
+            store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, notice, null)
             return
         }
 
@@ -106,7 +124,7 @@ object MediaReceiver {
             // Both formats are hash-verified before any decryption.
             val cipherSize = ref.size + BLOB_OVERHEAD
             val maxBytes = if (cipherSize in 0..Int.MAX_VALUE) MediaContainer.wrappedSize(cipherSize.toInt()).toLong() else Long.MAX_VALUE
-            val wrapped = client.download(ref.url, ref.sha256Hex, maxBytes)
+            val wrapped = fetch(ref.url, ref.sha256Hex, maxBytes)
             // Accept the old container for existing conversations; new uploads are raw ciphertext.
             val unwrapped = wrapped?.let { MediaContainer.unwrap(it) ?: it }
             val plain = unwrapped?.let { MediaCrypto.decrypt(it, ref.keyBase64) }
@@ -124,6 +142,8 @@ object MediaReceiver {
                 if (store(context, repo, contact, payloadId, sentAt, type, ref.caption, file.absolutePath))
                     MessageNotifier.notifyIncoming(context, contact, type, ref.caption, alertToken)
             }
+            // Stored on this phone, so the server may forget it.
+            MailboxMedia.confirm(context, ref.url)
         } catch (e: Exception) {
             Log.w(TAG, "media receive failed: ${e.message}")
             store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media couldn't be downloaded or verified]", null)

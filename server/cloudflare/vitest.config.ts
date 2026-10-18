@@ -21,6 +21,11 @@ export default defineConfig({
           MAX_PENDING_BYTES_TOTAL: "49152",
           MAX_PAGE_BYTES: "12288",
           MAX_PAGE_MESSAGES: "20",
+          // Small media limits so chunking and the size cap are exercised without huge buffers.
+          MAX_MEDIA_BYTES: "65536",
+          MEDIA_CHUNK_BYTES: "16384",
+          MAX_MEDIA_RECIPIENTS: "4",
+          SIGNALS_PER_MINUTE: "5",
         },
       },
     }),

@@ -128,3 +128,22 @@ describe("delete on receipt", () => {
     expect(a.result.seq).toBeLessThan(b.result.seq);
   });
 });
+
+describe("pending lifetime", () => {
+  it("drops messages nobody collected within the lifetime and frees their space", async () => {
+    const old = await sendDm(0, 1, "never collected");
+    await runInDurableObject(mailboxStub(), async (instance: Mailbox) => {
+      const target = instance as any;
+      target.limits = { ...target.limits, pendingLifetimeMs: 1 };
+      target.lastPruneAt = 0;
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    const fresh = await sendDm(2, 3, "triggers cleanup");
+    expect((await client(1).inbox()).body.messages).toHaveLength(0);
+    const bytes = await runInDurableObject(mailboxStub(), async (_: Mailbox, state) =>
+      state.storage.sql.exec("SELECT bytes FROM pending_bytes WHERE scope = ?", user(1).pk).one().bytes);
+    expect(bytes).toBe(0);
+    expect(old.result.status).toBe("stored");
+    expect(fresh.result.status).toBe("stored");
+  });
+});

@@ -23,6 +23,8 @@ object MailboxProtocol {
         data class Message(val message: MailboxMessage) : Frame
         data class Acked(val through: Long) : Frame
         data class Error(val code: String, val retryable: Boolean) : Frame
+        /** A typing or presence signal passed straight through; nothing about it was stored. */
+        data class Signal(val envelope: String) : Frame
         data object Other : Frame
     }
 
@@ -34,6 +36,7 @@ object MailboxProtocol {
             "message" -> message(o)?.let { Frame.Message(it) } ?: Frame.Other
             "acked" -> Frame.Acked(o.getLong("through"))
             "error" -> o.getJSONObject("error").let { Frame.Error(it.optString("code"), it.optBoolean("retryable")) }
+            "signal" -> o.optString("envelope").takeIf { it.isNotEmpty() }?.let { Frame.Signal(it) } ?: Frame.Other
             else -> Frame.Other
         }
     } catch (e: JSONException) {
@@ -52,6 +55,9 @@ object MailboxProtocol {
     fun syncFrame(after: Long): String = JSONObject().put("type", "sync").put("after", after).toString()
 
     fun ackFrame(through: Long): String = JSONObject().put("type", "ack").put("through", through).toString()
+
+    fun signalFrame(recipient: String, envelope: String): String =
+        JSONObject().put("type", "signal").put("to", recipient).put("envelope", envelope).toString()
 
     fun sendBody(recipient: String, id: String, envelope: String): String = JSONObject()
         .put("v", VERSION)

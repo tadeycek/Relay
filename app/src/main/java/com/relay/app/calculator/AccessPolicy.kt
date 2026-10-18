@@ -1,22 +1,21 @@
 package com.relay.app.calculator
 
-data class AccessState(val configured: Boolean = false, val failures: Int = 0) {
-    val locked: Boolean get() = failures >= 3
-}
+data class AccessState(val configured: Boolean = false, val failures: Int = 0)
 
-enum class AccessResult { ENROLLED, UNLOCKED, REJECTED, LOCKED }
+enum class AccessResult { ENROLLED, UNLOCKED, REJECTED, WIPE }
 
 object AccessPolicy {
+    /**
+     * Wrong codes in a row before every bit of Relay data on the phone is erased (Tadej, 2026-10-18;
+     * it replaced the owner-cleared lockout). A correct code resets the count.
+     */
+    const val WIPE_AFTER = 10
+
     fun submit(state: AccessState, matches: Boolean): Pair<AccessState, AccessResult> = when {
-        state.locked -> state to AccessResult.LOCKED
         !state.configured -> AccessState(configured = true) to AccessResult.ENROLLED
         matches -> state.copy(failures = 0) to AccessResult.UNLOCKED
         else -> state.copy(failures = state.failures + 1).let {
-            it to if (it.locked) AccessResult.LOCKED else AccessResult.REJECTED
+            it to if (it.failures >= WIPE_AFTER) AccessResult.WIPE else AccessResult.REJECTED
         }
     }
-
-    /** An owner command only clears the lockout it actually acknowledged, never a later one. */
-    fun canApplyOwnerUnlock(lockoutSequence: Long, unlockThroughSequence: Long): Boolean =
-        lockoutSequence > 0 && unlockThroughSequence >= lockoutSequence
 }

@@ -22,6 +22,8 @@ export type ErrorCode =
   | "id_conflict"
   | "recipient_full"
   | "mailbox_full"
+  | "rate_limited"
+  | "forbidden"
   | "storage_error";
 
 /** Per-delivery and request limits. Defaults are the pilot budgets from the plan; tests override them. */
@@ -35,10 +37,19 @@ export interface Limits {
   maxRequestBytes: number;
   maxSocketsPerIdentity: number;
   sessionTtlMs: number;
+  /** Waiting messages older than this are dropped: the app refuses anything older than 7 days anyway. */
+  pendingLifetimeMs: number;
+  maxSignalBytes: number;
+  signalsPerMinute: number;
+  maxMediaBytes: number;
+  maxMediaRecipients: number;
+  mediaLifetimeMs: number;
+  mediaChunkBytes: number;
 }
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
+const DAY = 24 * 60 * 60 * 1000;
 
 export const DEFAULT_LIMITS: Limits = {
   maxEnvelopeBytes: 128 * KIB,
@@ -52,6 +63,17 @@ export const DEFAULT_LIMITS: Limits = {
   maxRequestBytes: 16 * 128 * KIB + 64 * KIB,
   maxSocketsPerIdentity: 4,
   sessionTtlMs: 60 * 60 * 1000,
+  pendingLifetimeMs: 8 * DAY,
+  // Typing and presence: a few hundred bytes of gift wrap each; a busy group chat stays well under the rate.
+  maxSignalBytes: 16 * KIB,
+  signalsPerMinute: 120,
+  // The app's 25 MiB media limit plus the AES-GCM nonce and tag.
+  maxMediaBytes: 25 * MIB + 64,
+  // A group has at most sixteen members besides the sender.
+  maxMediaRecipients: 16,
+  mediaLifetimeMs: 8 * DAY,
+  // Well under the 2 MB a single SQLite value may hold in a Durable Object.
+  mediaChunkBytes: 1 * MIB,
 };
 
 /** Optional numeric overrides from Worker vars (strings), e.g. small caps in tests. */
@@ -72,6 +94,13 @@ export function limitsFrom(env: Partial<Record<string, unknown>>): Limits {
     maxRequestBytes: pick("MAX_REQUEST_BYTES", DEFAULT_LIMITS.maxRequestBytes),
     maxSocketsPerIdentity: pick("MAX_SOCKETS_PER_IDENTITY", DEFAULT_LIMITS.maxSocketsPerIdentity),
     sessionTtlMs: pick("SESSION_TTL_MS", DEFAULT_LIMITS.sessionTtlMs),
+    pendingLifetimeMs: pick("PENDING_LIFETIME_MS", DEFAULT_LIMITS.pendingLifetimeMs),
+    maxSignalBytes: pick("MAX_SIGNAL_BYTES", DEFAULT_LIMITS.maxSignalBytes),
+    signalsPerMinute: pick("SIGNALS_PER_MINUTE", DEFAULT_LIMITS.signalsPerMinute),
+    maxMediaBytes: pick("MAX_MEDIA_BYTES", DEFAULT_LIMITS.maxMediaBytes),
+    maxMediaRecipients: pick("MAX_MEDIA_RECIPIENTS", DEFAULT_LIMITS.maxMediaRecipients),
+    mediaLifetimeMs: pick("MEDIA_LIFETIME_MS", DEFAULT_LIMITS.mediaLifetimeMs),
+    mediaChunkBytes: pick("MEDIA_CHUNK_BYTES", DEFAULT_LIMITS.mediaChunkBytes),
   };
 }
 

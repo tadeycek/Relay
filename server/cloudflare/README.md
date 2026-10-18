@@ -1,8 +1,10 @@
 # Relay mailbox (Cloudflare)
 
-A small private mailbox for Relay: one Cloudflare Worker in front of one SQLite-backed Durable Object, on the
-Workers Free plan. It forwards the app's existing encrypted packets between paired phones. The phones keep the
-history; the server deletes a message as soon as the recipient's phone confirms it was stored.
+Relay's own delivery server, and since 2026-10-18 the app's only network service: one Cloudflare Worker in
+front of SQLite-backed Durable Objects, on the Workers Free plan. It forwards the app's existing encrypted
+packets between paired phones, passes live typing/presence signals without storing them, and holds encrypted
+photos and videos. The phones keep the history; the server deletes a message or file as soon as its recipients
+have it, and anything uncollected after 8 days.
 See [PROTOCOL.md](PROTOCOL.md) for the contract.
 
 ```
@@ -14,7 +16,8 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 | Path | What |
 |---|---|
 | `src/index.ts` | Edge router: health, routing, refuses anonymous or oversized requests before they cost a Durable Object request |
-| `src/mailbox.ts` | The Durable Object: auth replay check, transactional store, catch-up, receipts, hibernating sockets, schema migrations |
+| `src/mailbox.ts` | The mailbox Durable Object: auth replay check, transactional store, catch-up, receipts, live signals, hibernating sockets, schema migrations |
+| `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after all confirm or 8 days |
 | `src/auth.ts` | NIP-98 request auth |
 | `src/protocol.ts` | Limits, error codes, shared types |
 | `client/mailbox-client.ts` | Minimal client used by the tests and tools: signing, NIP-17 wrap and open |
@@ -65,7 +68,8 @@ Workers Free per day (Cloudflare pricing page, checked 2026-10-18): 100,000 Dura
 13,000 GB-s duration, 5 M rows read, **100,000 rows written**, 5 GB stored. Going over any of them makes those
 operations fail until 00:00 UTC. Rows written is the binding limit. Measured costs: about 5.3 rows written per
 delivery and about 2 per confirmed message. That's roughly 27,000 a day for an assumed 10 users × 100 messages,
-30% to groups, including the 10-minute uptime probe. Set `EXPOSE_METRICS=1` to get an `x-relay-sql-rows` header
+30% to groups, including the 10-minute uptime probe. Live signals write nothing; a photo costs a handful of
+rows (one per 1 MiB chunk plus one per recipient). Set `EXPOSE_METRICS=1` to get an `x-relay-sql-rows` header
 (row counts only) on every response.
 
 ## Uptime probe

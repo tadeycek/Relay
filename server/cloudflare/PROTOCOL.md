@@ -1,7 +1,9 @@
 # Relay mailbox protocol, v1
 
-A private store-and-forward mailbox for Relay's existing end-to-end encrypted packets. Phones keep their
-history locally; the server only holds a message until the recipient's phone confirms it stored it.
+A private store-and-forward mailbox for Relay's existing end-to-end encrypted packets, plus live typing and
+presence signals and encrypted photo/video storage. Since 2026-10-18 it is Relay's only network service: the
+app contacts no public relay. Phones keep their history locally; the server only holds a message (or file)
+until the recipient's phone confirms it stored it, and drops anything uncollected after 8 days.
 
 `src/protocol.ts` is the source of truth for limits and error codes; this file explains the contract.
 
@@ -69,6 +71,22 @@ always at least one message).
 send it after the local database commit, never on receipt into memory. The server then deletes those messages
 completely; nothing about them stays (decided 2026-10-18).
 
+Messages nobody collects within 8 days are deleted too. The app refuses messages older than 7 days anyway.
+
+### Media: `PUT | GET | DELETE /v1/media/<sha256>`
+
+Encrypted photos and videos (the app encrypts with AES-256-GCM before uploading; the key travels only inside
+the end-to-end encrypted message). Each file lives in its own storage object named after the SHA-256 of its
+bytes, so a large transfer never holds up the mailbox.
+
+| Request | Who | Effect |
+|---|---|---|
+| `PUT`, body = file, `x-relay-recipients: <pubkey>,<pubkey>,...` | any allowlisted sender | Stores it (up to 25 MiB) for 1–16 allowlisted recipients. The bytes must hash to the address. A repeat upload only adds recipients. |
+| `GET` | a named recipient | The file. Anyone else gets `404`, the same as for a file that doesn't exist. |
+| `DELETE` | a named recipient | "I have stored it." When every recipient has confirmed, the server deletes the file and everything about it. |
+
+Files nobody collects are deleted after 8 days.
+
 ### `GET /v1/health`
 
 Unauthenticated liveness of the edge Worker. It doesn't touch the mailbox.
@@ -88,6 +106,8 @@ and the client reconnects with fresh auth. At most 4 sockets per identity; the o
 | client → server | `{"type":"ack","through":<seq>,"ref":"…"}`, answered by `{"type":"acked","ref":…,"acked":<n>,"through":<seq>}` |
 | server → client | `{"type":"error","ref":…,"error":{"code":…,"retryable":…}}` |
 | client → server | `ping` (raw text), answered with `pong` by the platform without waking the server |
+| client → server | `{"type":"signal","to":<pubkey>,"envelope":<gift wrap>}`: typing or presence, passed to the recipient's open sockets and **never stored** (≤16 KiB, ≤120 a minute per socket; a recipient who isn't connected misses it) |
+| server → client | `{"type":"signal","from":<pubkey>,"envelope":…}` |
 
 ### Client loop
 

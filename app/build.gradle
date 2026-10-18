@@ -5,13 +5,6 @@ plugins {
 }
 
 def previewBuild = providers.gradleProperty('relayPreview').getOrElse('false').toBoolean()
-def localOwnerConfig = new Properties()
-def ownerConfigFile = rootProject.file('.local/owner-config.properties')
-if (ownerConfigFile.exists()) ownerConfigFile.withInputStream { localOwnerConfig.load(it) }
-def ownerPublicKey = localOwnerConfig.getProperty('owner_pubkey', '')
-def ownerConfig = new Properties()
-// Relay recovery needs only the public owner key. Never embed local service credentials with it.
-if (!previewBuild && ownerPublicKey.isBlank()) ownerConfig.putAll(localOwnerConfig)
 // Pilot delivery server (server/cloudflare). Kept out of the repository; builds without it use relays only.
 def mailboxConfig = new Properties()
 def mailboxConfigFile = rootProject.file('.local/mailbox.properties')
@@ -28,9 +21,6 @@ android {
         versionCode 12
         versionName previewBuild ? '1.11-preview' : '1.11'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
-        buildConfigField 'String', 'OWNER_PUBLIC_KEY', groovy.json.JsonOutput.toJson(ownerPublicKey)
-        buildConfigField 'String', 'OWNER_SERVICE_URL', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('url', ''))
-        buildConfigField 'String', 'OWNER_ENROLLMENT_TOKEN', groovy.json.JsonOutput.toJson(ownerConfig.getProperty('enrollment_token', ''))
         buildConfigField 'String', 'MAILBOX_URL', groovy.json.JsonOutput.toJson(mailboxConfig.getProperty('url', ''))
     }
 
@@ -113,12 +103,11 @@ dependencies {
     debugImplementation 'androidx.compose.ui:ui-test-manifest'
 }
 
-// A distributed app pins the owner recovery public key (or explicitly configures legacy HTTPS).
+// A distributed app talks only to Relay's own delivery server, so a release must have one built in.
 gradle.taskGraph.whenReady { graph ->
     if (graph.allTasks.any { it.name in ['assembleRelease', 'bundleRelease'] }) {
-        if (!(ownerPublicKey ==~ /[0-9a-f]{64}/) && (!ownerConfig.getProperty('url', '').startsWith('https://') ||
-                ownerConfig.getProperty('enrollment_token', '').isBlank())) {
-            throw new GradleException('Run owner/run.sh --prepare to configure the owner public key before a release build.')
+        if (!mailboxConfig.getProperty('url', '').startsWith('https://')) {
+            throw new GradleException('Set url=https://... in .local/mailbox.properties (the delivery server) before a release build.')
         }
     }
 }

@@ -16,9 +16,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
-import com.relay.app.calculator.CalculatorAccessStore
 import com.relay.app.data.model.PinExpiry
 import com.relay.app.transport.TransportStatus
 import com.relay.app.ui.components.ChoiceRow
@@ -169,20 +166,11 @@ private fun PrivacyPage(vm: SettingsViewModel) {
 @Composable
 private fun SecurityPage(vm: SettingsViewModel) {
     val context = LocalContext.current
-    val clipboard = LocalClipboardManager.current
-    val recoveryId = remember { CalculatorAccessStore.get(context).credentials().first }
     EmergencyReset()
     SectionHeader("Calculator access")
-    Text("Three wrong codes lock messaging until the owner clears the lockout. " +
-        "The owner receives a random installation ID and access reports, not your messages or code.",
+    Text("${com.relay.app.calculator.AccessPolicy.WIPE_AFTER} wrong codes in a row erase all of Relay's messages, contacts, " +
+        "photos and keys on this phone, as if it had just been installed. The calculator keeps working.",
         style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
-    ListRow(
-        headline = "Recovery ID",
-        supporting = recoveryId,
-        onClick = { clipboard.setText(AnnotatedString(recoveryId)) },
-        trailing = { Text("Copy", style = MaterialTheme.typography.labelLarge, color = Accent) },
-    )
-    OwnerDiagnosticsSettings()
     SectionHeader("Device lock")
     ToggleRow(
         "App lock",
@@ -214,14 +202,9 @@ private fun ConnectionPage(vm: SettingsViewModel) {
         trailing = { Text("Reconnect", style = MaterialTheme.typography.labelLarge, color = Accent) },
     )
     if (vm.mailboxAvailable) {
-        ToggleRow(
-            "Send through Relay's delivery server (pilot)",
-            vm.mailboxEnabled,
-            vm::updateMailboxEnabled,
-            supporting = "Messages to contacts in the pilot go through Relay's own server; everyone else is reached through public relays. " +
-                "Messages from the server keep arriving either way. They stay end-to-end encrypted and are deleted from the server once " +
-                "delivered; the server can see who messages whom, and when.",
-        )
+        Text("Messages, photos and typing go only through Relay's own delivery server; no public relay is used. " +
+            "Everything stays end-to-end encrypted and is deleted from the server once delivered. The server can see who " +
+            "messages whom, and when.", modifier = Modifier.padding(RelaySpacing.lg), color = TextSecondary)
     }
     Text("No running-in-background notification. Messages are received while the process is active or during Android's periodic background checks (15-minute minimum; battery restrictions can delay them longer). Open the app for prompt delivery.",
         modifier = Modifier.padding(RelaySpacing.lg), color = TextSecondary)

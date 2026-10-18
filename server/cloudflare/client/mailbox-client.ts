@@ -42,8 +42,9 @@ export function identityFromHex(skHex: string): Identity {
   return identity(Uint8Array.from(skHex.match(/../g)!.map((b) => parseInt(b, 16))));
 }
 
-async function sha256Hex(data: string): Promise<string> {
-  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(data))));
+export async function sha256Hex(data: string | Uint8Array): Promise<string> {
+  const bytes = typeof data === "string" ? new TextEncoder().encode(data) : data;
+  return hex(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes as BufferSource)));
 }
 
 function base64(text: string): string {
@@ -64,9 +65,9 @@ export interface AuthOptions {
  * The random nonce keeps two identical requests in the same second from sharing an event id,
  * which the server would otherwise refuse as a replay.
  */
-export async function authHeader(sk: Uint8Array, method: string, url: string, body?: string, opts: AuthOptions = {}): Promise<string> {
+export async function authHeader(sk: Uint8Array, method: string, url: string, body?: string | Uint8Array, opts: AuthOptions = {}): Promise<string> {
   const tags = [["u", opts.url ?? url], ["method", opts.method ?? method], ["nonce", hex(crypto.getRandomValues(new Uint8Array(16)))]];
-  const payload = opts.payload !== undefined ? opts.payload : body ? await sha256Hex(body) : null;
+  const payload = opts.payload !== undefined ? opts.payload : body && body.length > 0 ? await sha256Hex(body) : null;
   if (payload !== null) tags.push(["payload", payload]);
   const event = finalizeEvent(
     { kind: opts.kind ?? 27235, created_at: opts.createdAt ?? Math.floor(Date.now() / 1000), tags, content: "" },
@@ -135,6 +136,26 @@ export class MailboxClient {
 
   ack(through: number): Promise<Reply> {
     return this.request("POST", "/v1/ack", { v: 1, through });
+  }
+
+  /** Uploads an encrypted file that only [recipients] may download. Its address is its SHA-256. */
+  async putMedia(blob: Uint8Array, recipients: string[]): Promise<Reply & { hash: string }> {
+    const hash = await sha256Hex(blob);
+    const url = `${this.base}/v1/media/${hash}`;
+    const headers = { Authorization: await authHeader(this.me.sk, "PUT", url, blob), "x-relay-recipients": recipients.join(",") };
+    const response = await this.fetcher(new Request(url, { method: "PUT", headers, body: blob as BodyInit }));
+    return { status: response.status, body: await response.json().catch(() => null), headers: response.headers, hash };
+  }
+
+  async getMedia(hash: string): Promise<{ status: number; bytes: Uint8Array | null }> {
+    const url = `${this.base}/v1/media/${hash}`;
+    const response = await this.fetcher(new Request(url, { headers: { Authorization: await authHeader(this.me.sk, "GET", url) } }));
+    return { status: response.status, bytes: response.ok ? new Uint8Array(await response.arrayBuffer()) : (await response.arrayBuffer(), null) };
+  }
+
+  /** Tells the server this recipient has the file; it is deleted once every recipient has. */
+  confirmMedia(hash: string): Promise<Reply> {
+    return this.request("DELETE", `/v1/media/${hash}`);
   }
 
   socketUrl(): string {

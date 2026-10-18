@@ -115,14 +115,6 @@ class RelayPreferences(context: Context) {
         get() = prefs.getBoolean(KEY_TOR_FALLBACK, false)
         set(v) { prefs.edit().putBoolean(KEY_TOR_FALLBACK, v).apply() }
 
-    /**
-     * Send through Relay's own delivery server (pilot builds only) to contacts on it. On by default;
-     * receiving from the server doesn't depend on it, so switching it off strands nothing.
-     */
-    var mailboxEnabled: Boolean
-        get() = prefs.getBoolean(KEY_MAILBOX_ENABLED, true)
-        set(v) { prefs.edit().putBoolean(KEY_MAILBOX_ENABLED, v).apply() }
-
     /** Blossom media servers tried in order for uploads (one URL per stored line). Falls back to defaults. */
     var blossomServers: List<String>
         get() = prefs.getString(KEY_BLOSSOM_SERVERS, null)
@@ -143,7 +135,6 @@ class RelayPreferences(context: Context) {
         private const val KEY_ASKED_NOTIF_PERMISSION = "asked_notification_permission"
         private const val KEY_TOR_ENABLED = "tor_enabled"
         private const val KEY_TOR_FALLBACK = "tor_fallback_direct"
-        private const val KEY_MAILBOX_ENABLED = "mailbox_enabled"
         private const val KEY_BLOSSOM_SERVERS = "blossom_servers"
         private const val KEY_BACKGROUND_CONNECTION = "background_connection"
         private const val KEY_NOSTR_RELAYS = "nostr_relays"

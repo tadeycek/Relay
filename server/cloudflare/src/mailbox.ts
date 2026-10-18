@@ -34,6 +34,9 @@ interface Session {
   pubkey: string;
   connectedAt: number;
   expiresAt: number;
+  /** Live-signal rate window: start of the current minute and how many were relayed in it. */
+  signalWindow?: number;
+  signalCount?: number;
 }
 
 type AuthOk = Extract<AuthOutcome, { ok: true }>;
@@ -208,6 +211,8 @@ export class Mailbox extends DurableObject<Env> {
         const acked = this.ack(session.pubkey, frame.through);
         this.prune(Date.now());
         safeSend(ws, { type: "acked", ref, acked, through: frame.through });
+      } else if (frame?.type === "signal" && typeof frame.to === "string" && typeof frame.envelope === "string") {
+        this.relaySignal(ws, session, frame.to, frame.envelope, ref);
       } else {
         safeSend(ws, { type: "error", ref, error: { code: "bad_request", retryable: false } });
       }
@@ -241,6 +246,23 @@ export class Mailbox extends DurableObject<Env> {
       return null;
     }
     return s;
+  }
+
+  /**
+   * Typing and presence: passed from socket to socket and never stored, so they cost no rows. A
+   * recipient who isn't connected simply misses it, which is what best-effort signals want.
+   */
+  private relaySignal(ws: WebSocket, session: Session, to: string, envelope: string, ref: string | undefined): void {
+    const refuse = (code: ErrorCode) => safeSend(ws, { type: "error", ref, error: { code, retryable: false } });
+    if (!PUBKEY.test(to) || !this.allowed.has(to)) return refuse("unknown_recipient");
+    if (envelope.length === 0 || utf8.encode(envelope).byteLength > this.limits.maxSignalBytes) return refuse("envelope_too_large");
+    const minute = Math.floor(Date.now() / 60_000);
+    const count = session.signalWindow === minute ? (session.signalCount ?? 0) + 1 : 1;
+    ws.serializeAttachment({ ...session, signalWindow: minute, signalCount: count });
+    if (count > this.limits.signalsPerMinute) return refuse("rate_limited");
+    for (const target of this.ctx.getWebSockets(to)) {
+      if (this.session(target)) safeSend(target, { type: "signal", from: session.pubkey, envelope });
+    }
   }
 
   private push(recipient: string, message: InboxMessage): void {
@@ -328,6 +350,17 @@ export class Mailbox extends DurableObject<Env> {
     if (now - this.lastPruneAt < PRUNE_INTERVAL_MS) return;
     this.lastPruneAt = now;
     this.q("DELETE FROM auth_seen WHERE id IN (SELECT id FROM auth_seen WHERE expires_at < ? LIMIT 200)", now);
+    // Messages nobody collected within the lifetime (e.g. for a phone that was wiped) would be
+    // refused by the app as too old anyway; dropping them keeps the per-recipient caps honest.
+    this.ctx.storage.transactionSync(() => {
+      const stale = this.q<{ recipient: string; size: number }>(
+        "DELETE FROM deliveries WHERE seq IN (SELECT seq FROM deliveries WHERE stored_at < ? LIMIT 200) RETURNING recipient, size",
+        now - this.limits.pendingLifetimeMs,
+      );
+      const freed = new Map<string, number>();
+      for (const row of stale) freed.set(row.recipient, (freed.get(row.recipient) ?? 0) + row.size);
+      for (const [recipient, bytes] of freed) this.q("UPDATE pending_bytes SET bytes = bytes - ? WHERE scope = ?", bytes, recipient);
+    });
   }
 
   private pendingBytes(recipient: string): number {
