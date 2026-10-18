@@ -76,7 +76,9 @@ object ConversationEvents {
         if (!GroupProtocol.eligible(sender)) return true
         val event=ConversationEventBody.parse(body) ?: return true
         if(event.kind=="reaction") apply(context,scope(sender.id,null),sender.nostrPubkey!!,event)
-        else check(MessageRepository(MessagingDb.get(context)).insertMessageSync(Message(contactId=sender.id,body=body,type=MessageType.SCREENSHOT,isSent=false,msgId=payloadId,timestamp=time))!=-1L)
+        else MessageRepository(MessagingDb.get(context)).let { repo ->
+            if (!repo.hasMsgIdSync(sender.id,payloadId)) check(repo.insertMessageSync(Message(contactId=sender.id,body=body,type=MessageType.SCREENSHOT,isSent=false,msgId=payloadId,timestamp=time))!=-1L)
+        }
         context.sendBroadcast(Intent("com.relay.app.NEW_MESSAGE").setPackage(context.packageName).putExtra("contact_id",sender.id))
         return true
     }

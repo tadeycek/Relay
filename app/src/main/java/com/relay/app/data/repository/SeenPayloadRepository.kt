@@ -7,6 +7,17 @@ import com.relay.app.data.db.RelayDbHelper
 /** Persistent "already processed" record so replayed relay events are harmless across restarts. */
 class SeenPayloadRepository(private val dbHelper: RelayDbHelper) {
 
+    /** True if [payloadId] was already handled. */
+    fun isSeenSync(payloadId: String): Boolean {
+        val db = dbHelper.readableDatabase
+        val cursor = db.query(
+            SeenPayloads.TABLE, arrayOf(SeenPayloads.COL_PAYLOAD_ID),
+            "${SeenPayloads.COL_PAYLOAD_ID} = ?", arrayOf(payloadId),
+            null, null, null, "1",
+        )
+        return cursor.use { it.moveToFirst() }
+    }
+
     /** Returns true the first time [payloadId] is recorded, false if it was already there. */
     fun markIfNewSync(payloadId: String, now: Long = System.currentTimeMillis()): Boolean {
         val db = dbHelper.writableDatabase

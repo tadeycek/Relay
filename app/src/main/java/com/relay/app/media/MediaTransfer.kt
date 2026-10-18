@@ -81,6 +81,9 @@ object MediaReceiver {
 
     fun receive(context: Context, contact: Contact, payloadId: String, ref: MediaRef, sentAt: Long) {
         val repo = MessageRepository(MessagingDb.get(context))
+        // A retried payload whose media was already stored: the file name derives from the payload id,
+        // so downloading again would overwrite the stored file and add a second row for it.
+        if (repo.hasMsgIdSync(contact.id, payloadId)) return
         val alertToken = com.relay.app.messaging.ConversationNotifications.token(context, contact.id)
 
         // Fetching a URL a sender chose reveals our IP to that host, so only do it for contacts whose
