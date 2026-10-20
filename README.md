@@ -1,6 +1,9 @@
 # Relay
 
-## 1.14 preview: local delivery and unlock update
+## 1.15 preview: loading artwork update
+
+Version 1.15-preview (versionCode 16) adds all five supplied loading images, including
+the enhanced artwork in the 1.5% slot. It retains the delivery fixes from 1.14.
 
 Active/last-active sharing and its labels have been removed. Upgrading removes only the retired
 activity-history table; saved contacts, messages, keys and pending deliveries remain. Old peers'
