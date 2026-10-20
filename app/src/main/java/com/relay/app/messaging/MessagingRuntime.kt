@@ -83,7 +83,6 @@ object MessagingRuntime {
         scope.launch {
             val db = MessagingDb.get(appContext)
             runCatching { SeenPayloadRepository(db).purgeOldSync() }
-            PresenceSignals.load(appContext)
             transport.start()
         }
 
@@ -105,7 +104,6 @@ object MessagingRuntime {
             transport.status.collect {
                 if (it == TransportStatus.ONLINE) {
                     retryQueuedNow(appContext)
-                    launch { PresenceSignals.heartbeat(appContext) }
                     com.relay.app.transport.mailbox.MailboxPush.refresh(appContext)
                     com.relay.app.media.ProfilePhotoSync.syncPending(appContext)
                     com.relay.app.groups.GroupMedia.retryPending(appContext)
@@ -125,12 +123,6 @@ object MessagingRuntime {
                 runCatching { handler.handleSignal(envelope) }.onFailure { Log.w(TAG, "live signal ignored", it) }
             }
         }
-        scope.launch {
-            while(true) {
-                runCatching { PresenceSignals.heartbeat(appContext) }.onFailure { Log.w(TAG,"activity lease failed",it) }
-                delay(20_000L)
-            }
-        }
         watchNetwork(appContext, transport)
 
         com.relay.app.p2p.P2pListener.ensureListening(appContext)
@@ -147,11 +139,14 @@ object MessagingRuntime {
             // Lanes run on the runtime scope; each finished lane kicks this loop to pick up newer work.
             val worker = OutboxWorker(appContext, transport, scope, ::kick)
             val outbox = OutboxRepository(MessagingDb.get(appContext))
+            val groupPreparation = RefreshQueue(scope, { Log.e(TAG, "group preparation failed", it) }) {
+                if (com.relay.app.groups.GroupDispatch.drain(appContext)) kick()
+            }
             while (true) {
                 if (transport.status.value == TransportStatus.ONLINE) {
                     try {
-                        com.relay.app.groups.GroupDispatch.drain(appContext)
                         worker.drain()
+                        groupPreparation.request()
                     } catch (e: Exception) {
                         Log.e(TAG, "outbox drain failed", e)
                     }

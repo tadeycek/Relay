@@ -2,6 +2,7 @@ package com.relay.app.calculator
 
 import android.os.SystemClock
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.ViewModel
@@ -14,7 +15,12 @@ class CalculatorSession : ViewModel() {
     // Only an explicit, in-flight picker may retain the private navigation tree. Never persisted.
     var transitionUntil by mutableLongStateOf(0L)
         private set
-    fun startTransition(enabled: Boolean) { transitionUntil = if (enabled) SystemClock.elapsedRealtime() + 4000 else 0 }
+    var transitionSlot by mutableIntStateOf(-1)
+        private set
+    fun startTransition(enabled: Boolean) {
+        transitionSlot = if (enabled) UnlockLoadingPolicy.pick() else -1
+        transitionUntil = if (enabled) SystemClock.elapsedRealtime() + UnlockLoadingPolicy.DURATION_MS else 0
+    }
     fun finishTransition() { transitionUntil = 0 }
     var pickerOpen = false
     fun keepChatForPicker() = SessionPolicy.retainChatForPicker(pickerOpen, deadline, SystemClock.elapsedRealtime())
@@ -24,6 +30,9 @@ class CalculatorSession : ViewModel() {
     fun isActive() = remainingMs() > 0
 
     fun expireIfNeeded(now: Long = SystemClock.elapsedRealtime()) {
-        if (SessionPolicy.remainingMs(deadline, now) == 0L) deadline = 0L
+        if (SessionPolicy.remainingMs(deadline, now) == 0L) {
+            deadline = 0L
+            finishTransition()
+        }
     }
 }

@@ -157,7 +157,7 @@ fun ContactsScreen(navController: NavController) {
 private fun ContactRow(contact: Contact, onClick: () -> Unit) {
     ListRow(
         headline = contact.name,
-        supporting = if (com.relay.app.groups.GroupProtocol.eligible(contact)) com.relay.app.ui.screens.chat.contactActivityLabel(contact.nostrPubkey) else contact.subtitle,
+        supporting = contact.subtitle,
         onClick = onClick,
         maxSupportingLines = 1,
         leading = { ContactGlyph(contact, size = AvatarSize) },

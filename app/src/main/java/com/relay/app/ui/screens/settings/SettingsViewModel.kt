@@ -35,10 +35,6 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
     var theme by mutableStateOf(prefs.theme)
         private set
 
-    var shareActivity by mutableStateOf(prefs.shareActivity)
-        private set
-    fun updateShareActivity(value: Boolean) { prefs.shareActivity=value; shareActivity=value }
-
     var typingIndicators by mutableStateOf(prefs.typingIndicators)
         private set
     fun updateTypingIndicators(value: Boolean) {

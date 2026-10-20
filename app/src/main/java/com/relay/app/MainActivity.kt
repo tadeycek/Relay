@@ -115,11 +115,11 @@ class MainActivity : FragmentActivity() {
             if (!calculatorUnlocked.value) {
                 CalculatorScreen(onUnlock = {
                     calculatorSession.unlock()
-                    calculatorSession.startTransition(RelayPreferences(applicationContext).unlockDance && android.animation.ValueAnimator.areAnimatorsEnabled())
+                    calculatorSession.startTransition(RelayPreferences(applicationContext).unlockLoading)
                     calculatorUnlocked.value = true
                 })
             } else if (calculatorSession.transitionUntil > android.os.SystemClock.elapsedRealtime()) {
-                com.relay.app.calculator.UnlockDance(onSkip = calculatorSession::finishTransition)
+                com.relay.app.calculator.UnlockLoadingScreen(calculatorSession.transitionSlot)
             } else {
             privateScreenState.SaveableStateProvider("private_screens") {
             CompositionLocalProvider(LocalChatMediaPicker provides mediaPicker,
@@ -140,7 +140,7 @@ class MainActivity : FragmentActivity() {
                         promptAppUnlock(this@MainActivity) { isUnlocked.value = true }
                     })
                 } else {
-                    com.relay.app.ui.screens.chat.PrivateActivityPresence()
+                    com.relay.app.ui.screens.chat.PrivateConversationVisibility()
                     NotificationPermissionRequest(prefs)
 
                     val navController = rememberNavController()
@@ -217,7 +217,7 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun closePrivateScreens() {
-        com.relay.app.messaging.PresenceSignals.visible(applicationContext,false)
+        ActiveChat.foreground = false
         calculatorUnlocked.value = false
         isUnlocked.value = false
         ActiveChat.contactId = -1L

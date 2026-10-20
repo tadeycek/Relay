@@ -62,7 +62,8 @@ class ChatViewModel(
     private val _contact = MutableStateFlow<Contact?>(null)
     val contact: StateFlow<Contact?> = _contact.asStateFlow()
 
-    private val _toastMessage = MutableSharedFlow<String>()
+    private val _toastMessage = MutableSharedFlow<String>(extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
     val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
 
     private var smsUpdateReceiver: BroadcastReceiver? = null

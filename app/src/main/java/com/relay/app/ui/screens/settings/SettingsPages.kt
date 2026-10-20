@@ -57,7 +57,7 @@ fun AccountPageContent(page: AccountPage, vm: SettingsViewModel) {
 fun accountPageSummary(page: AccountPage, vm: SettingsViewModel): String = when (page) {
     AccountPage.NOTIFICATIONS -> if (vm.incomingMessageNotification) "Messages on" else "Messages off"
     AccountPage.LOCATION -> if (vm.locationRequestFrom == RelayPreferences.FROM_NOBODY) "No one can ask" else "Contacts can ask"
-    AccountPage.PRIVACY -> if (vm.shareActivity) "Active status on" else "Active status off"
+    AccountPage.PRIVACY -> "Typing and read receipts"
     AccountPage.SECURITY -> if (vm.appLock) "App lock on" else "App lock off"
     AccountPage.CONNECTION -> connectionText(vm.connectionStatus)
     AccountPage.APPEARANCE -> when (vm.theme) {
@@ -155,8 +155,6 @@ private fun LocationPage(vm: SettingsViewModel) {
 
 @Composable
 private fun PrivacyPage(vm: SettingsViewModel) {
-    ToggleRow("Share active status", vm.shareActivity, vm::updateShareActivity,
-        supporting = "Verified friends can see approximate activity while private screens are open. Status expires after one minute without an update.")
     ToggleRow("Typing indicators", vm.typingIndicators, vm::updateTypingIndicators,
         supporting = "Let verified friends see when you type. Indicators disappear automatically.")
     // Tor mode is switched off for the delivery-server pilot (2026-10-18); TorSetupGuide and
@@ -215,9 +213,9 @@ private fun ConnectionPage(vm: SettingsViewModel) {
 private fun AppearancePage(vm: SettingsViewModel) {
     val context = LocalContext.current
     val prefs = remember { RelayPreferences(context) }
-    var dance by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(prefs.unlockDance) }
-    ToggleRow("Dancing unlock illustration", dance, { dance = it; prefs.unlockDance = it },
-        supporting = "Show your illustration swaying and bouncing for four seconds after unlocking. Off by default; skipped when system animations are disabled.")
+    var loading by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(prefs.unlockLoading) }
+    ToggleRow("Three-second loading screen", loading, { loading = it; prefs.unlockLoading = it },
+        supporting = "Show a portrait scene after unlocking. Scene chances: 60%, 20%, 13%, 5.5%, 1.5%. Messaging continues in the background.")
     ChoiceRow(
         headline = "Theme",
         options = listOf(

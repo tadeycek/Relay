@@ -32,6 +32,7 @@ object IncomingClassifier {
      * then pin, then declined, else plain text.
      */
     fun classify(body: String): Classified {
+        if (RetiredActivity.isControl(body)) return Classified.Ignore
         if (SmsMessageParser.isPublicKeyMessage(body)) return Classified.PublicKey
         if (SmsMessageParser.isLocationRequest(body)) return Classified.LocationRequest
         if (MediaBody.isMedia(body)) {

@@ -54,9 +54,9 @@ class IncomingMessageHandler(context: Context) {
     fun handleSignal(envelope: IncomingEnvelope) {
         if (com.relay.app.calculator.CalculatorOnly.enabled(appContext)) return
         val body = envelope.payload.body
-        if (!body.startsWith(TypingBody.PREFIX) && !body.startsWith(PresenceBody.PREFIX)) return
+        if (!body.startsWith(TypingBody.PREFIX)) return
         val contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
-        if (!TypingSignals.handle(appContext, envelope.senderPubkeyHex, contact, body)) PresenceSignals.handle(appContext, contact, body)
+        TypingSignals.handle(appContext, envelope.senderPubkeyHex, contact, body)
     }
 
     /**
@@ -68,6 +68,7 @@ class IncomingMessageHandler(context: Context) {
         val now = System.currentTimeMillis()
         val payload = envelope.payload
 
+        if (RetiredActivity.isControl(payload.body)) return true
         val contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
 
         // Typing uses the authenticated NIP-17 encrypted transport directly, without durable replay rows.
@@ -76,7 +77,6 @@ class IncomingMessageHandler(context: Context) {
             TypingSignals.handle(appContext, envelope.senderPubkeyHex, contact, payload.body)
             return true
         }
-        if (PresenceSignals.handle(appContext,contact,payload.body)) return true
         SeenGate.run(
             isSeen = { seenRepo.isSeenSync(payload.id) },
             markSeen = { seenRepo.markIfNewSync(payload.id, now) },

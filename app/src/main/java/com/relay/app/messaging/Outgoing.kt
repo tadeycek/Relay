@@ -35,22 +35,25 @@ object Outgoing {
         plainBody: String,
         payloadId: String = PayloadCodec.newId(),
     ): String? {
+        return enqueuePrepared(context, prepareTo(recipient, innerKey, relayHints, contactId, plainBody, payloadId))
+    }
+
+    /** Prepares an encrypted entry without acquiring a database writer transaction. */
+    fun prepareTo(recipient: String, innerKey: String?, relayHints: List<String>, contactId: Long?,
+        plainBody: String, payloadId: String = PayloadCodec.newId(),
+        sealBody: (String?, String) -> String = InnerEnvelope::seal): OutboxEntry {
         val now = System.currentTimeMillis()
-        val body = InnerEnvelope.seal(innerKey, plainBody)
+        val body = sealBody(innerKey, plainBody)
         require(body.length <= PayloadCodec.MAX_BODY_LENGTH) { "Message is too large; shorten it and try again" }
         val payload = RelayPayload(id = payloadId, ts = now, body = body)
-        val stored = OutboxRepository(MessagingDb.get(context)).enqueueSync(
-            OutboxEntry(
-                contactId = contactId,
-                recipientPubkeyHex = recipient,
-                payloadId = payload.id,
-                payloadJson = PayloadCodec.encode(payload),
-                createdAt = now,
-                relayHints = relayHints,
-            )
-        )
+        return OutboxEntry(contactId = contactId, recipientPubkeyHex = recipient, payloadId = payload.id,
+            payloadJson = PayloadCodec.encode(payload), createdAt = now, relayHints = relayHints)
+    }
+
+    fun enqueuePrepared(context: Context, entry: OutboxEntry): String? {
+        val stored = OutboxRepository(MessagingDb.get(context)).enqueueSync(entry)
         if (stored == -1L) return null
         MessagingRuntime.kick()
-        return payload.id
+        return entry.payloadId
     }
 }
