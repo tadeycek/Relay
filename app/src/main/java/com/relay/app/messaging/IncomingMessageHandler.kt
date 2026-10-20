@@ -50,7 +50,14 @@ class IncomingMessageHandler(context: Context) {
 
     private val unknownSenders = SlidingWindowLimiter(maxEvents = 10, windowMs = 24L * 60 * 60 * 1000)
     private val locationRequestCooldown = CooldownLimiter(30_000L)
-    private val readReceiptCooldown = CooldownLimiter(30_000L)
+
+    fun handleSignal(envelope: IncomingEnvelope) {
+        if (com.relay.app.calculator.CalculatorOnly.enabled(appContext)) return
+        val body = envelope.payload.body
+        if (!body.startsWith(TypingBody.PREFIX) && !body.startsWith(PresenceBody.PREFIX)) return
+        val contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
+        if (!TypingSignals.handle(appContext, envelope.senderPubkeyHex, contact, body)) PresenceSignals.handle(appContext, contact, body)
+    }
 
     /**
      * Returns true once the message has been dealt with (stored, applied or deliberately ignored) and
@@ -159,9 +166,10 @@ class IncomingMessageHandler(context: Context) {
             }
 
             is Classified.ReadReceipt -> {
-                if (!readReceiptCooldown.allow(contact.id, now)) return
-                messageRepo.markReadUpToSync(contact.id, kind.upToTimestamp)
-                notifyUpdated(contact.id)
+                if (!com.relay.app.groups.GroupProtocol.eligible(contact)) return
+                val changed = kind.ids?.let { messageRepo.markReadIdsSync(contact.id, it) }
+                    ?: messageRepo.markReadUpToSync(contact.id, kind.upToTimestamp)
+                if (changed > 0) notifyUpdated(contact.id)
             }
 
             Classified.Ignore -> Unit

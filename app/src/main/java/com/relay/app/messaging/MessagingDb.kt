@@ -24,6 +24,7 @@ object MessagingDb {
 
 /** The chat the user currently has open, so a new message there does not also raise a notification. */
 object ActiveChat {
+    @Volatile var foreground: Boolean = false
     @Volatile var contactId: Long = -1L
     @Volatile var groupId: Long = -1L
 }

@@ -31,6 +31,15 @@ class MessagesViewModel(app: Application) : AndroidViewModel(app) {
     private val _loaded = MutableStateFlow(false)
     /** False until the first query returns, so the empty state is not flashed while loading. */
     val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+    private val _loadError = MutableStateFlow<String?>(null)
+    val loadError = _loadError.asStateFlow()
+    private val refreshes = com.relay.app.messaging.RefreshQueue(viewModelScope, { exception ->
+        _loadError.value = exception.message ?: "Couldn't load saved conversations"
+    }) {
+        _loadError.value = null
+        _conversations.value = repo.getConversations()
+        _loaded.value = true
+    }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) = reload()
@@ -43,11 +52,7 @@ class MessagesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun reload() {
-        viewModelScope.launch {
-            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.relay.app.messaging.MessageRetention.sweep(getApplication()) }
-            _conversations.value = repo.getConversations()
-            _loaded.value = true
-        }
+        refreshes.request()
     }
 
     override fun onCleared() {
@@ -63,6 +68,9 @@ class UnreadViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _total = MutableStateFlow(0)
     val total: StateFlow<Int> = _total.asStateFlow()
+    private val refreshes = com.relay.app.messaging.RefreshQueue(viewModelScope, { exception ->
+        android.util.Log.w("Unread", "unread refresh failed", exception)
+    }) { _total.value = repo.totalUnread() }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) = refresh()
@@ -75,7 +83,7 @@ class UnreadViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refresh() {
-        viewModelScope.launch { _total.value = repo.totalUnread() }
+        refreshes.request()
     }
 
     override fun onCleared() {

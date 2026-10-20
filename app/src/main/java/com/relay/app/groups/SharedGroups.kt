@@ -96,9 +96,7 @@ object SharedGroups {
         return members.filter { it.key != own }.mapNotNull { repo.findByNostrPubkeySync(it.key)?.takeIf(GroupProtocol::eligible)?.let(::friend) }
     }
     internal fun queue(context: Context, db: RelayDbHelper, to: Recipient, group: Long, packet: GroupProtocol.Packet) {
-        val payload = Outgoing.enqueueTo(context, to.key, to.inner, to.relays, to.contactId, GroupProtocol.format(packet)) ?: error("Couldn't queue group update")
-        if (packet is GroupProtocol.Event && packet.kind == "post")
-            db.writableDatabase.execSQL("INSERT INTO group_delivery(group_id,event,payload_id) VALUES(?,?,?)", arrayOf(group, packet.event, payload))
+        GroupDispatch.stage(context, db, to, group, packet)
     }
     private fun fanOut(context: Context, db: RelayDbHelper, stored: Stored, packet: GroupProtocol.Event, own: String) =
         recipients(db, stored.state, own).forEach { queue(context, db, it, stored.localId, packet) }
@@ -121,7 +119,7 @@ object SharedGroups {
             val id = save(db, state, null)
             friends.forEach { queue(context, db, friend(it), id, GroupProtocol.Sync(state)) }; id
         }
-        GroupProfiles.syncPending(context)
+        com.relay.app.messaging.MessagingRuntime.launchIo { GroupProfiles.syncPending(context) }
         notify(context, id); return id
     }
     @Synchronized fun changeMember(context: Context, id: Long, contactId: Long, add: Boolean) {
@@ -178,16 +176,18 @@ object SharedGroups {
         com.relay.app.messaging.GroupMessageNotifier.cancel(context, id)
         notify(context, id)
     }
-    @Synchronized fun send(context: Context, id: Long, text: String, mediaPath: String? = null, event: String = UUID.randomUUID().toString()) {
+    @Synchronized fun send(context: Context, id: Long, text: String, mediaPath: String? = null, event: String = UUID.randomUUID().toString()): GroupMessage? {
         val db = MessagingDb.get(context); val stored = get(db, id) ?: error("This is a legacy local group; create a new shared group")
         val own = NostrIdentity.publicKeyHex(context)
         require(!stored.hidden && stored.state.members.any { it.key == own }) { "You are no longer in this group" }
         val packet = event(stored.state, "post", own, text, event)
-        transaction(context) {
+        val accepted = transaction(context) {
             fanOut(context, db, stored, packet, own)
             store(context, db, stored.localId, stored.state, packet, own, mediaPath)
+            GroupMessageRepository(db).getByEventSync(id, event, own)
         }
         notify(context, id)
+        return accepted
     }
     @Synchronized fun purgeOwnHistory(context: Context, id: Long, before: Long) {
         val db = MessagingDb.get(context); val stored = get(db, id) ?: return
@@ -287,6 +287,7 @@ object SharedGroups {
         // Removed members keep their history but take nothing new.
         if (stored.state.members.none { it.key == own }) return
         if (e.kind == "profile") { GroupProfiles.apply(context, stored, e); return }
+        if (e.kind == "read") { GroupReadReceipts.apply(context, stored, e); return }
         var received = false
         transaction(context) { received = store(context, db, stored.localId, stored.state, e, own) }
         notify(context, stored.localId)

@@ -36,7 +36,9 @@ class GroupChatViewModel(
     private var historyLimit = com.relay.app.data.repository.HistoryWindow.PAGE_SIZE
     private val _hasOlder = MutableStateFlow(false)
     val hasOlder = _hasOlder.asStateFlow()
-    private var loadJob: kotlinx.coroutines.Job? = null
+    private var olderRequested = false
+    private var localRevision = 0L
+    private val localAcceptances = mutableMapOf<Long, Long>()
     fun loadOlder() { historyLimit = maxOf(historyLimit, _messages.value.size) + com.relay.app.data.repository.HistoryWindow.PAGE_SIZE; loadData(older = true) }
     private val db = com.relay.app.messaging.MessagingDb.get(app)
     private val groupRepo = GroupRepository(db)
@@ -94,34 +96,58 @@ class GroupChatViewModel(
 
     private val _messages = MutableStateFlow<List<GroupMessage>>(emptyList())
     val messages: StateFlow<List<GroupMessage>> = _messages.asStateFlow()
+    private val _loaded = MutableStateFlow(false)
+    val loaded = _loaded.asStateFlow()
+    private val _loadError = MutableStateFlow<String?>(null)
+    val loadError = _loadError.asStateFlow()
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+    private val refreshes = com.relay.app.messaging.RefreshQueue(viewModelScope, { exception ->
+        _loadError.value = exception.message ?: "Couldn't load saved group messages"
+    }) {
+        val revision = localRevision
+        val older = olderRequested
+        olderRequested = false
+        _loadError.value = null
+        val firstLoad = !_loaded.value
+        val loaded = readWindow(older)
+        if (firstLoad || older) _hasOlder.value = loaded.size == historyLimit
+        val additions = _messages.value.filter { (localAcceptances[it.id] ?: 0L) > revision }
+        _messages.value = (loaded + additions.filter { added -> loaded.none { it.id == added.id } })
+            .sortedWith(compareBy<GroupMessage> { it.timestamp }.thenBy { it.id })
+        localAcceptances.entries.removeAll { it.value <= revision }
+        _loaded.value = true
+        _group.value = groupRepo.getById(groupId)
+        markReadIfVisible()
+        _friends.value = contactRepo.getAllContacts().filter(com.relay.app.groups.GroupProtocol::eligible)
+    }
 
     private var receiver: BroadcastReceiver? = null
 
     init { refresh() }
 
     private suspend fun readWindow(older: Boolean = false): List<com.relay.app.data.model.GroupMessage> {
-        withContext(Dispatchers.IO) { com.relay.app.messaging.MessageRetention.sweep(getApplication()) }
-        val first = if(older) null else _messages.value.firstOrNull()
+        val first = if(older || !_loaded.value) null else _messages.value.firstOrNull()
         return groupMessageRepo.getMessages(groupId,historyLimit,first?.timestamp,first?.id ?: 0)
     }
 
     private fun loadData(older: Boolean = false) {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            _friends.value = contactRepo.getAllContacts().filter(com.relay.app.groups.GroupProtocol::eligible)
-            _group.value = groupRepo.getById(groupId)
-            val firstLoad = _messages.value.isEmpty()
-            val loaded = readWindow(older)
-            if(firstLoad || older) _hasOlder.value = loaded.size == historyLimit
-            _messages.value = loaded
-            markReadIfVisible()
-        }
+        olderRequested = olderRequested || older
+        refreshes.request()
     }
+
+    fun reload() = loadData()
 
     /** While this group is on screen its messages count as seen (see ChatViewModel.markReadIfVisible). */
     private suspend fun markReadIfVisible() {
-        if (ActiveChat.groupId != groupId) return
-        val changed = withContext(Dispatchers.IO) { groupMessageRepo.markGroupReadSync(groupId) }
+        if (ActiveChat.groupId != groupId || !ActiveChat.foreground || !_loaded.value) return
+        val visible = _messages.value
+        val changed = withContext(Dispatchers.IO) {
+            if (!ActiveChat.foreground || ActiveChat.groupId != groupId) return@withContext 0
+            val changed = groupMessageRepo.markGroupReadSync(groupId)
+            com.relay.app.groups.GroupReadReceipts.send(getApplication(), groupId, visible)
+            changed
+        }
         if (changed > 0) Broadcasts.sendUnreadChanged(getApplication<Application>())
     }
 
@@ -132,13 +158,13 @@ class GroupChatViewModel(
         receiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val incomingGroupId = intent.getLongExtra("group_id", -1L)
-                if (incomingGroupId == groupId) loadData()
+                if (incomingGroupId == groupId || intent.action == Broadcasts.PRIVATE_FOREGROUND) loadData()
             }
         }
         ContextCompat.registerReceiver(
             context,
             receiver,
-            IntentFilter("com.relay.app.NEW_GROUP_MESSAGE"),
+            IntentFilter("com.relay.app.NEW_GROUP_MESSAGE").apply { addAction(Broadcasts.PRIVATE_FOREGROUND) },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
     }
@@ -149,18 +175,24 @@ class GroupChatViewModel(
         receiver = null
     }
 
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error.asStateFlow()
     fun clearError() { _error.value = null }
     fun sendText(body: String, context: Context, onQueued: () -> Unit = {}) {
         if (_sending.value) return
         _sending.value = true
         viewModelScope.launch {
             try {
-                runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.send(context, groupId, body) } }
-                    .onSuccess { onQueued() }
+                runCatching { withContext(Dispatchers.IO) {
+                    checkNotNull(com.relay.app.groups.SharedGroups.send(context, groupId, body)) { "Couldn't save this message; draft kept" }
+                } }
+                    .onSuccess { accepted ->
+                        localRevision += 1
+                        localAcceptances[accepted.id] = localRevision
+                        _messages.value = (_messages.value.filterNot { it.id == accepted.id } + accepted)
+                            .sortedWith(compareBy<GroupMessage> { it.timestamp }.thenBy { it.id })
+                        onQueued()
+                    }
                     .onFailure { _error.value = it.message ?: "Couldn't queue this message" }
-                _messages.value = readWindow()
+                loadData()
             } finally { _sending.value = false }
         }
     }

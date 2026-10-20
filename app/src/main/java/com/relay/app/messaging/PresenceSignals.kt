@@ -17,8 +17,9 @@ object PresenceSignals {
     @Volatile private var lastTime = 0L
     private var advertised = false
     @Synchronized fun load(context: Context) {
-        observed.value = MessagingDb.get(context).readableDatabase.rawQuery("SELECT peer,last_at,active FROM contact_activity",null).use { c ->
+        val loaded = MessagingDb.get(context).readableDatabase.rawQuery("SELECT peer,last_at,active FROM contact_activity",null).use { c ->
             buildMap { while(c.moveToNext()) put(c.getString(0),PresenceBody.Status(c.getLong(1),c.getInt(2)!=0)) } }
+        observed.value = loaded + observed.value.filter { (peer, status) -> PresenceBody.newer(loaded[peer], status) }
     }
     fun visible(context: Context, value: Boolean) {
         visible=value
@@ -36,12 +37,23 @@ object PresenceSignals {
             val now=maxOf(System.currentTimeMillis(),lastTime+1); lastTime=now
             val status=PresenceBody.Status(now,active)
             advertised=active
-            ContactRepository(MessagingDb.get(context)).getAllContacts().filter(GroupProtocol::eligible).forEach { contact ->
+            val contacts = ContactRepository(MessagingDb.get(context)).getAllContacts().filter(GroupProtocol::eligible)
+            val permits = kotlinx.coroutines.sync.Semaphore(4)
+            coroutineScope { contacts.map { contact -> async {
+                permits.acquire()
+                try {
                 // Recheck the gate before each recipient; never send an active lease after locking/backgrounding.
-                if(status.active && (!visible || !com.relay.app.util.RelayPreferences(context).shareActivity)) return@forEach
-                withTimeoutOrNull(2500) { transport.send(contact.nostrPubkey!!,
-                    RelayPayload(PayloadCodec.newId(),now,PresenceBody.format(status)),contact.relayHints, ephemeral = true) }
-            }
+                if(status.active && (!visible || !com.relay.app.util.RelayPreferences(context).shareActivity)) return@async
+                try {
+                    withTimeoutOrNull(2500) { transport.send(contact.nostrPubkey!!,
+                        RelayPayload(PayloadCodec.newId(),now,PresenceBody.format(status)),contact.relayHints, ephemeral = true) }
+                } catch (exception: CancellationException) {
+                    throw exception
+                } catch (exception: Exception) {
+                    android.util.Log.w("Presence", "activity signal failed", exception)
+                }
+                } finally { permits.release() }
+            } }.awaitAll() }
         } finally { sendLock.unlock() }
     }
     @Synchronized fun handle(context: Context, contact: Contact?, body: String): Boolean {

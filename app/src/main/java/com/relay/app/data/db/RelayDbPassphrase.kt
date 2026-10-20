@@ -1,6 +1,7 @@
 package com.relay.app.data.db
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.util.Base64
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
@@ -18,18 +19,10 @@ object RelayDbPassphrase {
     private const val PREF_FILE = "relay_db_secret"
     private const val KEY_PASSPHRASE = "db_passphrase"
 
+    @Volatile private var cachedPreferences: SharedPreferences? = null
+
     fun get(context: Context): String {
-        val appContext = context.applicationContext
-        val masterKey = MasterKey.Builder(appContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        val prefs = EncryptedSharedPreferences.create(
-            appContext,
-            PREF_FILE,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        )
+        val prefs = preferences(context)
         prefs.getString(KEY_PASSPHRASE, null)?.let { return it }
 
         // Two near-simultaneous first-time callers (e.g. an incoming SMS arriving while the UI is
@@ -45,6 +38,25 @@ object RelayDbPassphrase {
             val generated = Base64.encodeToString(bytes, Base64.NO_WRAP)
             prefs.edit().putString(KEY_PASSPHRASE, generated).commit()
             return generated
+        }
+    }
+
+    private fun preferences(context: Context): SharedPreferences {
+        cachedPreferences?.let { return it }
+        return synchronized(this) {
+            cachedPreferences ?: run {
+                val appContext = context.applicationContext
+                val masterKey = MasterKey.Builder(appContext)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                EncryptedSharedPreferences.create(
+                    appContext,
+                    PREF_FILE,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+                )
+            }.also { cachedPreferences = it }
         }
     }
 }

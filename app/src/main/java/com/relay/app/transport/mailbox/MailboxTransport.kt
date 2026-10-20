@@ -108,10 +108,12 @@ class MailboxTransport(
     /** Seqs stored in the raw inbox and waiting to be opened, in arrival order. */
     private val stored = Channel<Long>(Channel.UNLIMITED)
     private val inbox = Channel<IncomingEnvelope>(Channel.UNLIMITED)
+    private val signalInbox = Channel<IncomingEnvelope>(64, kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
 
     private val _status = MutableStateFlow(TransportStatus.STOPPED)
     override val status: StateFlow<TransportStatus> = _status.asStateFlow()
     override val incoming: Flow<IncomingEnvelope> = inbox.receiveAsFlow()
+    override val signals: Flow<IncomingEnvelope> = signalInbox.receiveAsFlow()
 
     override suspend fun start() = lifecycleLock.withLock {
         if (openerJob?.isActive != true) openerJob = scope.launch { openStored() }
@@ -263,7 +265,7 @@ class MailboxTransport(
                 is MailboxProtocol.Frame.Batch -> perform(webSocket, session.onBatch(frame.messages, frame.more, frame.cursor))
                 is MailboxProtocol.Frame.Message -> perform(webSocket, session.onPush(frame.message))
                 is MailboxProtocol.Frame.Signal -> scope.launch {
-                    unwrap(frame.envelope)?.let { (sender, payload) -> inbox.send(IncomingEnvelope(sender, payload, System.currentTimeMillis())) }
+                    unwrap(frame.envelope)?.let { (sender, payload) -> signalInbox.trySend(IncomingEnvelope(sender, payload, System.currentTimeMillis())) }
                 }
                 is MailboxProtocol.Frame.Error -> {
                     val signalRecipient = frame.ref?.let { ref -> synchronized(signalRefs) { signalRefs.remove(ref) } }

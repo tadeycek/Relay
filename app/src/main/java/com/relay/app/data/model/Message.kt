@@ -27,6 +27,8 @@ data class Message(
     val deliveryState: Int = DeliveryState.NONE,
     /** True for a received message the user has not opened the chat to see yet (drives unread badges). */
     val unread: Boolean = false,
+    val readCount: Int = 0,
+    val readerCount: Int = 0,
 )
 
 /** Values of the `delivery_state` column. NONE covers received and legacy (SMS-era) messages. */

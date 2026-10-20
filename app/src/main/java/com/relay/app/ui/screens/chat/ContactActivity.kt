@@ -12,7 +12,9 @@ import kotlinx.coroutines.delay
 @Composable
 internal fun contactActivityLabel(key: String?): String {
     val statuses by PresenceSignals.observed.collectAsState()
-    val now by produceState(System.currentTimeMillis()) { while(true) { delay(15_000); value=System.currentTimeMillis() } }
+    val now by produceState(System.currentTimeMillis(), statuses[key]) {
+        while (true) { value = System.currentTimeMillis(); delay(1_000) }
+    }
     return PresenceBody.label(statuses[key],now)
 }
 
@@ -22,12 +24,17 @@ fun PrivateActivityPresence() {
     val context=LocalContext.current.applicationContext
     val owner=LocalLifecycleOwner.current
     DisposableEffect(owner) {
+        fun update(visible: Boolean) {
+            com.relay.app.messaging.ActiveChat.foreground = visible
+            PresenceSignals.visible(context, visible)
+            if (visible) context.sendBroadcast(android.content.Intent(com.relay.app.messaging.Broadcasts.PRIVATE_FOREGROUND).setPackage(context.packageName))
+        }
         val observer=LifecycleEventObserver { _, event ->
-            if(event==Lifecycle.Event.ON_RESUME) PresenceSignals.visible(context,true)
-            if(event==Lifecycle.Event.ON_PAUSE || event==Lifecycle.Event.ON_STOP) PresenceSignals.visible(context,false)
+            if(event==Lifecycle.Event.ON_RESUME) update(true)
+            if(event==Lifecycle.Event.ON_PAUSE || event==Lifecycle.Event.ON_STOP) update(false)
         }
         owner.lifecycle.addObserver(observer)
-        PresenceSignals.visible(context,owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
-        onDispose { owner.lifecycle.removeObserver(observer); PresenceSignals.visible(context,false) }
+        update(owner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED))
+        onDispose { owner.lifecycle.removeObserver(observer); update(false) }
     }
 }

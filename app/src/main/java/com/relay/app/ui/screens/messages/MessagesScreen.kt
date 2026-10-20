@@ -68,6 +68,7 @@ fun MessagesScreen(navController: NavController) {
     val vm: MessagesViewModel = viewModel()
     val conversations by vm.conversations.collectAsState()
     val loaded by vm.loaded.collectAsState()
+    val loadError by vm.loadError.collectAsState()
 
     val requests = conversations.filter { it.isRequest }
     val chats = conversations.filterNot { it.isRequest }
@@ -84,7 +85,7 @@ fun MessagesScreen(navController: NavController) {
             }
         }
         when {
-            !loaded -> Box(Modifier.fillMaxSize())
+            !loaded -> com.relay.app.ui.components.InitialLoadState(loadError, vm::reload, Modifier.fillMaxSize())
 
             conversations.isEmpty() -> EmptyState(
                 modifier = Modifier.fillMaxSize(),

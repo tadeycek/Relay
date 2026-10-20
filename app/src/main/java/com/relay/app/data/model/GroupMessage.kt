@@ -19,4 +19,7 @@ data class GroupMessage(
     /** True for a received group message the user has not opened the group to see yet. */
     val unread: Boolean = false,
     val deliveryState: Int = DeliveryState.NONE,
+    val readAt: Long? = null,
+    val readCount: Int = 0,
+    val readerCount: Int = 0,
 )

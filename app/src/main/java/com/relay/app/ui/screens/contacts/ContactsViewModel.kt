@@ -8,12 +8,12 @@ import android.content.IntentFilter
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.relay.app.data.db.RelayDbHelper
 import com.relay.app.data.model.Contact
 import com.relay.app.data.model.ContactTrustLevel
 import com.relay.app.data.model.Group
 import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.GroupRepository
+import com.relay.app.messaging.MessagingDb
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,7 +23,7 @@ import kotlinx.coroutines.withContext
 
 class ContactsViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val db = RelayDbHelper(app)
+    private val db = MessagingDb.get(app)
     private val repo = ContactRepository(db)
     private val groupRepo = GroupRepository(db)
 
@@ -32,6 +32,18 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _groups = MutableStateFlow<List<Group>>(emptyList())
     val groups: StateFlow<List<Group>> = _groups.asStateFlow()
+    private val _loaded = MutableStateFlow(false)
+    val loaded = _loaded.asStateFlow()
+    private val _loadError = MutableStateFlow<String?>(null)
+    val loadError = _loadError.asStateFlow()
+    private val refreshes = com.relay.app.messaging.RefreshQueue(viewModelScope, { exception ->
+        _loadError.value = exception.message ?: "Couldn't load saved people"
+    }) {
+        _loadError.value = null
+        _contacts.value = repo.getAllContacts()
+        _groups.value = groupRepo.getAllGroups()
+        _loaded.value = true
+    }
 
     private val updateReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) = loadAll()
@@ -57,11 +69,10 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun loadAll() {
-        viewModelScope.launch {
-            _contacts.value = repo.getAllContacts()
-            _groups.value = groupRepo.getAllGroups()
-        }
+        refreshes.request()
     }
+
+    fun reload() = loadAll()
 
     /** Removes the contact and, through the database's foreign key, their whole message history. */
     fun deleteContact(id: Long) {
@@ -107,16 +118,18 @@ class ContactsViewModel(app: Application) : AndroidViewModel(app) {
         _groups.value = groupRepo.getAllGroups()
     }
 
-    private var creatingGroup = false
+    private val _creatingGroup = MutableStateFlow(false)
+    /** True from the Create tap until the group is saved or fails; the sheet shows progress and ignores repeat taps. */
+    val creatingGroup: StateFlow<Boolean> = _creatingGroup.asStateFlow()
     fun createGroup(name: String, memberIds: List<Long>, onCreated: (Long) -> Unit) {
-        if (creatingGroup || name.isBlank() || memberIds.isEmpty()) return
-        creatingGroup = true
+        if (_creatingGroup.value || name.isBlank() || memberIds.isEmpty()) return
+        _creatingGroup.value = true
         viewModelScope.launch {
             try {
                 runCatching { withContext(Dispatchers.IO) { com.relay.app.groups.SharedGroups.create(getApplication(), name, memberIds) } }
-                    .onSuccess { id -> _groups.value = groupRepo.getAllGroups(); onCreated(id) }
+                    .onSuccess { id -> onCreated(id); loadAll() }
                     .onFailure { _error.value = it.message ?: "Couldn't create this group" }
-            } finally { creatingGroup = false }
+            } finally { _creatingGroup.value = false }
         }
     }
 

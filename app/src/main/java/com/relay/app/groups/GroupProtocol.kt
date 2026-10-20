@@ -15,7 +15,7 @@ object GroupProtocol {
     const val MAX_MEMBERS = 17 // creator plus sixteen verified friends
     const val MAX_RELAYS = 2
     private const val MAX_BYTES = 10000
-    val EVENT_KINDS = listOf("post", "delete", "purge", "profile")
+    val EVENT_KINDS = listOf("post", "delete", "purge", "profile", "read")
 
     /** [inner] (Tink public key) and [relays] are the creator's verified copy of how to reach this member
      * directly. Rosters stored before direct delivery (v1) have neither. */
@@ -48,6 +48,7 @@ object GroupProtocol {
             "post" -> !com.relay.app.media.MediaBody.isMedia(e.text) || com.relay.app.media.MediaBody.parse(e.text) != null
             "delete" -> uuid(e.text)
             "purge" -> (e.text.toLongOrNull() ?: 0) > 0
+            "read" -> com.relay.app.messaging.ReadReceiptBody.parseIds(e.text) != null
             else -> com.relay.app.media.ProfileNameBody.parse(e.text) != null
         }
 

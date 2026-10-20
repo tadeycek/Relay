@@ -53,6 +53,7 @@ class RelayDbHelper(context: Context) :
         db.execSQL(com.relay.app.messaging.PresenceSignals.CREATE)
         db.execSQL(com.relay.app.groups.SharedGroups.CREATE_PENDING)
         createMailbox(db)
+        createDispatchAndReceipts(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -144,6 +145,7 @@ class RelayDbHelper(context: Context) :
             db.execSQL("UPDATE reactions SET received_at=?", arrayOf(System.currentTimeMillis()))
         }
         if (oldVersion < 22) createMailbox(db)
+        if (oldVersion < 23) createDispatchAndReceipts(db)
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.
@@ -153,6 +155,16 @@ class RelayDbHelper(context: Context) :
                     "${DatabaseContract.Contacts.COL_NAME} WHERE ${DatabaseContract.Contacts.COL_ORIGINAL_NAME} IS NULL"
             )
         }
+    }
+
+    private fun createDispatchAndReceipts(db: SQLiteDatabase) {
+        db.execSQL(com.relay.app.groups.GroupDispatch.CREATE)
+        db.execSQL(com.relay.app.groups.GroupReadReceipts.CREATE)
+        db.execSQL(com.relay.app.groups.GroupReadReceipts.CREATE_SENT)
+        db.execSQL("ALTER TABLE group_delivery ADD COLUMN recipient TEXT")
+        db.execSQL("ALTER TABLE group_delivery ADD COLUMN requires_source INTEGER NOT NULL DEFAULT 0")
+        db.execSQL("CREATE INDEX IF NOT EXISTS messages_expiry ON messages(timestamp)")
+        db.execSQL("CREATE INDEX IF NOT EXISTS group_messages_expiry ON group_messages(timestamp)")
     }
 
     private fun createMailbox(db: SQLiteDatabase) {

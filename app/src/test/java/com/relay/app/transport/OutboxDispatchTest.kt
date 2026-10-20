@@ -1,31 +1,61 @@
 package com.relay.app.transport
 
 import com.relay.app.transport.outbox.OutboxDispatch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.*
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class OutboxDispatchTest {
-    @Test fun slowRecipientDoesNotBlockOtherChatsAndEachRecipientsOrderSurvives() = runTest {
+    @Test fun slowRecipientDoesNotDelayWorkQueuedLaterForOthersAndKeepsItsOwnOrder() = runTest {
         val completed = mutableListOf<String>()
-        val entries = listOf("slow:1", "slow:2", "fast:1", "fast:2")
-        val count = OutboxDispatch.run(entries, { it.substringBefore(':') }) {
+        var lanesDone = 0
+        val dispatch = OutboxDispatch(this)
+        val deliver: suspend (String) -> Boolean = {
             if (it.startsWith("slow")) delay(5000) else delay(1)
             completed += it
-            1
+            true
         }
-        assertEquals(4, count)
-        assertEquals(listOf("fast:1", "fast:2", "slow:1", "slow:2"), completed)
+        dispatch.offer(listOf("slow:1", "slow:2", "fast:1"), { it.substringBefore(':') }, deliver) { lanesDone++ }
+        advanceTimeBy(10); runCurrent()
+        assertEquals(listOf("fast:1"), completed)
+        assertEquals(setOf("slow"), dispatch.busy())
+
+        // Queued while the slow lane is still sending: it starts at once, and the busy lane isn't doubled.
+        assertEquals(1, dispatch.offer(listOf("slow:1", "other:1"), { it.substringBefore(':') }, deliver) { lanesDone++ })
+        advanceTimeBy(10); runCurrent()
+        assertEquals(listOf("fast:1", "other:1"), completed)
+
+        advanceUntilIdle()
+        assertEquals(listOf("fast:1", "other:1", "slow:1", "slow:2"), completed)
+        assertEquals(3, lanesDone)
+        assertTrue(dispatch.busy().isEmpty())
     }
-    @Test fun concurrencyIsBoundedAndFailedEntriesDoNotInflateDeliveredCount() = runTest {
+
+    @Test fun concurrencyIsBoundedAcrossLanes() = runTest {
         var running = 0
         var peak = 0
-        val delivered = OutboxDispatch.run((0 until 20).toList(), { it.toString() }) {
+        OutboxDispatch(this).offer((0 until 20).toList(), { it.toString() }, {
             running++; peak = maxOf(peak, running); delay(100); running--
-            if (it % 2 == 0) 1 else 0
-        }
+            true
+        }) {}
+        advanceUntilIdle()
         assertEquals(4, peak)
-        assertEquals(10, delivered)
+    }
+
+    @Test fun retryableFailureOrExceptionEndsOnlyThatLane() = runTest {
+        val attempted = mutableListOf<String>()
+        OutboxDispatch(this).offer(listOf("a:1", "a:2", "b:1", "b:2", "c:1"), { it.substringBefore(':') }, {
+            attempted += it
+            if (it == "b:1") error("broken entry")
+            it != "a:1"
+        }) {}
+        advanceUntilIdle()
+        assertEquals(listOf("a:1", "b:1", "c:1"), attempted)
     }
 }

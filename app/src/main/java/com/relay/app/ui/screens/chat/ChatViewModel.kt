@@ -44,7 +44,9 @@ class ChatViewModel(
     private var historyLimit = com.relay.app.data.repository.HistoryWindow.PAGE_SIZE
     private val _hasOlder = MutableStateFlow(false)
     val hasOlder = _hasOlder.asStateFlow()
-    private var loadJob: kotlinx.coroutines.Job? = null
+    private var olderRequested = false
+    private var localRevision = 0L
+    private val localAcceptances = mutableMapOf<Long, Long>()
     fun loadOlder() { historyLimit = maxOf(historyLimit, _messages.value.size) + com.relay.app.data.repository.HistoryWindow.PAGE_SIZE; loadData(older = true) }
     private val db = com.relay.app.messaging.MessagingDb.get(app)
     private val messageRepo = MessageRepository(db)
@@ -52,6 +54,10 @@ class ChatViewModel(
 
     private val _messages = MutableStateFlow<List<Message>>(emptyList())
     val messages: StateFlow<List<Message>> = _messages.asStateFlow()
+    private val _loaded = MutableStateFlow(false)
+    val loaded = _loaded.asStateFlow()
+    private val _loadError = MutableStateFlow<String?>(null)
+    val loadError = _loadError.asStateFlow()
 
     private val _contact = MutableStateFlow<Contact?>(null)
     val contact: StateFlow<Contact?> = _contact.asStateFlow()
@@ -61,10 +67,6 @@ class ChatViewModel(
 
     private var smsUpdateReceiver: BroadcastReceiver? = null
 
-    init {
-        loadData()
-    }
-
     /**
      * The first message that was unread when the chat was opened, kept for as long as the chat is
      * open so the "new messages" divider stays put after the unread flags are cleared.
@@ -72,26 +74,46 @@ class ChatViewModel(
     private val _unreadAnchorId = MutableStateFlow<Long?>(null)
     val unreadAnchorId: StateFlow<Long?> = _unreadAnchorId.asStateFlow()
     private var anchorCaptured = false
+    private val receiptIds = mutableSetOf<String>()
+    private var legacyReceiptTimestamp = 0L
+    private val refreshes = com.relay.app.messaging.RefreshQueue(viewModelScope, { exception ->
+        _loadError.value = exception.message ?: "Couldn't load saved messages"
+    }) {
+        val revision = localRevision
+        val older = olderRequested
+        olderRequested = false
+        _loadError.value = null
+        _contact.value = contactRepo.getById(contactId)
+        val loaded = readWindow(older)
+        if (older || !_loaded.value) _hasOlder.value = loaded.size == historyLimit
+        val additions = _messages.value.filter { (localAcceptances[it.id] ?: 0L) > revision }
+        _messages.value = (loaded + additions.filter { added -> loaded.none { it.id == added.id } })
+            .sortedWith(compareBy<Message> { it.timestamp }.thenBy { it.id })
+        localAcceptances.entries.removeAll { it.value <= revision }
+        _loaded.value = true
+        if (!anchorCaptured) {
+            anchorCaptured = true
+            _unreadAnchorId.value = loaded.firstOrNull { !it.isSent && it.unread }?.id
+        }
+        markReadIfVisible()
+        sendReadReceipt(getApplication(), loaded.filter { !it.isSent }.maxOfOrNull { it.timestamp } ?: 0L)
+    }
+    private val receipts = com.relay.app.messaging.RefreshQueue(viewModelScope, { exception ->
+        android.util.Log.w("ReadReceipt", "receipt queue failed", exception)
+    }) { queueReadReceipts() }
+
+    init { loadData() }
+
+    fun reload() = loadData()
 
     private suspend fun readWindow(older: Boolean = false): List<com.relay.app.data.model.Message> {
-        withContext(Dispatchers.IO) { com.relay.app.messaging.MessageRetention.sweep(getApplication()) }
-        val first = if(older) null else _messages.value.firstOrNull()
+        val first = if(older || !_loaded.value) null else _messages.value.firstOrNull()
         return messageRepo.getMessages(contactId,historyLimit,first?.timestamp,first?.id ?: 0)
     }
 
     private fun loadData(older: Boolean = false) {
-        loadJob?.cancel()
-        loadJob = viewModelScope.launch {
-            _contact.value = contactRepo.getById(contactId)
-            val loaded = readWindow(older)
-            if(older || _messages.value.isEmpty()) _hasOlder.value = loaded.size == historyLimit
-            _messages.value = loaded
-            if (!anchorCaptured) {
-                anchorCaptured = true
-                _unreadAnchorId.value = loaded.firstOrNull { !it.isSent && it.unread }?.id
-            }
-            markReadIfVisible()
-        }
+        olderRequested = olderRequested || older
+        refreshes.request()
     }
 
     /**
@@ -100,8 +122,10 @@ class ChatViewModel(
      * cannot feed back into itself.
      */
     private suspend fun markReadIfVisible() {
-        if (ActiveChat.contactId != contactId) return
-        val changed = withContext(Dispatchers.IO) { messageRepo.markConversationReadSync(contactId) }
+        if (ActiveChat.contactId != contactId || !ActiveChat.foreground || !_loaded.value) return
+        val changed = withContext(Dispatchers.IO) {
+            if (!ActiveChat.foreground || ActiveChat.contactId != contactId) 0 else messageRepo.markConversationReadSync(contactId)
+        }
         if (changed > 0) {
             val app = getApplication<Application>()
             MessageNotifier.cancel(app, contactId)
@@ -116,13 +140,13 @@ class ChatViewModel(
         smsUpdateReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val incomingContactId = intent.getLongExtra("contact_id", -1L)
-                if (incomingContactId == contactId) loadData()
+                if (incomingContactId == contactId || intent.action == Broadcasts.PRIVATE_FOREGROUND) loadData()
             }
         }
         ContextCompat.registerReceiver(
             context,
             smsUpdateReceiver,
-            IntentFilter("com.relay.app.NEW_MESSAGE"),
+            IntentFilter("com.relay.app.NEW_MESSAGE").apply { addAction(Broadcasts.PRIVATE_FOREGROUND) },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
     }
@@ -143,7 +167,7 @@ class ChatViewModel(
         _sending.value = true
         viewModelScope.launch {
             try {
-                withContext(Dispatchers.IO) {
+                val accepted = withContext(Dispatchers.IO) {
                     val current = contactRepo.getByIdSync(contactId) ?: error("Contact no longer exists")
                     check(!current.isDeleted && current.trustLevel != com.relay.app.data.model.ContactTrustLevel.BLOCKED && current.pendingPublicKey == null) { "Review this contact before sending" }
                     val sql = db.writableDatabase
@@ -151,13 +175,19 @@ class ChatViewModel(
                     try {
                         val handle = RelaySecureSend.sendWithId(context, contactRepo, current, body)
                         check(handle.ok) { "Couldn't queue message. Check this contact's pairing and try again." }
-                        check(messageRepo.insertMessageSync(Message(contactId = contactId, body = body,
-                            isSent = true, msgId = handle.msgId, deliveryState = DeliveryState.QUEUED)) != -1L)
+                        val message = Message(contactId = contactId, body = body,
+                            isSent = true, msgId = handle.msgId, deliveryState = DeliveryState.QUEUED)
+                        val row = messageRepo.insertMessageSync(message)
+                        check(row != -1L)
                         sql.setTransactionSuccessful()
+                        message.copy(id = row)
                     } finally { sql.endTransaction() }
                 }
+                localRevision += 1
+                localAcceptances[accepted.id] = localRevision
+                _messages.value = (_messages.value.filterNot { it.id == accepted.id } + accepted).sortedWith(compareBy<Message> { it.timestamp }.thenBy { it.id })
                 onQueued()
-                _messages.value = readWindow()
+                loadData()
                 com.relay.app.messaging.MessagingRuntime.kick()
             } catch (e: Exception) { _toastMessage.emit(e.message ?: "Couldn't queue message; draft kept. Try again.") }
             finally { _sending.value = false }
@@ -191,12 +221,34 @@ class ChatViewModel(
     }
 
     fun sendReadReceipt(context: Context, lastReceivedTimestamp: Long) {
-        val contact = _contact.value ?: return
-        if (!RelayPreferences(context).readReceipts) return
-        viewModelScope.launch {
-            val body = SmsMessageParser.formatReadReceipt(lastReceivedTimestamp)
-            RelaySecureSend.send(context, contactRepo, contact, body)
+        if (lastReceivedTimestamp <= 0 || !_loaded.value || !ActiveChat.foreground || ActiveChat.contactId != contactId) return
+        if (RelayPreferences(context).readReceipts) receipts.request()
+    }
+
+    private suspend fun queueReadReceipts() {
+        val context = getApplication<Application>()
+        val received = _messages.value.filter { !it.isSent }
+        val exact = received.filter { it.msgId?.let(com.relay.app.messaging.ReadReceiptBody::parseIds)?.size == 1 }
+        val fresh = exact.filter { it.msgId !in receiptIds }.distinctBy { it.msgId }
+        for (chunk in fresh.chunked(com.relay.app.messaging.ReadReceiptBody.MAX_IDS)) {
+            val ids = chunk.mapNotNull { it.msgId }
+            val accepted = withContext(Dispatchers.IO) {
+                if (!ActiveChat.foreground || ActiveChat.contactId != contactId || !RelayPreferences(context).readReceipts) return@withContext false
+                val contact = contactRepo.getByIdSync(contactId)?.takeIf(com.relay.app.groups.GroupProtocol::eligible) ?: return@withContext false
+                RelaySecureSend.send(context, contactRepo, contact,
+                    com.relay.app.messaging.ReadReceiptBody.format(chunk.maxOf { it.timestamp }, ids))
+            }
+            if (accepted) receiptIds.addAll(ids)
         }
+        val exactIds = exact.mapNotNull { it.msgId }.toSet()
+        val legacy = received.filter { it.msgId !in exactIds }.maxOfOrNull { it.timestamp } ?: return
+        if (legacy <= legacyReceiptTimestamp) return
+        val accepted = withContext(Dispatchers.IO) {
+            if (!ActiveChat.foreground || ActiveChat.contactId != contactId || !RelayPreferences(context).readReceipts) return@withContext false
+            val contact = contactRepo.getByIdSync(contactId)?.takeIf(com.relay.app.groups.GroupProtocol::eligible) ?: return@withContext false
+            RelaySecureSend.send(context, contactRepo, contact, SmsMessageParser.formatReadReceipt(legacy))
+        }
+        if (accepted) legacyReceiptTimestamp = legacy
     }
 
     /** Accept the encrypted local attachment before background upload/dispatch. */

@@ -83,6 +83,8 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val app = LocalContext.current.applicationContext as android.app.Application
     val vm: ChatViewModel = viewModel(factory = ChatViewModelFactory(contactId, app))
     val messages by vm.messages.collectAsState()
+    val loaded by vm.loaded.collectAsState()
+    val loadError by vm.loadError.collectAsState()
     val hasOlder by vm.hasOlder.collectAsState()
     val contact by vm.contact.collectAsState()
     val sending by vm.sending.collectAsState()
@@ -219,7 +221,9 @@ fun ChatScreen(contactId: Long, navController: NavController) {
         containerColor = Background,
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
-            if (items.isEmpty()) {
+            if (!loaded) {
+                com.relay.app.ui.components.InitialLoadState(loadError, vm::reload, Modifier.weight(1f).fillMaxWidth())
+            } else if (items.isEmpty()) {
                 EmptyState(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     title = "Say hello",

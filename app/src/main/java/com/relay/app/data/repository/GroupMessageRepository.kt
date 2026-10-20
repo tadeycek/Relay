@@ -13,18 +13,28 @@ class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
 
     suspend fun getMessages(groupId: Long, limit: Int? = null, fromTimestamp: Long? = null, fromId: Long = 0): List<GroupMessage> = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
-        val cursor = if(fromTimestamp == null) db.rawQuery(HistoryWindow.query(true), arrayOf(groupId.toString(), (limit ?: -1).toString()))
-        else db.rawQuery("SELECT * FROM group_messages WHERE group_id=? AND (timestamp>? OR (timestamp=? AND _id>=?)) ORDER BY timestamp ASC,_id ASC",
-            arrayOf(groupId.toString(),fromTimestamp.toString(),fromTimestamp.toString(),fromId.toString()))
+        val cutoff = com.relay.app.messaging.RetentionPolicy.cutoff(System.currentTimeMillis()).toString()
+        val cursor = if(fromTimestamp == null) db.rawQuery(HistoryWindow.query(true, retainedOnly = true), arrayOf(groupId.toString(), cutoff, (limit ?: -1).toString()))
+        else db.rawQuery("SELECT * FROM group_messages WHERE group_id=? AND timestamp>? AND (timestamp>? OR (timestamp=? AND _id>=?)) ORDER BY timestamp ASC,_id ASC",
+            arrayOf(groupId.toString(),cutoff,fromTimestamp.toString(),fromTimestamp.toString(),fromId.toString()))
         val loaded = cursor.use { it.toGroupMessageList() }
         val names = loaded.mapNotNull { it.senderKey }.distinct().associateWith { key ->
             com.relay.app.groups.GroupProfiles.display(dbHelper, groupId, key, loaded.first { it.senderKey == key }.senderName.orEmpty())
         }
         val states = com.relay.app.groups.GroupDelivery.states(dbHelper, groupId, loaded.mapNotNull { it.eventId })
+        val reads = com.relay.app.groups.GroupReadReceipts.states(dbHelper, groupId, loaded.filter { it.isSent }.mapNotNull { it.eventId })
         loaded.map { message -> message.copy(senderName = names[message.senderKey] ?: message.senderName,
+            readAt = reads[message.eventId]?.readAt, readCount = reads[message.eventId]?.count ?: 0,
+            readerCount = reads[message.eventId]?.expected ?: 0,
             deliveryState = if(message.isSent) states[message.eventId] ?: com.relay.app.data.model.DeliveryState.NONE else com.relay.app.data.model.DeliveryState.NONE) }
 
     }
+
+    fun getByEventSync(groupId: Long, event: String, author: String): GroupMessage? =
+        dbHelper.readableDatabase.rawQuery("SELECT * FROM group_messages WHERE group_id=? AND event_id=? AND sender_key=?",
+            arrayOf(groupId.toString(), event, author)).use { cursor ->
+            if (cursor.moveToFirst()) cursor.toGroupMessage().copy(deliveryState = com.relay.app.data.model.DeliveryState.QUEUED) else null
+        }
 
     suspend fun insertMessage(msg: GroupMessage): Long = withContext(Dispatchers.IO) {
         insertMessageSync(msg)
@@ -65,7 +75,8 @@ class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
     /** Number of unread received messages across all groups. */
     fun totalUnreadSync(): Int {
         val db = dbHelper.readableDatabase
-        val cursor = db.rawQuery("SELECT COUNT(*) FROM ${GroupMessages.TABLE} WHERE ${GroupMessages.COL_UNREAD} = 1", null)
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM ${GroupMessages.TABLE} WHERE ${GroupMessages.COL_UNREAD} = 1 AND timestamp>?",
+            arrayOf(com.relay.app.messaging.RetentionPolicy.cutoff(System.currentTimeMillis()).toString()))
         return cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
     }
 
@@ -108,6 +119,7 @@ class GroupMessageRepository(private val dbHelper: RelayDbHelper) {
             mediaUri = if (mediaUriIdx >= 0 && !isNull(mediaUriIdx)) getString(mediaUriIdx) else null,
             pinLabel = if (pinLabelIdx >= 0 && !isNull(pinLabelIdx)) getString(pinLabelIdx) else null,
             expiryAt = if (expiryAtIdx >= 0 && !isNull(expiryAtIdx)) getLong(expiryAtIdx) else null,
+            unread = getInt(getColumnIndexOrThrow(GroupMessages.COL_UNREAD)) != 0,
         )
     }
 }

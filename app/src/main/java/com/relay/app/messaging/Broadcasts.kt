@@ -13,6 +13,7 @@ object Broadcasts {
      * on NEW_MESSAGE and marks itself read, so reusing that action would loop forever.
      */
     const val UNREAD_CHANGED = "com.relay.app.UNREAD_CHANGED"
+    const val PRIVATE_FOREGROUND = "com.relay.app.PRIVATE_FOREGROUND"
 
     val ALL_CONVERSATION_EVENTS = arrayOf(NEW_MESSAGE, NEW_GROUP_MESSAGE, UNREAD_CHANGED)
 
