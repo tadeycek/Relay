@@ -206,13 +206,14 @@ v21.execute("INSERT INTO shared_groups VALUES (1,'roster kept')")
 block21=re.search(r'if \(oldVersion < 21\) \{(.*?)\n        \}',helper,re.S).group(1)
 v21.execute(re.search(r'ALTER TABLE reactions[^"\n]*',block21).group(0))
 assert v21.execute('SELECT revision,emoji FROM reactions').fetchone()==(3,'')
-presence=(ROOT/'app/src/main/java/com/relay/app/messaging/PresenceSignals.kt').read_text()
-v21.execute(re.search(r'const val CREATE = "(.*?)"',presence).group(1))
-activity_upsert=re.search(r'execSQL\("(INSERT INTO contact_activity.*?)"',presence).group(1)
-for ts,active in [(100,1),(101,0),(100,1),(101,1)]: v21.execute(activity_upsert,('alice',ts,active))
-assert v21.execute('SELECT last_at,active FROM contact_activity').fetchone()==(101,0)
-v21.execute(activity_upsert,('bob',90,1))
-assert v21.execute('SELECT count(*) FROM contact_activity').fetchone()==(2,)
+retired=(ROOT/'app/src/main/java/com/relay/app/messaging/RetiredActivity.kt').read_text()
+v21.execute(re.search(r'const val LEGACY_CREATE = "(.*?)"',retired).group(1))
+v21.execute("INSERT INTO contact_activity VALUES ('alice',101,1)")
+assert 'if (oldVersion < 24) db.execSQL(com.relay.app.messaging.RetiredActivity.DROP)' in helper
+v21.execute(re.search(r'const val DROP = "(.*?)"',retired).group(1))
+assert v21.execute("SELECT name FROM sqlite_master WHERE name='contact_activity'").fetchone() is None
+assert v21.execute('SELECT name FROM contacts').fetchall()==[('Alias kept',)]
+assert v21.execute('SELECT state FROM shared_groups').fetchall()==[('roster kept',)]
 # Expiring a group message must cancel only that group's fanout, including colliding event ids elsewhere.
 v21.executemany('INSERT INTO messages(_id,contact_id,msg_id,timestamp,media_uri) VALUES (?,?,?,?,?)',[(1,1,'old-direct',100,'private-old'),(2,1,'fresh-direct',101,'private-new')])
 v21.executemany('INSERT INTO group_messages(_id,group_id,event_id,timestamp,media_uri) VALUES (?,?,?,?,?)',[(1,1,'collision',100,'old-group'),(2,2,'collision',101,'fresh-group')])
@@ -228,4 +229,4 @@ assert v21.execute('SELECT msg_id FROM messages').fetchall()==[('fresh-direct',)
 assert v21.execute('SELECT group_id FROM group_messages').fetchall()==[(2,)]
 assert v21.execute('SELECT name FROM contacts').fetchone()==('Alias kept',)
 assert v21.execute('SELECT state FROM shared_groups').fetchone()==('roster kept',)
-print('Host SQLite: v21 reaction migration, activity monotonicity/isolation and scoped seven-day message/outbox expiry preserve new content, aliases and rosters.')
+print('Host SQLite: v21 reaction preservation, v24 retired-activity removal and scoped seven-day message/outbox expiry preserve new content, aliases and rosters.')

@@ -1,6 +1,23 @@
 # Relay
 
-## 1.11 preview: current follow-up
+## 1.14 preview: local delivery and unlock update
+
+Active/last-active sharing and its labels have been removed. Upgrading removes only the retired
+activity-history table; saved contacts, messages, keys and pending deliveries remain. Old peers'
+activity controls are silently ignored. Group key preparation runs separately from outgoing
+message delivery and outside the database writer/group lock. A queued error notification cannot
+keep the Send button busy. Known-key encryption failures abort rather than skipping the inner layer.
+Local queue acceptance is distinct from receipt by another phone; network and Android scheduling
+still determine remote delivery.
+
+After a successful calculator unlock, a local screen lasts three seconds, independently of the
+messaging transport. Five neutral portrait placeholders share one 390×844 viewport and fit the
+screen without stretching, with probabilities **60%, 20%, 13%, 5.5%, 1.5%**. The selection/deadline
+survive rotation; the ten-minute private-session deadline is unchanged. Disable it under
+**Account → Appearance → Three-second loading screen**. The supplied replacement pictures are
+not part of this build. Internet audio calling is not implemented in this checkout.
+
+## Historical 1.11 follow-up
 
 Fixes for #31 and #33–#37 add seven-day local message/attachment retention, precise
 in-app photo-save references and supported screenshot photo references, non-badging
@@ -70,11 +87,6 @@ Reinstalling/clearing data can reset it. Offline recipients, old versions, remov
 blocked contacts, saved/forwarded/quoted copies and relay retention can prevent complete remote
 erasure. Undelivered deletion requests are erased too. Use test devices until phone checks pass.
 
-**Account → Appearance → Dancing unlock illustration** enables the supplied image swaying and
-bouncing for four seconds after a valid code; disabled by default. It runs locally, skips when system
-animations are disabled, and does not extend the original ten-minute session. This animates the
-illustration as a whole, rather than generating a character-animation video.
-
 The continuous background connection service and its “running in the background” notice have been
 removed. Old settings and boot/background callbacks cannot start it. The app cancels its legacy
 connection notice/channel on startup. Normal message notifications still work. Messages arrive
@@ -91,8 +103,7 @@ The exported code retains its original nonce and 30-minute expiry; image imports
 preview, confirmation and mutual pairing checks as scanning. Only unused, unexpired invitations
 work, and restarting the issuer process invalidates its unconsumed invitation.
 
-Tap the unlock illustration or **Skip animation** to finish only the cosmetic transition.
-The private code, app lock and original session deadline still apply. In **People → group → Edit**,
+The private code, app lock and original session deadline still apply after the loading screen. In **People → group → Edit**,
 the creator can choose/preview/save, replace or remove a **Group picture**. It is shared over
 private encrypted messages and stored in SQLCipher, with monotonic revisions and no public URL.
 

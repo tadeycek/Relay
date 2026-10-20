@@ -14,11 +14,12 @@ import com.relay.app.util.SmsMessageParser
  */
 object InnerEnvelope {
 
-    /** Wraps [plainBody] for [recipientPublicKeyBase64], or returns it unchanged if there is no key or encryption fails. */
+    /** Wraps [plainBody] for [recipientPublicKeyBase64], or leaves it for the outer encrypted transport when no inner key exists. Known-key failures abort. */
     fun seal(recipientPublicKeyBase64: String?, plainBody: String): String {
         if (recipientPublicKeyBase64 == null) return plainBody
-        val ciphertext = RelayCrypto.encryptTo(recipientPublicKeyBase64, plainBody.toByteArray(Charsets.UTF_8))
-            ?: return plainBody
+        val ciphertext = checkNotNull(RelayCrypto.encryptTo(recipientPublicKeyBase64, plainBody.toByteArray(Charsets.UTF_8))) {
+            "Couldn't encrypt this message; review the contact's key and try again"
+        }
         return SmsMessageParser.formatEncrypted(Base64.encodeToString(ciphertext, Base64.NO_WRAP))
     }
 

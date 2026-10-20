@@ -69,10 +69,18 @@ class PeerConversationTest {
             context.startActivity(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             assertTrue("App finishes drawing before unlock/navigation", device.findObject(
                 UiSelector().packageName(context.packageName).className("android.widget.TextView")).waitForExists(15_000))
-            if (device.findObject(UiSelector().text("C")).exists()) {
-                tap("C")
-                for (key in listOf("4", "8", "2", "6", "+")) tap(key)
+            val settleUntil = SystemClock.elapsedRealtime() + 15_000
+            while (SystemClock.elapsedRealtime() < settleUntil) {
+                if (device.hasObject(By.text("C"))) {
+                    tap("C")
+                    for (key in listOf("4", "8", "2", "6", "+")) tap(key)
+                    break
+                }
+                if (device.hasObject(By.text("Account")) || device.hasObject(By.desc("Send"))) break
+                SystemClock.sleep(100)
             }
+            // A configured unlock screen is presentation, not failed navigation. Let it finish first.
+            device.findObject(UiSelector().text("Account")).waitForExists(5_000)
             for (attempt in 0 until 5) {
                 if (device.findObject(UiSelector().text("Account")).waitForExists(1_000)) break
                 device.pressBack()
@@ -87,13 +95,11 @@ class PeerConversationTest {
             val records = contacts.getAllContacts()
             JSONObject().put("role", role).put("transport", Transports.get(context).status.value.name)
                 .put("dbVersion", MessagingDb.get(context).readableDatabase.version)
+                .put("activityHistoryRemoved", MessagingDb.get(context).readableDatabase.rawQuery(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='contact_activity'", null).use { !it.moveToFirst() })
                 .put("route", Transports.get(context)::class.simpleName)
                 .put("typing", JSONArray(com.relay.app.messaging.TypingSignals.entries.value.values.map { it.name }))
-                .put("activity", JSONObject().apply {
-                    com.relay.app.messaging.PresenceSignals.observed.value.forEach { (key, value) ->
-                        put(key, JSONObject().put("time", value.time).put("active", value.active))
-                    }
-                })
+                .put("activity", JSONObject())
                 .put("groups", JSONArray().apply {
                     val own = NostrIdentity.publicKeyHex(context)
                     val db = MessagingDb.get(context)
@@ -155,6 +161,64 @@ class PeerConversationTest {
                 try {
                     val measurements = JSONObject()
                     when (command!!.getString("action")) {
+                        "measure_loading" -> {
+                            var expectedDeadline = 0L
+                            var expectedSession = 0L
+                            var slot = -1
+                            var previousActivity: MainActivity? = null
+                            instrumentation.runOnMainSync {
+                                val activity = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                                    .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                                    .filterIsInstance<MainActivity>().first()
+                                val session = androidx.lifecycle.ViewModelProvider(activity)[CalculatorSession::class.java]
+                                expectedSession = session.deadline
+                                session.startTransition(true)
+                                expectedDeadline = session.transitionUntil
+                                slot = session.transitionSlot
+                                measurements.put("scheduledDurationMs", expectedDeadline - SystemClock.elapsedRealtime())
+                            }
+                            assertTrue(device.wait(Until.hasObject(By.desc("Loading screen ${slot + 1}")), 1_500))
+                            instrumentation.runOnMainSync {
+                                val activity = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                                    .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                                    .filterIsInstance<MainActivity>().first()
+                                previousActivity = activity
+                                activity.recreate()
+                            }
+                            val end = SystemClock.elapsedRealtime() + 5_000
+                            var checked = false
+                            while (!checked && SystemClock.elapsedRealtime() < end) {
+                                instrumentation.runOnMainSync {
+                                    val activity = androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry.getInstance()
+                                        .getActivitiesInStage(androidx.test.runner.lifecycle.Stage.RESUMED)
+                                        .filterIsInstance<MainActivity>().firstOrNull()
+                                    if (activity != null && activity !== previousActivity) {
+                                        val session = androidx.lifecycle.ViewModelProvider(activity)[CalculatorSession::class.java]
+                                        assertEquals(expectedSession, session.deadline)
+                                        if (SystemClock.elapsedRealtime() < expectedDeadline) assertEquals(expectedDeadline, session.transitionUntil)
+                                        else assertTrue(session.transitionUntil == 0L || session.transitionUntil == expectedDeadline)
+                                        assertEquals(slot, session.transitionSlot)
+                                        checked = true
+                                    }
+                                }
+                                if (!checked) SystemClock.sleep(50)
+                            }
+                            assertTrue("Recreated loading screen retains its original timer and scene", checked)
+                            assertTrue(device.wait(Until.gone(By.desc("Loading screen ${slot + 1}")), 4_000))
+                            measurements.put("finishAfterDeadlineMs", SystemClock.elapsedRealtime() - expectedDeadline)
+                            measurements.put("slot", slot)
+                        }
+                        "group_backlog" -> {
+                            val group = groupId(command.getString("group"))
+                            val prefix = command.getString("prefix")
+                            val timings = JSONArray()
+                            repeat(command.optInt("count", 20).coerceIn(1, 50)) { index ->
+                                val start = SystemClock.elapsedRealtime()
+                                com.relay.app.groups.SharedGroups.send(context, group, "$prefix-$index")
+                                timings.put(SystemClock.elapsedRealtime() - start)
+                            }
+                            measurements.put("groupLocalAcceptanceMs", timings)
+                        }
                         "measure_history" -> {
                             unlockRoot(); tap("Messages")
                             val name = command.getString("name")

@@ -25,9 +25,12 @@ object ProfilePhotoSync {
             val update = ContactPhotos.selfUpdate(context)
             for (contact in ContactRepository(MessagingDb.get(context)).getAllContacts()) {
                 if (eligible(contact)) {
-                    queue(context, contact, update)
-                    queueName(context, contact)
-                    requestProfile(context, contact)
+                    // A damaged key must not prevent profiles reaching the remaining contacts.
+                    runCatching {
+                        queue(context, contact, update)
+                        queueName(context, contact)
+                        requestProfile(context, contact)
+                    }.onFailure { android.util.Log.w("ProfilePhotoSync", "Profile sync deferred for one contact", it) }
                 }
             }
         }

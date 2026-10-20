@@ -8,7 +8,7 @@ sqlite.execute('CREATE TABLE messages(_id INTEGER PRIMARY KEY,contact_id INTEGER
 sqlite.execute('CREATE INDEX history_contact ON messages(contact_id,timestamp DESC,_id DESC)')
 sqlite.executemany('INSERT INTO messages VALUES(?,?,?,?)',((i,1,i//4,'Synthetic message '+str(i)) for i in range(1,50001)))
 source=(ROOT/'app/src/main/java/com/relay/app/data/repository/HistoryWindow.kt').read_text()
-query=source.split('return "',1)[1].split('"',1)[0].replace('$table','messages').replace('$owner','contact_id')
+query=source.split('return "',1)[1].split('"',1)[0].replace('$table','messages').replace('$owner','contact_id').replace('$retained','')
 baseline='SELECT * FROM messages WHERE contact_id=? ORDER BY timestamp ASC,_id ASC'
 
 def measured(query,args):

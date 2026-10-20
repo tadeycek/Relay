@@ -26,9 +26,9 @@ class RelayPreferences(context: Context) {
         get() = prefs.getString(KEY_THEME, THEME_SYSTEM) ?: THEME_SYSTEM
         set(v) { prefs.edit().putString(KEY_THEME, v).apply() }
 
-    var unlockDance: Boolean
-        get() = prefs.getBoolean("unlock_dance", false)
-        set(v) { prefs.edit().putBoolean("unlock_dance", v).apply() }
+    var unlockLoading: Boolean
+        get() = prefs.getBoolean("unlock_loading", true)
+        set(v) { prefs.edit().putBoolean("unlock_loading", v).apply() }
 
     var appLock: Boolean
         get() = prefs.getBoolean(KEY_APP_LOCK, false)
@@ -45,10 +45,6 @@ class RelayPreferences(context: Context) {
     var defaultPinExpiry: String
         get() = prefs.getString(KEY_DEFAULT_PIN_EXPIRY, "never") ?: "never"
         set(v) { prefs.edit().putString(KEY_DEFAULT_PIN_EXPIRY, v).apply() }
-
-    var shareActivity: Boolean
-        get() = prefs.getBoolean("share_activity", true)
-        set(v) { prefs.edit().putBoolean("share_activity",v).apply(); com.relay.app.messaging.MessagingRuntime.launchIo { com.relay.app.messaging.PresenceSignals.heartbeat(appContext) } }
 
     var typingIndicators: Boolean
         get() = prefs.getBoolean("typing_indicators", true)
