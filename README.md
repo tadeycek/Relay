@@ -11,11 +11,12 @@ Local queue acceptance is distinct from receipt by another phone; network and An
 still determine remote delivery.
 
 After a successful calculator unlock, a local screen lasts three seconds, independently of the
-messaging transport. Five neutral portrait placeholders share one 390×844 viewport and fit the
-screen without stretching, with probabilities **60%, 20%, 13%, 5.5%, 1.5%**. The selection/deadline
+messaging transport. All five slots use the supplied images with **60%, 20%, 13%, 5.5%, 1.5%** chances.
+The fifth slot uses the enhanced artwork. All images fill
+the same phone-screen frame without stretching; excess edges are cropped. The selection/deadline
 survive rotation; the ten-minute private-session deadline is unchanged. Disable it under
-**Account → Appearance → Three-second loading screen**. The supplied replacement pictures are
-not part of this build. Internet audio calling is not implemented in this checkout.
+**Account → Appearance → Three-second loading screen**. Internet audio calling is not implemented
+in this checkout.
 
 ## Historical 1.11 follow-up
 

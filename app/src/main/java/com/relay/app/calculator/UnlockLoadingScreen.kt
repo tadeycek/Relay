@@ -30,7 +30,7 @@ fun UnlockLoadingScreen(slot: Int) {
     BackHandler { /* The session's monotonic deadline ends this screen. */ }
     Box(Modifier.fillMaxSize().background(Color(0xFF101820)), contentAlignment = Alignment.Center) {
         Image(painterResource(scene), contentDescription = "Loading screen ${slot + 1}",
-            contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         Text("Loading…", color = Color.White,
             modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(28.dp))
     }
