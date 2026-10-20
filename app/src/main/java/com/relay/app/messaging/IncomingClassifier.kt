@@ -14,7 +14,7 @@ sealed class Classified {
     data object PublicKey : Classified()
     data object LocationRequest : Classified()
     data object LocationDeclined : Classified()
-    data class ReadReceipt(val upToTimestamp: Long) : Classified()
+    data class ReadReceipt(val upToTimestamp: Long, val ids: List<String>? = null) : Classified()
     data class Pin(val lat: Double, val lng: Double, val expiry: PinExpiry, val label: String?) : Classified()
     data object Text : Classified()
 
@@ -42,7 +42,8 @@ object IncomingClassifier {
         }
         if (SmsMessageParser.isReadReceipt(body)) {
             val ts = SmsMessageParser.parseReadReceipt(body) ?: return Classified.Ignore
-            return Classified.ReadReceipt(ts)
+            val ids = if (body.contains("|IDS:")) ReadReceiptBody.parseIds(body.substringAfter("|IDS:")) ?: return Classified.Ignore else null
+            return Classified.ReadReceipt(ts, ids)
         }
         SmsMessageParser.parseLocation(body)?.let { loc ->
             return Classified.Pin(

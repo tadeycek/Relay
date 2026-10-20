@@ -38,42 +38,54 @@ object TypingSignals {
     private val presence = TypingPresence()
     val entries = presence.entries
     private val sent = mutableMapOf<String, Pair<Long, Boolean>>()
+    private val sendSlots = kotlinx.coroutines.sync.Semaphore(4)
     private fun direct(id: Long) = "contact:$id"
     private fun group(owner: String, id: String, author: String) = "group:$owner:$id:$author"
     fun names(entries: Map<String, TypingPresence.Entry>, contactId: Long?, state: GroupProtocol.State?, now: Long) =
         TypingPresence.names(entries, contactId, state, now)
     private fun update(key: String, name: String, s: TypingBody.Signal) =
-        presence.update(key, name, s, SystemClock.elapsedRealtime())
-    private fun deliver(context: Context, contact: Contact, signal: TypingBody.Signal) {
-        if (GroupProtocol.eligible(contact)) deliver(context, contact.nostrPubkey!!, contact.relayHints, signal)
-    }
-    private fun deliver(context: Context, recipient: String, relayHints: List<String>, signal: TypingBody.Signal) {
+        presence.update(key, name, s, SystemClock.elapsedRealtime(), (System.currentTimeMillis() - s.time).coerceAtLeast(0))
+    private fun deliver(context: Context, recipient: String, relayHints: List<String>, signal: TypingBody.Signal, scopeKey: String) {
         MessagingRuntime.launchIo {
-            val transport = Transports.get(context)
-            if (transport.status.value != TransportStatus.ONLINE || System.currentTimeMillis() - signal.time > TypingBody.TTL) return@launchIo
-            withTimeoutOrNull(2500) {
-                transport.send(recipient, RelayPayload(PayloadCodec.newId(), signal.time,
-                    TypingBody.format(signal)), relayHints, ephemeral = true)
-            }
+            sendSlots.acquire()
+            try {
+                if (synchronized(sent) { sent[scopeKey]?.first != signal.time }) return@launchIo
+                if (signal.typing && !ActiveChat.foreground) return@launchIo
+                if (!com.relay.app.util.RelayPreferences(context).typingIndicators) return@launchIo
+                val transport = Transports.get(context)
+                if (transport.status.value != TransportStatus.ONLINE || System.currentTimeMillis() - signal.time > TypingBody.TTL) return@launchIo
+                withTimeoutOrNull(2500) {
+                    transport.send(recipient, RelayPayload(PayloadCodec.newId(), signal.time,
+                        TypingBody.format(signal)), relayHints, ephemeral = true)
+                }
+            } finally { sendSlots.release() }
         }
     }
-    @Synchronized fun send(context: Context, contactId: Long? = null, groupId: Long? = null, typing: Boolean) {
+    fun send(context: Context, contactId: Long? = null, groupId: Long? = null, typing: Boolean) {
         if (!com.relay.app.util.RelayPreferences(context).typingIndicators) return
-        val db = MessagingDb.get(context)
-        val repo = com.relay.app.data.repository.ContactRepository(db)
+        if (typing && (!ActiveChat.foreground ||
+                (groupId != null && ActiveChat.groupId != groupId) || (groupId == null && ActiveChat.contactId != contactId))) return
         val id = if (groupId != null) "g:$groupId" else "c:$contactId"
-        val wall = System.currentTimeMillis(); val old = sent[id]
-        val now = maxOf(wall, (old?.first ?: 0) + 1)
-        if (old != null && old.second == typing && now - old.first < if (typing) 3000 else 1000) return
-        sent[id] = now to typing
-        if (groupId == null) {
-            contactId?.let { repo.getByIdSync(it) }?.let { deliver(context, it, TypingBody.Signal(typing, now)) }
-        } else {
-            val stored = SharedGroups.get(db, groupId) ?: return
-            val own = NostrIdentity.publicKeyHex(context)
-            if (stored.hidden || stored.state.members.none { it.key == own }) return
-            val signal = TypingBody.Signal(typing, now, stored.state.id, stored.state.owner, own)
-            SharedGroups.recipients(db, stored.state, own).forEach { deliver(context, it.key, it.relays, signal) }
+        val now = synchronized(sent) {
+            val old = sent[id]
+            val timestamp = maxOf(System.currentTimeMillis(), (old?.first ?: 0) + 1)
+            if (old != null && old.second == typing && timestamp - old.first < if (typing) 3000 else 1000) return
+            sent[id] = timestamp to typing
+            timestamp
+        }
+        MessagingRuntime.launchIo {
+            val db = MessagingDb.get(context)
+            if (groupId == null) {
+                val contact = contactId?.let { com.relay.app.data.repository.ContactRepository(db).getByIdSync(it) }
+                if (contact != null && GroupProtocol.eligible(contact))
+                    deliver(context, contact.nostrPubkey!!, contact.relayHints, TypingBody.Signal(typing, now), id)
+            } else {
+                val stored = SharedGroups.get(db, groupId) ?: return@launchIo
+                val own = NostrIdentity.publicKeyHex(context)
+                if (stored.hidden || stored.state.members.none { it.key == own }) return@launchIo
+                val signal = TypingBody.Signal(typing, now, stored.state.id, stored.state.owner, own)
+                SharedGroups.recipients(db, stored.state, own).forEach { deliver(context, it.key, it.relays, signal, id) }
+            }
         }
     }
     /** [contact] is the sender's contact row, if any. Group typing comes straight from the typing member, who
@@ -105,11 +117,11 @@ class TypingPresence {
     data class Entry(val name: String, val expires: Long, val timestamp: Long)
     private val _entries = MutableStateFlow<Map<String, Entry>>(emptyMap())
     val entries = _entries.asStateFlow()
-    @Synchronized fun update(key: String, name: String, s: TypingBody.Signal, now: Long): Boolean {
+    @Synchronized fun update(key: String, name: String, s: TypingBody.Signal, now: Long, ageMs: Long = 0): Boolean {
         val old = _entries.value[key]
         if (old != null && s.time <= old.timestamp) return false
         _entries.value = (_entries.value.filterValues { it.expires > now - 30000 } +
-            (key to Entry(name, if (s.typing) now + TypingBody.TTL else now, s.time)))
+            (key to Entry(name, if (s.typing) now + (TypingBody.TTL - ageMs).coerceIn(0, TypingBody.TTL) else now, s.time)))
             .entries.toList().takeLast(100).associate { it.toPair() }
         return true
     }

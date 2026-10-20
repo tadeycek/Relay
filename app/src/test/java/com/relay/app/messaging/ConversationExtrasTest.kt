@@ -47,6 +47,12 @@ class ConversationExtrasTest {
         assertNull(TypingPresence.names(presence.entries.value, 1, null, 2003))
         assertEquals("Bob", TypingPresence.names(presence.entries.value, 2, null, 2003))
     }
+    @Test fun delayedTypingDoesNotReceiveAnotherFullLifetime() {
+        val presence = TypingPresence()
+        assertTrue(presence.update("contact:1", "Alice", TypingBody.Signal(true, 100000), 1000, TypingBody.TTL - 1000))
+        assertEquals("Alice", TypingPresence.names(presence.entries.value, 1, null, 1999))
+        assertNull(TypingPresence.names(presence.entries.value, 1, null, 2000))
+    }
     @Test fun typingAcceptsOnlyFreshSignalsAndSupportedFormat() {
         val now = 100000L
         val signal = TypingBody.Signal(true, now)

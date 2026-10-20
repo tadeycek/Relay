@@ -30,7 +30,7 @@ object MessageNotifier {
     fun notifyIncoming(context: Context, receivedContact: Contact, type: MessageType, body: String = "", alertToken: Long? = ConversationNotifications.token(context, receivedContact.id)) {
         val contact = com.relay.app.data.repository.ContactRepository(MessagingDb.get(context))
             .getByIdSync(receivedContact.id) ?: receivedContact
-        if (contact.id == ActiveChat.contactId || ConversationNotifications.muted(context, contact.id)) return
+        if ((ActiveChat.foreground && contact.id == ActiveChat.contactId) || ConversationNotifications.muted(context, contact.id)) return
         val prefs = RelayPreferences(context)
         val wanted = when (type) {
             MessageType.LOCATION -> prefs.incomingPinNotification

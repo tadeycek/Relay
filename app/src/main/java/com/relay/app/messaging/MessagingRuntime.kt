@@ -57,7 +57,17 @@ object MessagingRuntime {
      */
     fun onForeground(context: Context) {
         if (!started) return ensureStarted(context)
-        scope.launch { Transports.get(context.applicationContext).start() }
+        scope.launch {
+            Transports.get(context.applicationContext).start()
+            retryQueuedNow(context.applicationContext)
+        }
+    }
+
+    /** Messages that failed while offline go out now rather than after their remaining back-off. */
+    private fun retryQueuedNow(context: Context) {
+        runCatching { OutboxRepository(MessagingDb.get(context)).resetBackoffSync(System.currentTimeMillis()) }
+            .onFailure { Log.w(TAG, "couldn't reset outbox back-off", it) }
+        kick()
     }
 
     fun ensureStarted(context: Context) {
@@ -94,7 +104,8 @@ object MessagingRuntime {
             // A reconnect is the moment queued messages can finally go out.
             transport.status.collect {
                 if (it == TransportStatus.ONLINE) {
-                    kick()
+                    retryQueuedNow(appContext)
+                    launch { PresenceSignals.heartbeat(appContext) }
                     com.relay.app.transport.mailbox.MailboxPush.refresh(appContext)
                     com.relay.app.media.ProfilePhotoSync.syncPending(appContext)
                     com.relay.app.groups.GroupMedia.retryPending(appContext)
@@ -106,6 +117,12 @@ object MessagingRuntime {
             while (true) {
                 runCatching { MessageRetention.sweep(appContext) }.onFailure { Log.e(TAG, "retention sweep failed", it) }
                 delay(60_000L)
+            }
+        }
+        scope.launch {
+            val handler = IncomingMessageHandler(appContext)
+            transport.signals.collect { envelope ->
+                runCatching { handler.handleSignal(envelope) }.onFailure { Log.w(TAG, "live signal ignored", it) }
             }
         }
         scope.launch {
@@ -127,18 +144,21 @@ object MessagingRuntime {
         }
 
         scope.launch {
-            val worker = OutboxWorker(appContext, transport)
+            // Lanes run on the runtime scope; each finished lane kicks this loop to pick up newer work.
+            val worker = OutboxWorker(appContext, transport, scope, ::kick)
             val outbox = OutboxRepository(MessagingDb.get(appContext))
             while (true) {
                 if (transport.status.value == TransportStatus.ONLINE) {
                     try {
+                        com.relay.app.groups.GroupDispatch.drain(appContext)
                         worker.drain()
                     } catch (e: Exception) {
                         Log.e(TAG, "outbox drain failed", e)
                     }
                 }
                 val now = System.currentTimeMillis()
-                val nextDue = runCatching { outbox.nextDueAtSync() }.getOrNull()
+                // Entries of recipients still being sent to are due but already in hand: don't spin on them.
+                val nextDue = runCatching { outbox.nextDueAtSync(worker.busy()) }.getOrNull()
                 val wait = ((nextDue ?: (now + MAX_WAIT_MS)) - now).coerceIn(MIN_WAIT_MS, MAX_WAIT_MS)
                 // Sleep until the next entry is due, or until kicked, whichever comes first.
                 withTimeoutOrNull(wait) { kicks.receive() }

@@ -26,13 +26,14 @@ class OutboxRepository(private val dbHelper: RelayDbHelper) {
         return db.insert(Outbox.TABLE, null, values)
     }
 
-    /** Queued entries whose retry time has arrived, oldest first. */
-    fun dueSync(now: Long, limit: Int = 50): List<OutboxEntry> {
+    /** Queued entries whose retry time has arrived, oldest first, skipping recipients in [exclude]
+     *  (those already being sent to) so their backlog can't crowd everyone else out of the [limit]. */
+    fun dueSync(now: Long, limit: Int = 50, exclude: Collection<String> = emptyList()): List<OutboxEntry> {
         val db = dbHelper.readableDatabase
         val cursor = db.query(
             Outbox.TABLE, null,
-            "${Outbox.COL_STATE} = ? AND ${Outbox.COL_NEXT_ATTEMPT_AT} <= ?",
-            arrayOf(OutboxState.QUEUED.dbValue.toString(), now.toString()),
+            "${Outbox.COL_STATE} = ? AND ${Outbox.COL_NEXT_ATTEMPT_AT} <= ?" + notIn(exclude),
+            arrayOf(OutboxState.QUEUED.dbValue.toString(), now.toString()) + exclude,
             null, null, "${Outbox.COL_CREATED_AT} ASC", limit.toString(),
         )
         return cursor.use { c ->
@@ -42,20 +43,37 @@ class OutboxRepository(private val dbHelper: RelayDbHelper) {
         }
     }
 
-    /** Earliest time any queued entry becomes due, or null when nothing is queued. */
-    fun nextDueAtSync(): Long? {
+    /** Earliest time any queued entry (outside [exclude]) becomes due, or null when nothing is queued. */
+    fun nextDueAtSync(exclude: Collection<String> = emptyList()): Long? {
         val db = dbHelper.readableDatabase
         val cursor = db.rawQuery(
-            "SELECT MIN(${Outbox.COL_NEXT_ATTEMPT_AT}) FROM ${Outbox.TABLE} WHERE ${Outbox.COL_STATE} = ?",
-            arrayOf(OutboxState.QUEUED.dbValue.toString()),
+            "SELECT MIN(next_at) FROM (SELECT ${Outbox.COL_NEXT_ATTEMPT_AT} AS next_at FROM ${Outbox.TABLE} WHERE ${Outbox.COL_STATE} = ?${notIn(exclude)} UNION ALL SELECT next_attempt_at FROM group_dispatch)",
+            arrayOf(OutboxState.QUEUED.dbValue.toString()) + exclude,
         )
         return cursor.use { if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else null }
     }
 
+    /**
+     * Makes every queued entry due now. Called when the connection comes back or the app is opened:
+     * failures while offline must not leave a message waiting out a back-off of up to 15 minutes once
+     * sending can work again. Attempt counts are kept, so a send that keeps failing still backs off.
+     */
+    fun resetBackoffSync(now: Long) {
+        val db = dbHelper.writableDatabase
+        db.execSQL(
+            "UPDATE ${Outbox.TABLE} SET ${Outbox.COL_NEXT_ATTEMPT_AT} = ? WHERE ${Outbox.COL_STATE} = ? AND ${Outbox.COL_NEXT_ATTEMPT_AT} > ?",
+            arrayOf(now, OutboxState.QUEUED.dbValue, now),
+        )
+        db.execSQL("UPDATE group_dispatch SET next_attempt_at = ? WHERE next_attempt_at > ?", arrayOf(now, now))
+    }
+
+    private fun notIn(exclude: Collection<String>) =
+        if (exclude.isEmpty()) "" else " AND ${Outbox.COL_RECIPIENT} NOT IN (${exclude.joinToString(",") { "?" }})"
+
     fun queuedCountSync(): Int {
         val db = dbHelper.readableDatabase
         val cursor = db.rawQuery(
-            "SELECT COUNT(*) FROM ${Outbox.TABLE} WHERE ${Outbox.COL_STATE} = ?",
+            "SELECT (SELECT COUNT(*) FROM ${Outbox.TABLE} WHERE ${Outbox.COL_STATE} = ?) + (SELECT COUNT(*) FROM group_dispatch)",
             arrayOf(OutboxState.QUEUED.dbValue.toString()),
         )
         return cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }

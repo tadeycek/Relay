@@ -18,7 +18,7 @@ object GroupMessageNotifier {
         (context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).cancel("group:$groupId", ID)
     }
     fun show(context: Context, groupId: Long, state: GroupProtocol.State, event: GroupProtocol.Event) {
-        if (ConversationNotifications.muted(context, groupId, true) || ActiveChat.groupId == groupId || !RelayPreferences(context).incomingMessageNotification || !MessageNotifier.canPostNotifications(context)) return
+        if (ConversationNotifications.muted(context, groupId, true) || (ActiveChat.foreground && ActiveChat.groupId == groupId) || !RelayPreferences(context).incomingMessageNotification || !MessageNotifier.canPostNotifications(context)) return
         val alertToken = ConversationNotifications.token(context, groupId, true)
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         LauncherBadges.disable(context)

@@ -13,9 +13,10 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
 
     suspend fun getMessages(contactId: Long, limit: Int? = null, fromTimestamp: Long? = null, fromId: Long = 0): List<Message> = withContext(Dispatchers.IO) {
         val db = dbHelper.readableDatabase
-        val cursor = if(fromTimestamp == null) db.rawQuery(HistoryWindow.query(false), arrayOf(contactId.toString(), (limit ?: -1).toString()))
-        else db.rawQuery("SELECT * FROM messages WHERE contact_id=? AND (timestamp>? OR (timestamp=? AND _id>=?)) ORDER BY timestamp ASC,_id ASC",
-            arrayOf(contactId.toString(),fromTimestamp.toString(),fromTimestamp.toString(),fromId.toString()))
+        val cutoff = com.relay.app.messaging.RetentionPolicy.cutoff(System.currentTimeMillis()).toString()
+        val cursor = if(fromTimestamp == null) db.rawQuery(HistoryWindow.query(false, retainedOnly = true), arrayOf(contactId.toString(), cutoff, (limit ?: -1).toString()))
+        else db.rawQuery("SELECT * FROM messages WHERE contact_id=? AND timestamp>? AND (timestamp>? OR (timestamp=? AND _id>=?)) ORDER BY timestamp ASC,_id ASC",
+            arrayOf(contactId.toString(),cutoff,fromTimestamp.toString(),fromTimestamp.toString(),fromId.toString()))
         cursor.use { it.toMessageList() }
     }
 
@@ -64,7 +65,8 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
     /** Number of unread received messages across all one-to-one chats. */
     fun totalUnreadSync(): Int {
         val db = dbHelper.readableDatabase
-        val cursor = db.rawQuery("SELECT COUNT(*) FROM ${Messages.TABLE} WHERE ${Messages.COL_UNREAD} = 1", null)
+        val cursor = db.rawQuery("SELECT COUNT(*) FROM ${Messages.TABLE} WHERE ${Messages.COL_UNREAD} = 1 AND timestamp>?",
+            arrayOf(com.relay.app.messaging.RetentionPolicy.cutoff(System.currentTimeMillis()).toString()))
         return cursor.use { if (it.moveToFirst()) it.getInt(0) else 0 }
     }
 
@@ -110,15 +112,23 @@ class MessageRepository(private val dbHelper: RelayDbHelper) {
         )
     }
 
-    fun markReadUpToSync(contactId: Long, upToTimestamp: Long) {
-        val tolerance = 2 * 60 * 1000L
+    fun markReadUpToSync(contactId: Long, upToTimestamp: Long): Int {
         val db = dbHelper.writableDatabase
         val values = ContentValues().apply { put(Messages.COL_READ_AT, System.currentTimeMillis()) }
-        db.update(
+        return db.update(
             Messages.TABLE, values,
             "${Messages.COL_CONTACT_ID} = ? AND ${Messages.COL_IS_SENT} = 1 AND ${Messages.COL_TIMESTAMP} <= ? AND ${Messages.COL_READ_AT} IS NULL",
-            arrayOf(contactId.toString(), (upToTimestamp + tolerance).toString())
+            arrayOf(contactId.toString(), upToTimestamp.coerceAtMost(System.currentTimeMillis()).toString())
         )
+    }
+
+    fun markReadIdsSync(contactId: Long, ids: List<String>): Int {
+        if (ids.isEmpty()) return 0
+        val marks = ids.joinToString(",") { "?" }
+        return dbHelper.writableDatabase.update(Messages.TABLE, ContentValues().apply {
+            put(Messages.COL_READ_AT, System.currentTimeMillis())
+        }, "contact_id=? AND is_sent=1 AND read_at IS NULL AND msg_id IN ($marks)",
+            (listOf(contactId.toString()) + ids).toTypedArray())
     }
 
     private fun Cursor.toMessageList(): List<Message> {

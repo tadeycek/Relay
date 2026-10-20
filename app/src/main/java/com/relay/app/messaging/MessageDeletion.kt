@@ -39,6 +39,7 @@ object MessageDeletion {
         val groups = db.rawQuery("SELECT DISTINCT group_id FROM group_messages WHERE timestamp<=?", arrayOf(before.toString())).use { c ->
             buildList { while(c.moveToNext()) add(c.getLong(0)) } }
         // Cancel every fanout leg before removing its source message.
+        db.execSQL("DELETE FROM group_dispatch WHERE created_at<=? OR (requires_source=1 AND NOT EXISTS(SELECT 1 FROM group_messages WHERE group_messages.group_id=group_dispatch.group_id AND group_messages.event_id=group_dispatch.event AND is_sent=1))", arrayOf(before))
         db.execSQL("DELETE FROM outbox WHERE payload_id IN (SELECT d.payload_id FROM group_delivery d JOIN group_messages m ON m.group_id=d.group_id AND m.event_id=d.event WHERE m.timestamp<=? AND m.is_sent=1)", arrayOf(before))
         db.execSQL("DELETE FROM outbox WHERE payload_id IN (SELECT msg_id FROM messages WHERE timestamp<=? AND is_sent=1) OR created_at<=?", arrayOf(before,before))
         db.execSQL("DELETE FROM group_delivery WHERE NOT EXISTS (SELECT 1 FROM outbox WHERE outbox.payload_id=group_delivery.payload_id) AND EXISTS (SELECT 1 FROM group_messages m WHERE m.group_id=group_delivery.group_id AND m.event_id=group_delivery.event AND m.timestamp<=?)", arrayOf(before))
@@ -51,6 +52,8 @@ object MessageDeletion {
             db.delete("pending_attachments", "path=?", arrayOf(path))
         }
         db.delete("reactions", "received_at<=?", arrayOf(before.toString()))
+        db.execSQL("DELETE FROM group_reads WHERE NOT EXISTS(SELECT 1 FROM group_messages m WHERE m.group_id=group_reads.group_id AND m.event_id=group_reads.event AND m.is_sent=1)")
+        db.execSQL("DELETE FROM group_read_sent WHERE NOT EXISTS(SELECT 1 FROM group_messages m WHERE m.group_id=group_read_sent.group_id AND m.event_id=group_read_sent.event AND m.sender_key=group_read_sent.author AND m.is_sent=0)")
         contacts.forEach { id -> MessageNotifier.cancel(context,id)
             context.sendBroadcast(Intent("com.relay.app.NEW_MESSAGE").setPackage(context.packageName).putExtra("contact_id",id)) }
         groups.forEach { id -> GroupMessageNotifier.cancel(context,id); SharedGroups.notify(context,id) }

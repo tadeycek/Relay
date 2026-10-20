@@ -16,6 +16,7 @@ import androidx.test.uiautomator.Configurator
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
+import androidx.test.uiautomator.Until
 import com.google.android.gms.tasks.Tasks
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.common.InputImage
@@ -85,8 +86,14 @@ class PeerConversationTest {
         fun status(): JSONObject = runBlocking {
             val records = contacts.getAllContacts()
             JSONObject().put("role", role).put("transport", Transports.get(context).status.value.name)
+                .put("dbVersion", MessagingDb.get(context).readableDatabase.version)
                 .put("route", Transports.get(context)::class.simpleName)
                 .put("typing", JSONArray(com.relay.app.messaging.TypingSignals.entries.value.values.map { it.name }))
+                .put("activity", JSONObject().apply {
+                    com.relay.app.messaging.PresenceSignals.observed.value.forEach { (key, value) ->
+                        put(key, JSONObject().put("time", value.time).put("active", value.active))
+                    }
+                })
                 .put("groups", JSONArray().apply {
                     val own = NostrIdentity.publicKeyHex(context)
                     val db = MessagingDb.get(context)
@@ -95,6 +102,9 @@ class PeerConversationTest {
                             for (m in com.relay.app.data.repository.GroupMessageRepository(db).getMessages(group.id)) {
                                 put(JSONObject().put("body", m.body).put("sent", m.senderKey == null || m.senderKey == own)
                                     .put("type", m.type.name)
+                                    .put("event", m.eventId).put("readAt", m.readAt ?: JSONObject.NULL)
+                                    .put("readCount", m.readCount).put("readerCount", m.readerCount)
+                                    .put("delivery", m.deliveryState)
                                     .put("mediaHash", m.mediaUri?.let { path -> runCatching {
                                         MediaCrypto.sha256Hex(RelayFileCrypto.readDecrypted(context, File(path)))
                                     }.getOrNull() } ?: JSONObject.NULL))
@@ -117,6 +127,7 @@ class PeerConversationTest {
                             for (message in MessageRepository(MessagingDb.get(context)).getMessages(contact.id)) {
                                 put(JSONObject().put("body", message.body).put("sent", message.isSent)
                                     .put("delivery", message.deliveryState).put("type", message.type.name)
+                                    .put("readAt", message.readAt ?: JSONObject.NULL)
                                     .put("mediaHash", message.mediaUri?.let { path -> runCatching {
                                         val file = File(path)
                                         val bytes = runCatching { RelayFileCrypto.readDecrypted(context, file) }.getOrElse { file.readBytes() }
@@ -142,7 +153,56 @@ class PeerConversationTest {
                 if (id.isEmpty() || id == lastId) { SystemClock.sleep(200); continue }
                 lastId = id
                 try {
+                    val measurements = JSONObject()
                     when (command!!.getString("action")) {
+                        "measure_history" -> {
+                            unlockRoot(); tap("Messages")
+                            val name = command.getString("name")
+                            val conversation = device.findObject(UiSelector().text(name))
+                            if (!conversation.waitForExists(1_000)) {
+                                assertTrue("Conversation is reachable", UiScrollable(UiSelector().scrollable(true))
+                                    .scrollIntoView(UiSelector().text(name)))
+                            }
+                            val started = SystemClock.elapsedRealtime()
+                            conversation.click()
+                            assertTrue("Conversation composer appears", device.wait(Until.hasObject(By.desc("Send")), 20_000))
+                            assertTrue("Existing exact message appears in the conversation", device.wait(
+                                Until.hasObject(By.text(command.getString("body")).clazz("android.widget.TextView")), 20_000))
+                            measurements.put("tapToHistoryMs", SystemClock.elapsedRealtime() - started)
+                            assertFalse("Existing history is not falsely empty", device.hasObject(By.text("Say hello")))
+                        }
+                        "burst" -> {
+                            val entry = device.findObject(UiSelector().className("android.widget.EditText"))
+                            assertTrue(entry.waitForExists(5_000))
+                            assertTrue("Refuse to overwrite an existing draft", entry.text.isNullOrEmpty())
+                            val timings = JSONArray()
+                            val texts = command.getJSONArray("texts")
+                            for (index in 0 until texts.length()) {
+                                val text = texts.getString(index)
+                                entry.setText(text)
+                                val started = SystemClock.elapsedRealtime()
+                                device.findObject(UiSelector().description("Send")).click()
+                                assertTrue("Durable own bubble appears", device.wait(
+                                    Until.hasObject(By.text(text).clazz("android.widget.TextView")), 10_000))
+                                timings.put(SystemClock.elapsedRealtime() - started)
+                                assertTrue("Accepted draft clears", entry.text.isNullOrEmpty())
+                            }
+                            measurements.put("tapToOwnBubbleMs", timings)
+                        }
+                        "typing_ui" -> {
+                            val entry = device.findObject(UiSelector().className("android.widget.EditText"))
+                            assertTrue(entry.waitForExists(5_000))
+                            assertTrue("Refuse to overwrite a draft", entry.text.isNullOrEmpty())
+                            val text = command.getString("text")
+                            require(text.startsWith("QA-TYPING-"))
+                            entry.setText(text)
+                        }
+                        "clear_test_draft" -> {
+                            val entry = device.findObject(UiSelector().className("android.widget.EditText"))
+                            assertTrue(entry.waitForExists(5_000))
+                            assertTrue("Only clear this run's synthetic typing draft", entry.text.startsWith("QA-TYPING-"))
+                            entry.clearTextField()
+                        }
                         "show_qr" -> {
                             unlockRoot(); tap("Account"); tap("Show my code")
                             assertTrue(device.findObject(UiSelector().description("Your code")).waitForExists(20_000))
@@ -289,7 +349,7 @@ class PeerConversationTest {
                         "stop" -> { result(status().put("id", id).put("ok", true)); return }
                         else -> error("Unknown test action")
                     }
-                    result(status().put("id", id).put("ok", true))
+                    result(status().put("id", id).put("ok", true).put("measurements", measurements))
                 } catch (failure: Throwable) {
                     device.dumpWindowHierarchy(File(directory, "failure.xml"))
                     device.takeScreenshot(File(directory, "failure.png"))

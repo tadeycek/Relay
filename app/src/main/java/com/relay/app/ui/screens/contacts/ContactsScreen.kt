@@ -3,6 +3,7 @@ package com.relay.app.ui.screens.contacts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -53,9 +54,14 @@ fun ContactsScreen(navController: NavController) {
     val vm: ContactsViewModel = viewModel()
     val contacts by vm.contacts.collectAsState()
     val groups by vm.groups.collectAsState()
+    val loaded by vm.loaded.collectAsState()
+    val loadError by vm.loadError.collectAsState()
+    val creatingGroup by vm.creatingGroup.collectAsState()
     val error by vm.error.collectAsState()
     val context = LocalContext.current
-    val own = remember { com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }
+    val own by androidx.compose.runtime.produceState("") {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }
+    }
     LaunchedEffect(error) { error?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show(); vm.clearError() } }
     val verifiedFriends = contacts.filter { com.relay.app.groups.GroupProtocol.eligible(it) }
     var showNewGroup by remember { mutableStateOf(false) }
@@ -72,7 +78,9 @@ fun ContactsScreen(navController: NavController) {
             }
         }
 
-        if (contacts.isEmpty() && groups.isEmpty()) {
+        if (!loaded) {
+            com.relay.app.ui.components.InitialLoadState(loadError, vm::reload, Modifier.weight(1f).fillMaxWidth())
+        } else if (contacts.isEmpty() && groups.isEmpty()) {
             EmptyState(
                 title = "No one here yet",
                 message = "Meet a friend and scan each other's codes. That is how Relay makes sure you are talking to the right person.",
@@ -112,6 +120,7 @@ fun ContactsScreen(navController: NavController) {
                 navController.navigate(Screen.GroupChat.routeFor(id))
             } },
             onDismiss = { showNewGroup = false },
+            creating = creatingGroup,
         )
     }
 

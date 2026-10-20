@@ -49,7 +49,7 @@ internal fun ConversationTyping(text: String, contactId: Long? = null, groupId: 
     var now by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
     LaunchedEffect(Unit) { while (true) { now = SystemClock.elapsedRealtime(); delay(500) } }
     fun signal(typing: Boolean) {
-        MessagingRuntime.launchIo { TypingSignals.send(context, contactId, groupId, typing) }
+        TypingSignals.send(context, contactId, groupId, typing)
     }
     LaunchedEffect(text, contactId, groupId) {
         if (lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) signal(text.isNotBlank())

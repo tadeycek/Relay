@@ -34,7 +34,7 @@ import com.relay.app.ui.theme.TextPrimary
 import com.relay.app.ui.theme.TextSecondary
 
 @Composable
-fun NewGroupSheet(contacts: List<Contact>, onCreate: (String, List<Long>) -> Unit, onDismiss: () -> Unit) {
+fun NewGroupSheet(contacts: List<Contact>, onCreate: (String, List<Long>) -> Unit, onDismiss: () -> Unit, creating: Boolean = false) {
     var name by remember { mutableStateOf("") }
     val selected = remember { mutableStateListOf<Long>() }
     val selectedIds = selected.filter { id -> contacts.any { it.id == id } }
@@ -77,10 +77,10 @@ fun NewGroupSheet(contacts: List<Contact>, onCreate: (String, List<Long>) -> Uni
             }
         }
         PrimaryButton(
-            "Create group",
+            if (creating) "Creating group…" else "Create group",
             { onCreate(name.trim(), selectedIds) },
             Modifier.fillMaxWidth().padding(top = RelaySpacing.lg),
-            enabled = canCreate,
+            enabled = canCreate && !creating,
         )
         }
     }

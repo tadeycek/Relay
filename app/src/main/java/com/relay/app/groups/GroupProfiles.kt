@@ -26,16 +26,17 @@ object GroupProfiles {
         if (contact != null && contact.name != contact.originalName) return contact.name
         return latest(db, group, key)?.name ?: contact?.name ?: fallback
     }
-    private fun save(db: RelayDbHelper, group: Long, key: String, update: ProfileNameBody.Update) {
+    private fun save(db: RelayDbHelper, group: Long, key: String, update: ProfileNameBody.Update): Boolean {
+        if ((latest(db, group, key)?.revision ?: -1) >= update.revision) return false
         db.writableDatabase.execSQL("""INSERT INTO group_profiles(group_id,member_key,revision,name) VALUES(?,?,?,?)
             ON CONFLICT(group_id,member_key) DO UPDATE SET revision=excluded.revision,name=excluded.name
             WHERE excluded.revision > group_profiles.revision""", arrayOf(group, key, update.revision, update.name))
+        return true
     }
     /** A name update [SharedGroups] already checked: sent by its author, who is on our roster. */
     internal fun apply(context: Context, stored: SharedGroups.Stored, e: GroupProtocol.Event) {
         val update = ProfileNameBody.parse(e.text) ?: return
-        save(MessagingDb.get(context), stored.localId, e.author, update)
-        SharedGroups.notify(context, stored.localId)
+        if (save(MessagingDb.get(context), stored.localId, e.author, update)) SharedGroups.notify(context, stored.localId)
     }
 
     /** Invoked on profile changes, membership changes and reconnect. Durable queue markers avoid
@@ -54,12 +55,13 @@ object GroupProfiles {
                 val stored = SharedGroups.get(db, id) ?: continue
                 val state = stored.state
                 if (state.members.none { it.key == own }) continue
-                if (self.myName.isNotBlank()) save(db, id, own, ProfileNameBody.Update(self.profileNameRevision, self.myName.trim()))
+                var changed = false
+                if (self.myName.isNotBlank()) changed = save(db, id, own, ProfileNameBody.Update(self.profileNameRevision, self.myName.trim()))
                 run {
                     for (member in state.members.filter { it.key != own }) {
                         val friend = repo.findByNostrPubkeySync(member.key) ?: continue
                         val revision = context.getSharedPreferences("profile_photo_state", Context.MODE_PRIVATE).getLong("name_received_${friend.id}", -1)
-                        if (revision >= 0 && friend.originalName != null) save(db, id, member.key, ProfileNameBody.Update(revision, friend.originalName))
+                        if (revision >= 0 && friend.originalName != null) changed = save(db, id, member.key, ProfileNameBody.Update(revision, friend.originalName)) || changed
                     }
                 }
                 GroupAvatars.sync(context, id, state)
@@ -76,7 +78,7 @@ object GroupProfiles {
                             check(markers.edit().putLong(marker, update.revision).commit())
                     }
                 }
-                SharedGroups.notify(context, id)
+                if (changed) SharedGroups.notify(context, id)
             }
         }
     }

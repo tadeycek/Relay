@@ -217,7 +217,12 @@ private fun MessageMeta(message: Message) {
             style = MaterialTheme.typography.bodySmall,
             color = TextSecondary,
         )
-        if (message.isSent) DeliveryTick(readAt = message.readAt, deliveryState = message.deliveryState, size = 13.dp)
+        if (message.isSent) {
+            if (message.readCount > 0) Text(
+                if (message.readerCount > 0) "Seen ${message.readCount}/${message.readerCount}" else "Seen by ${message.readCount}",
+                style = MaterialTheme.typography.bodySmall, color = TextSecondary)
+            DeliveryTick(readAt = message.readAt, deliveryState = message.deliveryState, size = 13.dp)
+        }
     }
 }
 

@@ -27,8 +27,8 @@ android {
         applicationId 'com.relay.app'
         minSdk 26
         targetSdk 36
-        versionCode 13
-        versionName previewBuild ? '1.12-preview' : '1.12'
+        versionCode 14
+        versionName previewBuild ? '1.13-preview' : '1.13'
         testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
         buildConfigField 'String', 'MAILBOX_URL', groovy.json.JsonOutput.toJson(mailboxConfig.getProperty('url', ''))
     }

@@ -18,6 +18,7 @@ interface Transport {
      * nothing is dropped if a message arrives before the collector is attached.
      */
     val incoming: Flow<IncomingEnvelope>
+    val signals: Flow<IncomingEnvelope> get() = kotlinx.coroutines.flow.emptyFlow()
 
     suspend fun start()
 

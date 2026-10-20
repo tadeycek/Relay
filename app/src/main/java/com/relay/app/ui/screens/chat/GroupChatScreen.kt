@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -51,6 +52,9 @@ private fun GroupMessage.asMessage() = Message(
     expiryAt = expiryAt,
     unread = unread,
     deliveryState = deliveryState,
+    readAt = readAt,
+    readCount = readCount,
+    readerCount = readerCount,
 )
 
 @Composable
@@ -59,6 +63,8 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val vm: GroupChatViewModel = viewModel(factory = GroupChatViewModelFactory(groupId, app))
     val group by vm.group.collectAsState()
     val messages by vm.messages.collectAsState()
+    val loaded by vm.loaded.collectAsState()
+    val loadError by vm.loadError.collectAsState()
     val hasOlder by vm.hasOlder.collectAsState()
     val friends by vm.friends.collectAsState()
     val sending by vm.sending.collectAsState()
@@ -95,7 +101,9 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     var showMembers by remember { mutableStateOf(false) }
     var confirmRequestLocation by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val own = remember { com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }
+    val own by androidx.compose.runtime.produceState("") {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }
+    }
     val canSend = group?.sharedOwner != null && group?.members.orEmpty().any { it.nostrPubkey == own }
     MessageActions(actionMessage, groupId, onReply = { message ->
         draftRevision += 1
@@ -143,18 +151,24 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
         containerColor = Background,
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
-            LazyColumn(
-                state = listState,
+            if (!loaded) {
+                com.relay.app.ui.components.InitialLoadState(loadError, vm::reload, Modifier.weight(1f).fillMaxWidth())
+            } else if (items.isEmpty()) {
+                com.relay.app.ui.components.EmptyState("No messages yet", "Messages in this group are end-to-end encrypted.", Modifier.weight(1f).fillMaxWidth())
+            } else {
+                LazyColumn(
+                    state = listState,
                     reverseLayout = true,
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(horizontal = RelaySpacing.lg, vertical = RelaySpacing.md),
-            ) {
-                items(items.reversed(), key = { it.key }) { item ->
-                    ChatItemRow(item, groupId = groupId, contactName = "Someone", senderName = { names[it] }, onReply = { message ->
-                        actionMessage = message
-                    })
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(horizontal = RelaySpacing.lg, vertical = RelaySpacing.md),
+                ) {
+                    items(items.reversed(), key = { it.key }) { item ->
+                        ChatItemRow(item, groupId = groupId, contactName = "Someone", senderName = { names[it] }, onReply = { message ->
+                            actionMessage = message
+                        })
+                    }
+                    if(hasOlder) item(key = "load_older") { androidx.compose.material3.TextButton(onClick=vm::loadOlder) { androidx.compose.material3.Text("Load older messages") } }
                 }
-                if(hasOlder) item(key = "load_older") { androidx.compose.material3.TextButton(onClick=vm::loadOlder) { androidx.compose.material3.Text("Load older messages") } }
             }
             ConversationCaptureNotice(group = groupId, targets = {
                 val visibleKeys = listState.layoutInfo.visibleItemsInfo.map { it.key }.toSet()
@@ -203,7 +217,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                         }
                     },
                 )
-            } else androidx.compose.material3.Text(
+            } else if (loaded && group != null && own.isNotEmpty()) androidx.compose.material3.Text(
                 if (group?.sharedOwner == null) "This is a legacy local group. Create a new shared group from People." else "You are no longer a member of this group.",
                 modifier = Modifier.padding(16.dp), color = TextSecondary)
         }

@@ -27,19 +27,20 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
 
     private fun contactConversations(): List<ConversationSummary> {
         val db = dbHelper.readableDatabase
+        val cutoff = com.relay.app.messaging.RetentionPolicy.cutoff(System.currentTimeMillis()).toString()
         val cursor = db.rawQuery(
             """
             SELECT c._id, c.name, c.nostr_pubkey, c.qr_verified, c.trust_level,
                    m.type, m.body, m.timestamp, m.is_sent, m.delivery_state, m.read_at,
-                   (SELECT COUNT(*) FROM messages u WHERE u.contact_id = c._id AND u.unread = 1),
-                   (SELECT COUNT(*) FROM messages r WHERE r.contact_id = c._id AND r.is_sent = 0),
+                   (SELECT COUNT(*) FROM messages u WHERE u.contact_id = c._id AND u.unread = 1 AND u.timestamp>?),
+                   (SELECT COUNT(*) FROM messages r WHERE r.contact_id = c._id AND r.is_sent = 0 AND r.timestamp>?),
                    c.phone, c.deleted_at
             FROM contacts c
             INNER JOIN messages m ON m._id = (
-                SELECT _id FROM messages WHERE contact_id = c._id ORDER BY timestamp DESC, _id DESC LIMIT 1
+                SELECT _id FROM messages WHERE contact_id = c._id AND timestamp>? ORDER BY timestamp DESC, _id DESC LIMIT 1
             )
             """.trimIndent(),
-            null,
+            arrayOf(cutoff, cutoff, cutoff),
         )
         return cursor.use { c ->
             val list = mutableListOf<ConversationSummary>()
@@ -103,19 +104,20 @@ class ConversationRepository(private val dbHelper: RelayDbHelper) {
     private fun groupConversations(): List<ConversationSummary> {
         val memberSeeds = memberSeedsByGroup()
         val db = dbHelper.readableDatabase
+        val cutoff = com.relay.app.messaging.RetentionPolicy.cutoff(System.currentTimeMillis()).toString()
         val cursor = db.rawQuery(
             """
             SELECT g._id, g.name,
                    m.type, m.body, m.timestamp, m.is_sent,
-                   (SELECT COUNT(*) FROM group_messages u WHERE u.group_id = g._id AND u.unread = 1),
+                   (SELECT COUNT(*) FROM group_messages u WHERE u.group_id = g._id AND u.unread = 1 AND u.timestamp>?),
                    (SELECT COUNT(*) FROM group_members gm WHERE gm.group_id = g._id)
             FROM groups g
             LEFT JOIN group_messages m ON m._id = (
-                SELECT _id FROM group_messages WHERE group_id = g._id ORDER BY timestamp DESC, _id DESC LIMIT 1
+                SELECT _id FROM group_messages WHERE group_id = g._id AND timestamp>? ORDER BY timestamp DESC, _id DESC LIMIT 1
             )
             WHERE NOT EXISTS (SELECT 1 FROM shared_groups s WHERE s.group_id = g._id AND s.hidden = 1)
             """.trimIndent(),
-            null,
+            arrayOf(cutoff, cutoff),
         )
         return cursor.use { c ->
             val list = mutableListOf<ConversationSummary>()
