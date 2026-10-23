@@ -1,0 +1,10 @@
+{
+  "kdf_android": "PBKDF2",
+  "aes_material_bits": 128,
+  "lines": [
+    "SCAN frames=60 size_min=96 size_max=138 size_mean=112",
+    "SCAN second_to_last_byte_is_12_frames=60 iv_contains_ssrc=60 iv_contains_timestamp=60 iv_distinct=60 last_byte_hist={0=60}",
+    "SCAN_MATCH trailer_bytes=14 scheme=pbkdf2-100000 aes_bits=128 clear_header=1 aad=header authenticated=60/60",
+    "SCAN_DONE"
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "acceptance": "PASS",
+  "aes_bits": 128,
+  "android": {
+    "bytes": 49842,
+    "connected": true,
+    "e2ee_enabled": true,
+    "frames_failed": 0,
+    "frames_ok": 0,
+    "generated_frames": 712,
+    "nonzero": 336337,
+    "packets": 353,
+    "phase2_samples": 146880,
+    "phase2_square_sum": 7238617702860,
+    "samples": 347520,
+    "sender_key_index": 0,
+    "sender_states": {
+      "OK": 1
+    },
+    "square_sum": 16544416135670,
+    "states": {
+      "OK": 1
+    },
+    "tone_square": 12675088818
+  },
+  "attempt": 1,
+  "case": "replay",
+  "completed_utc": "2026-10-23T18:19:32Z",
+  "linux": {
+    "bytes": 44942,
+    "connected": true,
+    "e2ee_enabled": true,
+    "frames_failed": 0,
+    "frames_ok": 400,
+    "frames_passthrough": 3,
+    "generated_frames": 800,
+    "nonzero": 382952,
+    "packets": 403,
+    "phase2_samples": 192000,
+    "phase2_square_sum": 12667653070799,
+    "recv_ok_by_bucket": {
+      "0": 0,
+      "1": 0,
+      "11-29": 0,
+      "2-10": 0,
+      "30-60": 0,
+      "61+": 400
+    },
+    "recv_size_buckets": {
+      "0": 3,
+      "1": 0,
+      "11-29": 0,
+      "2-10": 0,
+      "30-60": 0,
+      "61+": 400
+    },
+    "samples": 384000,
+    "sent_size_buckets": {
+      "0": 0,
+      "1": 0,
+      "11-29": 0,
+      "2-10": 0,
+      "30-60": 0,
+      "61+": 400
+    },
+    "square_sum": 25222741174180,
+    "tone_square": 25158337674366
+  },
+  "linux_last_byte_histogram": {
+    "0": 400
+  },
+  "linux_transform_failure": false
+}

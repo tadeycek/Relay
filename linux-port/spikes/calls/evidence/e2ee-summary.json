@@ -1,0 +1,68 @@
+{
+  "aes_bits_effective": 128,
+  "cases": {
+    "dtx": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "match": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "match_aes256material": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "plain_android": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "plain_linux": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "replay": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "rotate": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "sfu_match": {
+      "attempt": 1,
+      "passed": true,
+      "streams": 2
+    },
+    "sfu_wrong_key": {
+      "attempt": 1,
+      "passed": true,
+      "streams": 2
+    },
+    "tamper_linux_receive": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "tamper_linux_send": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "wrong_key_android": {
+      "acceptance": "PASS",
+      "attempt": 1
+    },
+    "wrong_key_linux": {
+      "acceptance": "PASS",
+      "attempt": 1
+    }
+  },
+  "clear_header_bytes": 1,
+  "java_selftest_checks": 27,
+  "mutants_killed": 12,
+  "mutants_total": 12,
+  "overhead_bytes_per_frame": 30,
+  "python_tests": 24,
+  "tag_bytes": 16,
+  "trailer_bytes": 14,
+  "verdict": "interoperable"
+}

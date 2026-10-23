@@ -28,6 +28,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 
 ## Current evidence
 
+- [WP02 E2EE interop](evidence/WP02-e2ee-interop.md): Android FrameCryptor and Linux webrtc-java share one AES-GCM frame layout, local and through the live SFU; WP17 feasible; no frame-level replay protection.
+
 - [WP02 live SFU + Android](evidence/WP02-live-sfu-android.md): Android and Linux publish/subscribe through the real SFU; silence rejected both ways; E2EE/egress/hardware open.
 
 - [WP02 live SFU](evidence/WP02-live-sfu.md): parent fresh four-run suite verified three Linux participants/six streams; Android SFU, egress, E2EE and hardware gates remain open.
@@ -43,6 +45,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 - [WP01](evidence/WP01.md): local interop passed; original-app UI and live-provider checks open.
 
 ## Log
+
+- 2026-10-23 UTC - WP02 remains `doing`; AC5 frame-E2EE interop proven (local + live SFU), parent rerun. Key distribution, egress, hardware, UDP-block gates open.
 
 - 2026-10-23 UTC - WP02 remains `doing`; Android+Linux live SFU publish/subscribe independently rerun (3 cases). E2EE, egress, hardware, UDP-block gates open.
 

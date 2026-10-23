@@ -1,0 +1,89 @@
+{
+  "aes_bits": 128,
+  "android_cleanup_marker": true,
+  "api_calls": 18,
+  "attempt": 1,
+  "case": "none",
+  "cleanup": {
+    "android": {
+      "close_ok": true,
+      "disposition": "inactive",
+      "inactive_records": 2,
+      "readback_ok": true,
+      "requested": 2,
+      "returned_records": 2,
+      "status_values": [
+        "inactive"
+      ]
+    },
+    "linux": {
+      "close_ok": true,
+      "disposition": "inactive",
+      "inactive_records": 2,
+      "readback_ok": true,
+      "requested": 2,
+      "returned_records": 2,
+      "status_values": [
+        "inactive"
+      ]
+    }
+  },
+  "e2ee": true,
+  "e2ee_case": "match",
+  "elapsed_seconds": 13.14,
+  "error": null,
+  "http_error_status": null,
+  "layout": "livekit-style AES-GCM, PBKDF2-SHA256-100000, 1B clear header, IV12|ivlen|keyidx trailer",
+  "local_ice_only": true,
+  "milestones_seconds": {
+    "bridge": 0.96,
+    "published_android": 2.21,
+    "published_linux": 3.25,
+    "subscribed_android": 3.59,
+    "subscribed_linux": 3.93
+  },
+  "native_normal_exit": true,
+  "passed": true,
+  "physical_microphone": false,
+  "retryable": false,
+  "reverse_removed": true,
+  "silent_publisher": null,
+  "stage": "assert",
+  "stamp_unix": 1792779897,
+  "stream_count": 2,
+  "streams": [
+    {
+      "bytes": 46855,
+      "connected": true,
+      "e2ee_enabled": true,
+      "generated_frames": 1074,
+      "packets": 424,
+      "participant": "android",
+      "publisher": "linux",
+      "rms": 8315.33,
+      "samples": 415680,
+      "square_sum": 28742074007711,
+      "states": {
+        "OK": 1
+      },
+      "tone_square_440": 28504777481941,
+      "tone_square_660": 8698901
+    },
+    {
+      "bytes": 45628,
+      "connected": true,
+      "e2ee_enabled": true,
+      "frames_failed": 0,
+      "frames_ok": 407,
+      "packets": 410,
+      "participant": "linux",
+      "publisher": "android",
+      "rms": 8053.52,
+      "samples": 396000,
+      "square_sum": 25684215857955,
+      "tone_square_440": 33292301,
+      "tone_square_660": 25461421459879
+    }
+  ],
+  "synthetic_audio": true
+}

@@ -42,6 +42,8 @@ Retire the call unknowns: library behaviour on both platforms, Cloudflare accoun
 
 ## Progress
 
+- 2026-10-23 UTC - AC5: Android FrameCryptor <-> Linux webrtc-java AES-GCM frame interop proven locally and through the live SFU, parent rerun. [Evidence](../evidence/WP02-e2ee-interop.md). Lane stays `doing` (egress, UDP-block, hardware open).
+
 - 2026-10-23 UTC - Android+Linux live SFU publish/subscribe with silence negatives independently rerun. [Evidence](../evidence/WP02-live-sfu-android.md). AC2 met for publish/subscribe; egress, E2EE (AC5) and hardware open; lane stays `doing`.
 
 - 2026-10-23 UTC — Fresh parent SFU suite independently verified positive and three real silence cases, each

@@ -1,0 +1,15 @@
+{
+  "accept_loud_noise_as_tone (drop tone-ratio check)": "KILLED",
+  "accept_low_rms (drop RMS check)": "KILLED",
+  "key_mismatch_not_rejected (invalid-side assertion removed)": "KILLED",
+  "no_failure_evidence_required": "KILLED",
+  "valid_side_not_required": "KILLED",
+  "rotation_phase_not_checked": "KILLED",
+  "sfu_wrong_key_tone_not_rejected": "KILLED",
+  "sfu_failure_evidence_dropped": "KILLED",
+  "sfu_rtp_flow_not_required": "KILLED",
+  "sfu_wrong_tone_bin_for_publisher": "KILLED",
+  "sfu_match_valid_tone_not_required": "KILLED",
+  "platform_set_not_checked": "KILLED",
+  "_baseline_unmutated": "PASS"
+}

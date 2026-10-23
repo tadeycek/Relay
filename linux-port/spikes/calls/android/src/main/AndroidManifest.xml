@@ -6,5 +6,7 @@
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>
         <activity android:name=".SfuAndroidActivity" android:exported="true"/>
+        <activity android:name=".E2eeActivity" android:exported="true"/>
+        <activity android:name=".SfuE2eeActivity" android:exported="true"/>
     </application>
 </manifest>

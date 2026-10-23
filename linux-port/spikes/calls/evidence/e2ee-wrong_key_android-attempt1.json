@@ -1,0 +1,73 @@
+{
+  "acceptance": "PASS",
+  "aes_bits": 128,
+  "android": {
+    "bytes": 38944,
+    "connected": true,
+    "e2ee_enabled": true,
+    "frames_failed": 0,
+    "frames_ok": 0,
+    "generated_frames": 713,
+    "nonzero": 0,
+    "packets": 373,
+    "phase2_samples": 146880,
+    "phase2_square_sum": 0,
+    "samples": 347520,
+    "sender_key_index": 0,
+    "sender_states": {
+      "OK": 1
+    },
+    "square_sum": 0,
+    "states": {
+      "DECRYPTIONFAILED": 1
+    },
+    "tone_square": 0
+  },
+  "attempt": 1,
+  "case": "wrong_key_android",
+  "completed_utc": "2026-10-23T18:18:33Z",
+  "linux": {
+    "bytes": 45069,
+    "connected": true,
+    "e2ee_enabled": true,
+    "frames_failed": 401,
+    "frames_ok": 0,
+    "frames_passthrough": 3,
+    "generated_frames": 800,
+    "nonzero": 0,
+    "packets": 404,
+    "phase2_samples": 192000,
+    "phase2_square_sum": 0,
+    "recv_ok_by_bucket": {
+      "0": 0,
+      "1": 0,
+      "11-29": 0,
+      "2-10": 0,
+      "30-60": 0,
+      "61+": 0
+    },
+    "recv_size_buckets": {
+      "0": 3,
+      "1": 0,
+      "11-29": 0,
+      "2-10": 0,
+      "30-60": 0,
+      "61+": 401
+    },
+    "samples": 384960,
+    "sent_size_buckets": {
+      "0": 0,
+      "1": 0,
+      "11-29": 0,
+      "2-10": 0,
+      "30-60": 0,
+      "61+": 400
+    },
+    "square_sum": 0,
+    "tone_square": 0
+  },
+  "linux_last_byte_histogram": {
+    "0": 401
+  },
+  "linux_transform_failure": false
+}

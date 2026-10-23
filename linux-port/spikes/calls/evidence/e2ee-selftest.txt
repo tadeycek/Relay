@@ -1,0 +1,2 @@
+e2ee_selftest passed=27 failed=0
+selftest RED (before trailer fix, 3 expectations updated first): FAIL AES-128 overhead, FAIL AES-256 overhead, FAIL trailer ivLength|keyIndex -> passed=24 failed=3; GREEN after E2eeCrypto trailer=IV|12|keyIndex: passed=27 failed=0

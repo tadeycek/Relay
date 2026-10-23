@@ -1,0 +1,89 @@
+{
+  "aes_bits": 128,
+  "android_cleanup_marker": true,
+  "api_calls": 18,
+  "attempt": 1,
+  "case": "none",
+  "cleanup": {
+    "android": {
+      "close_ok": true,
+      "disposition": "inactive",
+      "inactive_records": 2,
+      "readback_ok": true,
+      "requested": 2,
+      "returned_records": 2,
+      "status_values": [
+        "inactive"
+      ]
+    },
+    "linux": {
+      "close_ok": true,
+      "disposition": "inactive",
+      "inactive_records": 2,
+      "readback_ok": true,
+      "requested": 2,
+      "returned_records": 2,
+      "status_values": [
+        "inactive"
+      ]
+    }
+  },
+  "e2ee": true,
+  "e2ee_case": "wrong_key",
+  "elapsed_seconds": 14.0,
+  "error": null,
+  "http_error_status": null,
+  "layout": "livekit-style AES-GCM, PBKDF2-SHA256-100000, 1B clear header, IV12|ivlen|keyidx trailer",
+  "local_ice_only": true,
+  "milestones_seconds": {
+    "bridge": 0.94,
+    "published_android": 3.04,
+    "published_linux": 4.17,
+    "subscribed_android": 4.66,
+    "subscribed_linux": 5.0
+  },
+  "native_normal_exit": true,
+  "passed": true,
+  "physical_microphone": false,
+  "retryable": false,
+  "reverse_removed": true,
+  "silent_publisher": null,
+  "stage": "assert",
+  "stamp_unix": 1792779916,
+  "stream_count": 2,
+  "streams": [
+    {
+      "bytes": 46731,
+      "connected": true,
+      "e2ee_enabled": true,
+      "generated_frames": 1194,
+      "packets": 423,
+      "participant": "android",
+      "publisher": "linux",
+      "rms": 0.0,
+      "samples": 419040,
+      "square_sum": 0,
+      "states": {
+        "DECRYPTIONFAILED": 1
+      },
+      "tone_square_440": 0,
+      "tone_square_660": 0
+    },
+    {
+      "bytes": 45056,
+      "connected": true,
+      "e2ee_enabled": true,
+      "frames_failed": 402,
+      "frames_ok": 0,
+      "packets": 405,
+      "participant": "linux",
+      "publisher": "android",
+      "rms": 0.0,
+      "samples": 392160,
+      "square_sum": 0,
+      "tone_square_440": 0,
+      "tone_square_660": 0
+    }
+  ],
+  "synthetic_audio": true
+}
