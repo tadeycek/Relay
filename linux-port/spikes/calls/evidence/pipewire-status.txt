@@ -1,0 +1,46 @@
+PipeWire 'pipewire-0' [1.0.5, tadej@homelab, cookie:3548484833]
+ └─ Clients:
+        32. pipewire                            [1.0.5, tadej@homelab, pid:2109]
+        34. WirePlumber                         [1.0.5, tadej@homelab, pid:2108]
+        35. WirePlumber [export]                [1.0.5, tadej@homelab, pid:2108]
+        54. gnome-shell                         [1.0.5, tadej@homelab, pid:2360]
+        55. GNOME Shell Volume Control          [1.0.5, tadej@homelab, pid:2360]
+        56. GNOME Volume Control Media Keys     [1.0.5, tadej@homelab, pid:2610]
+        57. xdg-desktop-portal                  [1.0.5, tadej@homelab, pid:2956]
+        58. Mutter                              [1.0.5, tadej@homelab, pid:2360]
+        60. wpctl                               [1.0.5, tadej@homelab, pid:2021317]
+
+Audio
+ ├─ Devices:
+ │      44. Built-in Audio                      [alsa]
+ │
+ ├─ Sinks:
+ │  *   51. Built-in Audio Analog Stereo        [vol: 0.40]
+ │
+ ├─ Sink endpoints:
+ │
+ ├─ Sources:
+ │  *   52. Built-in Audio Analog Stereo        [vol: 1.00]
+ │
+ ├─ Source endpoints:
+ │
+ └─ Streams:
+
+Video
+ ├─ Devices:
+ │      42. Integrated_Webcam_HD                [v4l2]
+ │      43. Integrated_Webcam_HD                [v4l2]
+ │
+ ├─ Sinks:
+ │
+ ├─ Sink endpoints:
+ │
+ ├─ Sources:
+ │  *   45. Integrated_Webcam_HD (V4L2)
+ │
+ ├─ Source endpoints:
+ │
+ └─ Streams:
+
+Settings
+ └─ Default Configured Node Names:

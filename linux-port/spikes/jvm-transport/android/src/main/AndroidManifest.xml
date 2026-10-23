@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- This isolated test app uses adb reverse to a local real Worker; no production data. -->
+    <application android:label="Relay interop spike" android:allowBackup="false" android:usesCleartextTraffic="true" />
+</manifest>
