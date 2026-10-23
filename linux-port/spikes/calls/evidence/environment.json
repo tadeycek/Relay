@@ -1,0 +1,18 @@
+{
+  "os_release": "PRETTY_NAME=\"Ubuntu 24.04.3 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.3 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo\n",
+  "machine": "x86_64",
+  "glibc": "glibc 2.39",
+  "verified_at": "2026-10-23T12:21:43+02:00",
+  "java": "openjdk version \"21.0.12.1\" 2026-08-18 LTS\nOpenJDK Runtime Environment Temurin-21.0.12.1+1 (build 21.0.12.1+1-LTS)\nOpenJDK 64-Bit Server VM Temurin-21.0.12.1+1 (build 21.0.12.1+1-LTS, mixed mode, sharing)",
+  "credential_presence": {
+    "RELAY_SPIKE_LIVE": false,
+    "RELAY_TURN_URL": false,
+    "RELAY_TURN_USERNAME": false,
+    "RELAY_TURN_PASSWORD": false,
+    "RELAY_SFU_APP_ID": false,
+    "RELAY_SFU_APP_SECRET": false,
+    "CLOUDFLARE_API_TOKEN": false,
+    "TURN_API_TOKEN": false,
+    "SFU_APP_SECRET": false
+  }
+}
