@@ -42,6 +42,8 @@ Retire the call unknowns: library behaviour on both platforms, Cloudflare accoun
 
 ## Progress
 
+- 2026-10-23 UTC - Android+Linux live SFU publish/subscribe with silence negatives independently rerun. [Evidence](../evidence/WP02-live-sfu-android.md). AC2 met for publish/subscribe; egress, E2EE (AC5) and hardware open; lane stays `doing`.
+
 - 2026-10-23 UTC — Fresh parent SFU suite independently verified positive and three real silence cases, each
   three Linux native participants/six streams and nine inactive provider track records. [Evidence](../evidence/WP02-live-sfu.md).
   Android SFU, billed egress, frame E2EE, hardware and independent UDP-blocking remain open; lane stays `doing`.

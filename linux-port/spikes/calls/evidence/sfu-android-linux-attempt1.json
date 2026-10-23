@@ -1,0 +1,75 @@
+{
+  "android_cleanup_marker": true,
+  "api_calls": 18,
+  "attempt": 1,
+  "case": "linux",
+  "cleanup": {
+    "android": {
+      "close_ok": true,
+      "disposition": "inactive",
+      "inactive_records": 2,
+      "readback_ok": true,
+      "requested": 2,
+      "returned_records": 2,
+      "status_values": [
+        "inactive"
+      ]
+    },
+    "linux": {
+      "close_ok": true,
+      "disposition": "inactive",
+      "inactive_records": 2,
+      "readback_ok": true,
+      "requested": 2,
+      "returned_records": 2,
+      "status_values": [
+        "inactive"
+      ]
+    }
+  },
+  "e2ee": false,
+  "elapsed_seconds": 13.26,
+  "error": null,
+  "http_error_status": null,
+  "local_ice_only": true,
+  "milestones_seconds": {
+    "bridge": 1.3,
+    "published_android": 2.31,
+    "published_linux": 3.54,
+    "subscribed_android": 4.04,
+    "subscribed_linux": 4.38
+  },
+  "native_normal_exit": true,
+  "passed": true,
+  "physical_microphone": false,
+  "retryable": false,
+  "reverse_removed": true,
+  "silent_publisher": "linux",
+  "stage": "assert",
+  "stamp_unix": 1792778096,
+  "stream_count": 2,
+  "streams": [
+    {
+      "bytes": 14770,
+      "connected": true,
+      "generated_frames": 1100,
+      "packets": 425,
+      "participant": "android",
+      "publisher": "linux",
+      "rms": 0.08,
+      "samples": 419040,
+      "square_sum": 2526
+    },
+    {
+      "bytes": 33222,
+      "connected": true,
+      "packets": 408,
+      "participant": "linux",
+      "publisher": "android",
+      "rms": 8057.02,
+      "samples": 393600,
+      "square_sum": 25550769149571
+    }
+  ],
+  "synthetic_audio": true
+}

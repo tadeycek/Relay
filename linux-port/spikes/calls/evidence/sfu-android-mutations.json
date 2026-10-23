@@ -1,0 +1,15 @@
+{
+  "MUTANT_energy_check_disabled_silent_android(must reject)": "rejected:silent source not rejected",
+  "MUTANT_energy_check_disabled_silent_linux(must reject)": "rejected:silent source not rejected",
+  "MUTANT_threshold_removed_silent_android(must reject)": "rejected:silent source not rejected",
+  "MUTANT_threshold_removed_silent_linux(must reject)": "rejected:silent source not rejected",
+  "real_positive": "accepted",
+  "real_positive_labelled_silent_android(must reject)": "rejected:silent source not rejected",
+  "real_positive_labelled_silent_linux(must reject)": "rejected:silent source not rejected",
+  "real_silent_android_as_positive(must reject)": "rejected:PCM energy assertion",
+  "real_silent_android_labelled_wrong_platform(must reject)": "rejected:PCM energy assertion",
+  "real_silent_android_negative_assertion": "accepted",
+  "real_silent_linux_as_positive(must reject)": "rejected:PCM energy assertion",
+  "real_silent_linux_labelled_wrong_platform(must reject)": "rejected:PCM energy assertion",
+  "real_silent_linux_negative_assertion": "accepted"
+}
