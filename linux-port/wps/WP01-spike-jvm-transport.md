@@ -2,7 +2,7 @@
 id: WP01
 title: "Spike: JVM transport and crypto interop with a real phone"
 phase: L0
-lane: planned
+lane: doing
 depends_on: []
 specs: ["02 §A–B", "04 §1–2"]
 owned_files:
@@ -35,6 +35,11 @@ Show that a plain JVM process on Linux can authenticate to the test mailbox and 
 - **WP01-AC2** A message sent from the JVM is shown by the 1.15 app as a normal incoming message from the test identity.
 - **WP01-AC3** Tink keysets serialized on Android (cleartext JSON, debug export) load on JVM Tink and decrypt; reverse direction works.
 - **WP01-AC4** Evidence lists exact library versions, native library path loaded, and what did not run (real phone, Tor).
+
+## Progress
+
+- 2026-10-23 UTC — Local Android companion/JVM crypto and real local Worker exchange verified. Original 1.15 UI
+  and live test Worker acceptance remain open; see [evidence](../evidence/WP01.md).
 
 ## Evidence
 

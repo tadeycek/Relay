@@ -5,7 +5,7 @@ the log together.
 
 | WP | Phase | Title | Depends on | Lane |
 |---|---|---|---|---|
-| [WP01](wps/WP01-spike-jvm-transport.md) | L0 | Spike: JVM transport and crypto interop with a real phone | — | planned |
+| [WP01](wps/WP01-spike-jvm-transport.md) | L0 | Spike: JVM transport and crypto interop with a real phone | — | doing |
 | [WP02](wps/WP02-spike-webrtc-sfu-turn.md) | L0 | Spike: WebRTC Android↔Linux audio, Cloudflare TURN and SFU, signal sizes | — | planned |
 | [WP03](wps/WP03-core-module-extraction.md) | L1 | Extract the shared `:core` JVM module | WP01 | planned |
 | [WP04](wps/WP04-server-device-cursors.md) | L1 | Server: per-device cursors, dormancy, per-device media confirmation | — | planned |
@@ -26,6 +26,11 @@ the log together.
 
 Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17), 14 risks, 6 open questions.
 
+## Current evidence
+
+- [WP01](evidence/WP01.md): local interop passed; original-app UI and live-provider checks open.
+
 ## Log
 
+- 2026-10-23 UTC — WP01 `doing`: JVM + Android companion and local Worker verified; original-app/live-service gates open.
 - 2026-10-23 UTC — Planning set created on `feat/linux-port` from `main@af86743`. All WPs `planned`; nothing implemented.
