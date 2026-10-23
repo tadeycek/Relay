@@ -1,0 +1,30 @@
+test_positive_both_native_platforms (__main__.NativeGeneratedAudio.test_positive_both_native_platforms) ... ok
+test_silent_android_rejected_by_linux_decoded_pcm (__main__.NativeGeneratedAudio.test_silent_android_rejected_by_linux_decoded_pcm) ... ok
+test_silent_linux_rejected_by_android_decoded_pcm (__main__.NativeGeneratedAudio.test_silent_linux_rejected_by_android_decoded_pcm) ... FAIL
+
+======================================================================
+FAIL: test_silent_linux_rejected_by_android_decoded_pcm (__main__.NativeGeneratedAudio.test_silent_linux_rejected_by_android_decoded_pcm)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/tadej/repos/Relay/linux-port/spikes/calls/check_cross_platform_mutations.py", line 45, in test_silent_linux_rejected_by_android_decoded_pcm
+    self.check_silence('linux', 'android')
+    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^
+  File "/home/tadej/repos/Relay/linux-port/spikes/calls/check_cross_platform_mutations.py", line 31, in check_silence
+    self.assertIn(f'AssertionError: {receiver}: decoded energy below tone threshold', result.stderr)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'AssertionError: android: decoded energy below tone threshold' not found in 'Traceback (most recent call last):\n  File "/home/tadej/repos/Relay/linux-port/spikes/calls/cross_platform.py", line 122, in <module>\n    main()\n    ~~~~^^\n  File "/home/tadej/repos/Relay/linux-port/spikes/calls/cross_platform.py", line 40, in main\n    assert \'localbeat_wp11_16k\' in device(\'emu\', \'avd\', \'name\'), \'Unexpected AVD on emulator-5556\'\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAssertionError: Unexpected AVD on emulator-5556\n'
+
+----------------------------------------------------------------------
+Ran 3 tests in 19.694s
+
+FAILED (failures=1)
+10-23 12:55:29.421  4571  4608 I RelayCallsProbe: android_receive=PASS packets=353 bytes=28444 samples=344160 nonzero=336389 generated_frames=706 ice_candidates=5 microphone_opened=false synthetic_audio=true
+10-23 12:55:30.469  4571  4608 I RelayCallsProbe: android_cross_platform_cleanup=COMPLETE
+{"android": {"bytes": 28444, "connected": true, "generated_frames": 706, "nonzero": 336389, "packets": 353, "samples": 344160, "square_sum": 24143120320571}, "linux": {"bytes": 32921, "connected": true, "generated_frames": 800, "nonzero": 383920, "packets": 403, "samples": 385440, "square_sum": 25290027376385}}
+SIGNAL_SUMMARY linux_candidates=16 offer_bytes=3098 answer_bytes=1128
+cross_platform=PASS synthetic_audio=true microphone_capture=false listening_test=false provider_test=false
+10-23 12:55:38.361  4665  4681 I RelayCallsProbe: android_receive=PASS packets=353 bytes=28444 samples=344160 nonzero=336389 generated_frames=707 ice_candidates=5 microphone_opened=false synthetic_audio=true
+10-23 12:55:39.445  4665  4681 I RelayCallsProbe: android_cross_platform_cleanup=COMPLETE
+{"android": {"bytes": 28444, "connected": true, "generated_frames": 707, "nonzero": 336389, "packets": 353, "samples": 344160, "square_sum": 24266106465113}, "linux": {"bytes": 14195, "connected": true, "generated_frames": 800, "nonzero": 4382, "packets": 403, "samples": 384960, "square_sum": 4484}}
+SIGNAL_SUMMARY linux_candidates=16 offer_bytes=3099 answer_bytes=1126
+mutation=PASS silent_sender=android correctly_rejected_receiver=linux

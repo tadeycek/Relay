@@ -42,6 +42,9 @@ Retire the call unknowns: library behaviour on both platforms, Cloudflare accoun
 
 ## Progress
 
+- 2026-10-23 UTC — Actual Android↔Linux native generated audio independently rerun; positive and both silent-source
+  mutations passed (3 native integration tests). [Parent evidence](../evidence/WP02-cross-platform.md); live/hardware gates open.
+
 - 2026-10-23 UTC — Native Linux generated-audio exchange, Android native init and actual encrypted signalling
   sizes verified. Android↔Linux audio, live TURN/SFU and E2EE interop remain open; see [evidence](../evidence/WP02.md).
 

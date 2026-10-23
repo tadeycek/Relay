@@ -1,0 +1,30 @@
+{
+  "verification": {
+    "linux-port/spikes/calls/gradle/verification-metadata.xml": {
+      "components": 2,
+      "sha256_entries": 4,
+      "unchanged_from_HEAD": true,
+      "sha256": "9fe7b5b07f089043a2c1d9b6afd837d5ea0b63d6bd1c0d09eb30f8848bd7e7a6",
+      "added_pins": 0,
+      "removed_pins": 0
+    },
+    "linux-port/spikes/calls/android/gradle/verification-metadata.xml": {
+      "components": 180,
+      "sha256_entries": 304,
+      "unchanged_from_HEAD": true,
+      "sha256": "615bf552f350fa04d019d3f63a367df6390dd1b6fdf2362a6054524e7ce905ca",
+      "added_pins": 0,
+      "removed_pins": 0
+    }
+  },
+  "artifacts": {
+    "linux-port/spikes/calls/android/build/outputs/apk/debug/relay-calls-android-probe-debug.apk": {
+      "bytes": 47906688,
+      "sha256": "701b6cc675582c49a27fe2c3499d4f127520c78172f263d3b8946316bbe3cb79"
+    },
+    "linux-port/spikes/calls/build/libs/relay-calls-spike.jar": {
+      "bytes": 24222,
+      "sha256": "013ab87427618c7012ad8b84a34277ab7a881d44c4ffefa695a75751eca6e6b7"
+    }
+  }
+}

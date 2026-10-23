@@ -1,6 +1,6 @@
 # WP02 — standalone native calls spike
 
-**Verdict: PARTIAL.** This is a runnable Linux feasibility probe, not the Relay call engine and not evidence of Android↔Linux audible calls or Cloudflare media. See [canonical evidence](../../evidence/WP02.md) and the earlier [delegate snapshot](EVIDENCE-DRAFT.md) for the acceptance-criterion matrix and actual measurements.
+**Verdict: PARTIAL WP02; local Android↔Linux native generated audio now verified in both directions.** This is not the Relay call engine, a physical listening test or Cloudflare media evidence. The new [follow-up evidence](FOLLOWUP-EVIDENCE.md) records the executable cross-platform proof and real silence mutations; canonical WP evidence and the earlier [delegate snapshot](EVIDENCE-DRAFT.md) remain historical baselines for this follow-up.
 
 ## Run locally (no credentials)
 
@@ -59,26 +59,41 @@ PYTHONDONTWRITEBYTECODE=1 python3 linux-port/spikes/calls/live_sfu.py
 
 This is deliberately labelled **control-plane only**. It does not implement/test `tracks/new`, renegotiation, media publish/subscribe, dashboard egress, or FrameCryptor. The unittest suite skips the live case without opt-in; skipped is not passed. No fake provider responses are used. API reference: https://developers.cloudflare.com/realtime/sfu/api/ ; session lifecycle: https://developers.cloudflare.com/realtime/sfu/concepts/sessions-tracks/ .
 
-## Android native probe (separate package)
+## Android↔Linux generated-audio proof (separate package)
 
-After the parent released the shared emulator, the standalone `android/` project was built and run as **`org.relay.callsprobe`** on `emulator-5554` (API 36, x86_64). Neither `com.relay.app` nor `relay.spike.android` was touched. The Android app loads `io.github.webrtc-sdk:android:144.7559.15`, creates/disposes an actual native PeerConnectionFactory, enumerates platform audio devices, and detects the FrameCryptor class. It declares neither microphone nor network permission and never captures audio. This is **native initialization/device enumeration only**, not Android P2P negotiation or an audible call.
+`CrossPlatformProbe` creates **one** Linux native peer; `CrossPlatformRun` inside **`org.relay.callsprobe`**
+creates the other peer using Android `io.github.webrtc-sdk:android:144.7559.15`. The existing `probe` task
+remains the separate Linux↔Linux regression, not the cross-platform proof.
+
+Run only on an independently owned **emulator-5556**, AVD `localbeat_wp11_16k`. Do not use emulator-5554,
+`com.relay.app`, the WP01 app, or real devices. The Python runner deliberately refuses other serials/AVDs.
+See [FOLLOWUP-EVIDENCE.md](FOLLOWUP-EVIDENCE.md) for exact emulator/build commands and measured results.
 
 ```bash
-JAVA_HOME=/home/tadej/tools/jdk-21.0.12.1+1 ANDROID_HOME=/home/tadej/Android/Sdk \
-  ./gradlew -p linux-port/spikes/calls/android --no-daemon \
-  -Dorg.gradle.java.home=/home/tadej/tools/jdk-21.0.12.1+1 \
-  --dependency-verification strict --console=plain --rerun-tasks assembleDebug
-/home/tadej/Android/Sdk/platform-tools/adb -s emulator-5554 install -r \
-  linux-port/spikes/calls/android/build/outputs/apk/debug/relay-calls-android-probe-debug.apk
-/home/tadej/Android/Sdk/platform-tools/adb -s emulator-5554 shell am start -W \
-  -n org.relay.callsprobe/.MainActivity
-# Read only this process/tag; do not dump unrelated application logs.
-PID=$(/home/tadej/Android/Sdk/platform-tools/adb -s emulator-5554 shell pidof org.relay.callsprobe)
-/home/tadej/Android/Sdk/platform-tools/adb -s emulator-5554 logcat -d --pid="$PID" -s RelayCallsProbe:I '*:S'
-/home/tadej/Android/Sdk/platform-tools/adb -s emulator-5554 shell am force-stop org.relay.callsprobe
+# After the standalone builds and own emulator boot documented in FOLLOWUP-EVIDENCE.md:
+PYTHONDONTWRITEBYTECODE=1 python3 linux-port/spikes/calls/test_cross_platform.py -v
+PYTHONDONTWRITEBYTECODE=1 python3 linux-port/spikes/calls/check_cross_platform_mutations.py
+PYTHONDONTWRITEBYTECODE=1 python3 linux-port/spikes/calls/cross_platform.py
 ```
 
-Android has its **own** Gradle verification metadata, including AGP/transitive build artifacts and the pinned AAR. It does not affect desktop dependencies. Next work requires a permission-gated Android calling endpoint, actual cross-platform SDP exchange and listening in both directions. Provider credentials/account access and explicit network-test authorization are separate prerequisites. Production call authorization, glare, expiry/replay handling, protected HPKE/gift-wrap sizes, and reviewed frame-encryption format remain unimplemented.
+The manifest now declares normal `INTERNET` and `ACCESS_NETWORK_STATE` permissions, **not RECORD_AUDIO**.
+There is no microphone grant/capture: Android disables `AudioRecord` before creating the factory and uses
+the pinned SDK's external audio-buffer callback, paced at 10 ms, to generate 660 Hz PCM. Linux pushes
+440 Hz PCM through `CustomAudioSource`. Android's output is muted; its decoded-track sink and Linux's
+headless decoded-track sink count samples and energy. Actual inbound audio RTP packet/byte stats plus
+at least 24,000 PCM samples, nonzero samples and RMS > 500 are required independently on both platforms.
+Silent-source mutations keep RTP flowing and must fail the receiver energy assertion.
+
+The temporary TCP bridge binds host loopback only. A single owned `adb reverse` mapping carries bounded
+native gathered SDP/ICE and numeric results; native WebRTC transports media separately over local ICE.
+No public STUN/TURN servers are configured. Raw native diagnostics stay in private ignored `.private/`;
+only numeric/size summaries go into evidence. The runner stops its APK, removes and reads back its exact
+reverse mapping, and waits for native cleanup. The emulator itself is caller-owned and must be stopped
+by the caller after the experiment. Default activity launch without the explicit `cross_platform` intent
+extra still runs the earlier factory/device-enumeration capability probe.
+
+No root app build, production calling code, provider configuration, physical listening, TURN/SFU media,
+cloud authorization or frame-encryption interop is exercised here.
 
 ## Dependency / licence boundary
 

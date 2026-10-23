@@ -1,0 +1,20 @@
+{
+  "android": {
+    "bytes": 28525,
+    "connected": true,
+    "generated_frames": 740,
+    "nonzero": 335910,
+    "packets": 354,
+    "samples": 361440,
+    "square_sum": 23341227136039
+  },
+  "linux": {
+    "bytes": 32810,
+    "connected": true,
+    "generated_frames": 800,
+    "nonzero": 382415,
+    "packets": 402,
+    "samples": 390240,
+    "square_sum": 23904120257378
+  }
+}

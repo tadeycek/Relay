@@ -1,0 +1,23 @@
+test_positive_both_native_platforms (__main__.NativeGeneratedAudio.test_positive_both_native_platforms) ... ok
+test_silent_android_rejected_by_linux_decoded_pcm (__main__.NativeGeneratedAudio.test_silent_android_rejected_by_linux_decoded_pcm) ... ok
+test_silent_linux_rejected_by_android_decoded_pcm (__main__.NativeGeneratedAudio.test_silent_linux_rejected_by_android_decoded_pcm) ... ok
+
+----------------------------------------------------------------------
+Ran 3 tests in 37.494s
+
+OK
+10-23 12:56:18.730  2569  2623 I RelayCallsProbe: android_receive=PASS packets=354 bytes=28525 samples=377760 nonzero=333989 generated_frames=773 ice_candidates=2 microphone_opened=false synthetic_audio=true
+10-23 12:56:19.944  2569  2623 I RelayCallsProbe: android_cross_platform_cleanup=COMPLETE
+{"android": {"bytes": 28525, "connected": true, "generated_frames": 773, "nonzero": 333989, "packets": 354, "samples": 377760, "square_sum": 24030207175765}, "linux": {"bytes": 32789, "connected": true, "generated_frames": 800, "nonzero": 381518, "packets": 401, "samples": 398400, "square_sum": 25067050515889}}
+SIGNAL_SUMMARY linux_candidates=16 offer_bytes=3099 answer_bytes=1128
+cross_platform=PASS synthetic_audio=true microphone_capture=false listening_test=false provider_test=false
+10-23 12:56:30.064  3831  3882 I RelayCallsProbe: android_receive=PASS packets=353 bytes=28435 samples=354720 nonzero=335931 generated_frames=729 ice_candidates=2 microphone_opened=false synthetic_audio=true
+10-23 12:56:31.131  3831  3882 I RelayCallsProbe: android_cross_platform_cleanup=COMPLETE
+{"android": {"bytes": 28435, "connected": true, "generated_frames": 729, "nonzero": 335931, "packets": 353, "samples": 354720, "square_sum": 24217158184547}, "linux": {"bytes": 14159, "connected": true, "generated_frames": 800, "nonzero": 4355, "packets": 402, "samples": 384480, "square_sum": 4457}}
+SIGNAL_SUMMARY linux_candidates=16 offer_bytes=3097 answer_bytes=1365
+mutation=PASS silent_sender=android correctly_rejected_receiver=linux
+10-23 12:56:40.471  4832  4861 I RelayCallsProbe: android_receive=FAIL packets=353 bytes=12246 samples=357120 nonzero=2300 generated_frames=733 ice_candidates=2 microphone_opened=false synthetic_audio=true
+10-23 12:56:41.548  4832  4861 I RelayCallsProbe: android_cross_platform_cleanup=COMPLETE
+{"android": {"bytes": 12246, "connected": true, "generated_frames": 733, "nonzero": 2300, "packets": 353, "samples": 357120, "square_sum": 2408}, "linux": {"bytes": 32848, "connected": true, "generated_frames": 800, "nonzero": 382961, "packets": 402, "samples": 385440, "square_sum": 25129931242991}}
+SIGNAL_SUMMARY linux_candidates=16 offer_bytes=3097 answer_bytes=1365
+mutation=PASS silent_sender=linux correctly_rejected_receiver=android

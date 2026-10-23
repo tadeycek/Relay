@@ -1,0 +1,5 @@
+10-23 12:56:49.999  5126  5148 I RelayCallsProbe: android_receive=PASS packets=353 bytes=28444 samples=344160 nonzero=336389 generated_frames=707 ice_candidates=2 microphone_opened=false synthetic_audio=true
+10-23 12:56:51.067  5126  5148 I RelayCallsProbe: android_cross_platform_cleanup=COMPLETE
+{"android": {"bytes": 28444, "connected": true, "generated_frames": 707, "nonzero": 336389, "packets": 353, "samples": 344160, "square_sum": 24249960445742}, "linux": {"bytes": 33044, "connected": true, "generated_frames": 800, "nonzero": 384395, "packets": 404, "samples": 385440, "square_sum": 25308217130159}}
+SIGNAL_SUMMARY linux_candidates=16 offer_bytes=3096 answer_bytes=1366
+cross_platform=PASS synthetic_audio=true microphone_capture=false listening_test=false provider_test=false

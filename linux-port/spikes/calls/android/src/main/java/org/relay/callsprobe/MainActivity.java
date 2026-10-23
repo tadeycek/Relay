@@ -8,13 +8,26 @@ import android.util.Log;
 import android.widget.TextView;
 import org.webrtc.PeerConnectionFactory;
 
-/** Native capability probe only. No microphone permission, capture or network. */
+/** Native capability probe; explicit intent opt-in runs generated-audio interop. No microphone permission. */
 public final class MainActivity extends Activity {
+    private static final java.util.concurrent.atomic.AtomicBoolean crossPlatformRunning = new java.util.concurrent.atomic.AtomicBoolean();
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         TextView output = new TextView(this);
         output.setPadding(32, 64, 32, 32);
         setContentView(output);
+        if (getIntent().getBooleanExtra("cross_platform", false)) {
+            output.setText("Generated-audio Android/Linux native probe; no microphone capture. See sanitized probe log.");
+            int port = getIntent().getIntExtra("bridge_port", 18762);
+            boolean silent = getIntent().getBooleanExtra("silent_android", false);
+            if (!crossPlatformRunning.compareAndSet(false, true)) return; // Activity recreation must not start a second native peer.
+            new Thread(() -> {
+                try { new CrossPlatformRun().run(getApplicationContext(), port, silent); }
+                catch (Throwable failure) { Log.e("RelayCallsProbe", "android_cross_platform=FAIL type=" + failure.getClass().getSimpleName()); }
+                finally { crossPlatformRunning.set(false); }
+            }, "cross-platform-probe").start();
+            return;
+        }
         StringBuilder result = new StringBuilder("Android native WebRTC probe\n");
         try {
             PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(this)

@@ -1,0 +1,9 @@
+test_both_platforms_receive (__main__.ReceiveAcceptance.test_both_platforms_receive) ... ok
+test_comfort_noise_is_not_generated_tone (__main__.ReceiveAcceptance.test_comfort_noise_is_not_generated_tone) ... ok
+test_disconnected_or_missing_platform_fails (__main__.ReceiveAcceptance.test_disconnected_or_missing_platform_fails) ... ok
+test_each_platform_must_have_actual_rtp_and_pcm (__main__.ReceiveAcceptance.test_each_platform_must_have_actual_rtp_and_pcm) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.000s
+
+OK

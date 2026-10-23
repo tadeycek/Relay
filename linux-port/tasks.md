@@ -28,6 +28,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 
 ## Current evidence
 
+- [WP02 Android↔Linux](evidence/WP02-cross-platform.md): native generated audio and negative mutations verified; live/hardware gates open.
+
 - [WP01 actual app UI](evidence/WP01-app-ui.md): production conversation receive/reply verified locally; live gate open.
 
 - [WP02](evidence/WP02.md): Linux native audio and Android initialization passed; live/cross-platform acceptance open.
@@ -35,6 +37,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 - [WP01](evidence/WP01.md): local interop passed; original-app UI and live-provider checks open.
 
 ## Log
+
+- 2026-10-23 UTC — WP02 remains `doing`; local Android↔Linux media proof verified, cloud/hardware gates open.
 
 - 2026-10-23 UTC — WP01 remains `doing`; actual app UI acceptance added, root unit suite 329 passed. No main merge.
 

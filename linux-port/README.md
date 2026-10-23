@@ -10,7 +10,8 @@ Nothing in `app/` or `server/` is changed by this folder.
 ## Execution status
 
 WP01 and WP02 now have isolated runnable spikes and [evidence](tasks.md). Both remain `doing`: local results
-are verified, but original-app, live-provider and cross-platform call acceptance remain open. No production
+are verified, including actual app chat UI and Android↔Linux generated audio; live-provider, physical-audio and
+security acceptance remain open. No production
 application/server implementation has been changed. The original planning status below describes the design docs.
 
 ## One-paragraph summary
