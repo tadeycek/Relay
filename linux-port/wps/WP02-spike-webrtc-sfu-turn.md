@@ -42,6 +42,10 @@ Retire the call unknowns: library behaviour on both platforms, Cloudflare accoun
 
 ## Progress
 
+- 2026-10-23 UTC — Fresh parent SFU suite independently verified positive and three real silence cases, each
+  three Linux native participants/six streams and nine inactive provider track records. [Evidence](../evidence/WP02-live-sfu.md).
+  Android SFU, billed egress, frame E2EE, hardware and independent UDP-blocking remain open; lane stays `doing`.
+
 - 2026-10-23 UTC — Live Android↔Linux Cloudflare TURN/TLS443 independently rerun, including both real silent-source
   mutations (3 live native tests) and local regression (3). [Evidence](../evidence/WP02-live-turn.md).
   Independent UDP-blocking, live SFU/E2EE and hardware gates remain open; lane stays `doing`.

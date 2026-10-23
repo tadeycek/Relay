@@ -1,0 +1,33 @@
+test_count_and_duplicate (test_sfu_media.MediaGuards.test_count_and_duplicate) ... ok
+test_energy_not_just_nonzero (test_sfu_media.MediaGuards.test_energy_not_just_nonzero) ... ok
+test_good (test_sfu_media.MediaGuards.test_good) ... ok
+test_opt_in_before_any_secret_or_network (test_sfu_media.MediaGuards.test_opt_in_before_any_secret_or_network) ... ok
+test_per_track_error (test_sfu_media.MediaGuards.test_per_track_error) ... ok
+test_redirect_disabled (test_sfu_media.MediaGuards.test_redirect_disabled) ... ok
+test_response_bound (test_sfu_media.MediaGuards.test_response_bound) ... ok
+test_rtp_required (test_sfu_media.MediaGuards.test_rtp_required) ... ok
+test_blocked_child_stdin_is_bounded_and_dead (test_sfu_python_blockers.Bounds.test_blocked_child_stdin_is_bounded_and_dead) ... ok
+test_http_trickle_total_deadline (test_sfu_python_blockers.Bounds.test_http_trickle_total_deadline) ... ok
+test_native_close_blocked_stdin_is_bounded_and_dead (test_sfu_python_blockers.Bounds.test_native_close_blocked_stdin_is_bounded_and_dead) ... ok
+test_native_protocol_normal_close_still_works (test_sfu_python_blockers.Bounds.test_native_protocol_normal_close_still_works) ... ok
+test_nested_watchdog_normal_inner_restores_remaining_outer_timer (test_sfu_python_blockers.Bounds.test_nested_watchdog_normal_inner_restores_remaining_outer_timer) ... ok
+test_nested_watchdog_restores_outer_deadline_and_handler (test_sfu_python_blockers.Bounds.test_nested_watchdog_restores_outer_deadline_and_handler) ... ok
+test_partial_child_line_is_bounded_and_dead (test_sfu_python_blockers.Bounds.test_partial_child_line_is_bounded_and_dead) ... ok
+test_export_reconstructs_nested_allowlist (test_sfu_python_blockers.PublicEvidence.test_export_reconstructs_nested_allowlist) ... ok
+test_export_rejects_nonfinite_or_untyped_values (test_sfu_python_blockers.PublicEvidence.test_export_rejects_nonfinite_or_untyped_values) ... ok
+test_suite_rejects_self_out_of_range_duplicate_and_noninteger_pairs (test_sfu_python_blockers.PublicEvidence.test_suite_rejects_self_out_of_range_duplicate_and_noninteger_pairs) ... ok
+test_cleanup_requires_exact_inactive_readback (test_sfu_python_blockers.Recovery.test_cleanup_requires_exact_inactive_readback) ... ok
+test_expired_disposition_requires_410 (test_sfu_python_blockers.Recovery.test_expired_disposition_requires_410) ... ok
+test_known_mid_closed_despite_reconcile_failure (test_sfu_python_blockers.Recovery.test_known_mid_closed_despite_reconcile_failure) ... ok
+test_run_journals_known_offer_mid_when_publication_and_reconcile_fail (test_sfu_python_blockers.Recovery.test_run_journals_known_offer_mid_when_publication_and_reconcile_fail) ... ok
+test_unique_journals_preserve_prior_unresolved_allocations (test_sfu_python_blockers.Recovery.test_unique_journals_preserve_prior_unresolved_allocations) ... ok
+test_all_resources_attempted_and_failures_preserved (test_sfu_native_cleanup.NativeCleanupTests.test_all_resources_attempted_and_failures_preserved) ... ok
+test_failed_interrupted_peer_attempts_others_and_exits_failed (test_sfu_native_cleanup.NativeCleanupTests.test_failed_interrupted_peer_attempts_others_and_exits_failed) ... ok
+test_interrupted_generator_is_joined (test_sfu_native_cleanup.NativeCleanupTests.test_interrupted_generator_is_joined) ... ok
+test_native_allocations_and_peer_cleanup_use_ownership (test_sfu_native_cleanup.NativeCleanupTests.test_native_allocations_and_peer_cleanup_use_ownership) ... ok
+test_partial_construction_preserves_original (test_sfu_native_cleanup.NativeCleanupTests.test_partial_construction_preserves_original) ... ok
+
+----------------------------------------------------------------------
+Ran 28 tests in 2.203s
+
+OK

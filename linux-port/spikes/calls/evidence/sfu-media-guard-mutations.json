@@ -1,0 +1,82 @@
+{
+  "killed": 19,
+  "mutations": [
+    {
+      "killed": true,
+      "mutation": "energy"
+    },
+    {
+      "killed": true,
+      "mutation": "rtp"
+    },
+    {
+      "killed": true,
+      "mutation": "count"
+    },
+    {
+      "killed": true,
+      "mutation": "track_error"
+    },
+    {
+      "killed": true,
+      "mutation": "opt_in"
+    },
+    {
+      "killed": true,
+      "mutation": "redirect"
+    },
+    {
+      "killed": true,
+      "mutation": "response_bound"
+    },
+    {
+      "killed": true,
+      "mutation": "http_wall_clock"
+    },
+    {
+      "killed": true,
+      "mutation": "native_partial_line"
+    },
+    {
+      "killed": true,
+      "mutation": "native_blocked_stdin"
+    },
+    {
+      "killed": true,
+      "mutation": "native_timeout_kills"
+    },
+    {
+      "killed": true,
+      "mutation": "native_close_bound"
+    },
+    {
+      "killed": true,
+      "mutation": "nested_timer_restore"
+    },
+    {
+      "killed": true,
+      "mutation": "journal_unique"
+    },
+    {
+      "killed": true,
+      "mutation": "cleanup_force_close"
+    },
+    {
+      "killed": true,
+      "mutation": "cleanup_exact_readback"
+    },
+    {
+      "killed": true,
+      "mutation": "public_allowlist"
+    },
+    {
+      "killed": true,
+      "mutation": "exact_directed_pairs"
+    },
+    {
+      "killed": true,
+      "mutation": "journal_known_offer_mid"
+    }
+  ],
+  "total": 19
+}

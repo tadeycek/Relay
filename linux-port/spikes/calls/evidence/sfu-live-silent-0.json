@@ -1,0 +1,112 @@
+{
+  "participants": 3,
+  "stream_count": 6,
+  "api_calls": 27,
+  "silent_publisher": 0,
+  "elapsed_seconds": 13.18,
+  "stage": "media",
+  "error": "PCM energy assertion",
+  "http_error_status": null,
+  "native_normal_exit": true,
+  "passed": false,
+  "synthetic_audio": true,
+  "physical_microphone": false,
+  "e2ee": false,
+  "streams": [
+    {
+      "participant": 0,
+      "publisher": 1,
+      "packets": 443,
+      "bytes": 35721,
+      "samples": 428640,
+      "square_sum": 30269010250021,
+      "connected": true,
+      "rms": 8403.36
+    },
+    {
+      "participant": 0,
+      "publisher": 2,
+      "packets": 443,
+      "bytes": 35721,
+      "samples": 428640,
+      "square_sum": 30421113650675,
+      "connected": true,
+      "rms": 8424.44
+    },
+    {
+      "participant": 1,
+      "publisher": 0,
+      "packets": 430,
+      "bytes": 14840,
+      "samples": 411840,
+      "square_sum": 2532,
+      "connected": true,
+      "rms": 0.08
+    },
+    {
+      "participant": 1,
+      "publisher": 2,
+      "packets": 426,
+      "bytes": 34344,
+      "samples": 411840,
+      "square_sum": 29169693785595,
+      "connected": true,
+      "rms": 8415.92
+    },
+    {
+      "participant": 2,
+      "publisher": 0,
+      "packets": 412,
+      "bytes": 14210,
+      "samples": 393600,
+      "square_sum": 2421,
+      "connected": true,
+      "rms": 0.08
+    },
+    {
+      "participant": 2,
+      "publisher": 1,
+      "packets": 408,
+      "bytes": 32886,
+      "samples": 393600,
+      "square_sum": 27815122422774,
+      "connected": true,
+      "rms": 8406.46
+    }
+  ],
+  "cleanup": [
+    {
+      "requested": 3,
+      "returned_records": 3,
+      "inactive_records": 3,
+      "close_ok": true,
+      "readback_ok": true,
+      "status_values": [
+        "inactive"
+      ],
+      "disposition": "inactive"
+    },
+    {
+      "requested": 3,
+      "returned_records": 3,
+      "inactive_records": 3,
+      "close_ok": true,
+      "readback_ok": true,
+      "status_values": [
+        "inactive"
+      ],
+      "disposition": "inactive"
+    },
+    {
+      "requested": 3,
+      "returned_records": 3,
+      "inactive_records": 3,
+      "close_ok": true,
+      "readback_ok": true,
+      "status_values": [
+        "inactive"
+      ],
+      "disposition": "inactive"
+    }
+  ]
+}

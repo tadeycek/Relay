@@ -1,0 +1,38 @@
+{
+  "participants": 3,
+  "streams": [],
+  "stream_count": 0,
+  "silent_publisher": 1,
+  "error": "ValueError",
+  "stage": "publish",
+  "cleanup": [
+    {
+      "requested": 1,
+      "readback_ok": false,
+      "close_ok": false
+    },
+    {
+      "requested": 1,
+      "readback_ok": false,
+      "close_ok": false
+    },
+    {
+      "requested": 1,
+      "readback_ok": false,
+      "close_ok": false
+    }
+  ],
+  "native_normal_exit": false,
+  "api_calls": 8,
+  "elapsed_seconds": 42.84,
+  "synthetic_audio": true,
+  "physical_microphone": false,
+  "e2ee": false,
+  "passed": false,
+  "subsequent_exact_session_readback_http_statuses": [
+    410,
+    410,
+    410
+  ],
+  "note": "Failed bounded connection attempt with default-route-only candidates; all three exact sessions subsequently confirmed expired. Not counted as a media pass."
+}

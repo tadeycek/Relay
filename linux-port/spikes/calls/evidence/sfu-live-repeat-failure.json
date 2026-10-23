@@ -1,0 +1,42 @@
+{
+  "participants": 3,
+  "streams": [],
+  "stream_count": 0,
+  "silent_publisher": -1,
+  "error": "ValueError",
+  "http_error_status": null,
+  "stage": "publish",
+  "cleanup": [
+    {
+      "requested": 1,
+      "returned_records": 1,
+      "inactive_records": 1,
+      "readback_ok": true,
+      "close_ok": true,
+      "status_values": [
+        "inactive"
+      ]
+    },
+    {
+      "requested": 1,
+      "readback_ok": true,
+      "close_ok": false,
+      "readback_http_status": 410,
+      "expired": true
+    },
+    {
+      "requested": 1,
+      "readback_ok": true,
+      "close_ok": false,
+      "readback_http_status": 410,
+      "expired": true
+    }
+  ],
+  "native_normal_exit": false,
+  "api_calls": 11,
+  "elapsed_seconds": 48.92,
+  "synthetic_audio": true,
+  "physical_microphone": false,
+  "e2ee": false,
+  "passed": false
+}

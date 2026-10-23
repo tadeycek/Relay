@@ -1,0 +1,125 @@
+{
+  "live_executed_this_invocation": true,
+  "runs": [
+    {
+      "silent_publisher": -1,
+      "elapsed_seconds": 13.47,
+      "streams": 6,
+      "expected_result_verified": true,
+      "inactive_tracks": 9
+    },
+    {
+      "silent_publisher": 0,
+      "elapsed_seconds": 13.18,
+      "streams": 6,
+      "expected_result_verified": true,
+      "inactive_tracks": 9
+    },
+    {
+      "silent_publisher": 1,
+      "elapsed_seconds": 13.6,
+      "streams": 6,
+      "expected_result_verified": true,
+      "inactive_tracks": 9
+    },
+    {
+      "silent_publisher": 2,
+      "elapsed_seconds": 13.6,
+      "streams": 6,
+      "expected_result_verified": true,
+      "inactive_tracks": 9
+    }
+  ],
+  "guard_mutations": {
+    "killed": 19,
+    "mutations": [
+      {
+        "killed": true,
+        "mutation": "energy"
+      },
+      {
+        "killed": true,
+        "mutation": "rtp"
+      },
+      {
+        "killed": true,
+        "mutation": "count"
+      },
+      {
+        "killed": true,
+        "mutation": "track_error"
+      },
+      {
+        "killed": true,
+        "mutation": "opt_in"
+      },
+      {
+        "killed": true,
+        "mutation": "redirect"
+      },
+      {
+        "killed": true,
+        "mutation": "response_bound"
+      },
+      {
+        "killed": true,
+        "mutation": "http_wall_clock"
+      },
+      {
+        "killed": true,
+        "mutation": "native_partial_line"
+      },
+      {
+        "killed": true,
+        "mutation": "native_blocked_stdin"
+      },
+      {
+        "killed": true,
+        "mutation": "native_timeout_kills"
+      },
+      {
+        "killed": true,
+        "mutation": "native_close_bound"
+      },
+      {
+        "killed": true,
+        "mutation": "nested_timer_restore"
+      },
+      {
+        "killed": true,
+        "mutation": "journal_unique"
+      },
+      {
+        "killed": true,
+        "mutation": "cleanup_force_close"
+      },
+      {
+        "killed": true,
+        "mutation": "cleanup_exact_readback"
+      },
+      {
+        "killed": true,
+        "mutation": "public_allowlist"
+      },
+      {
+        "killed": true,
+        "mutation": "exact_directed_pairs"
+      },
+      {
+        "killed": true,
+        "mutation": "journal_known_offer_mid"
+      }
+    ],
+    "total": 19
+  },
+  "source_sha256_at_collection": {
+    "src/main/java/relay/spike/SfuProbe.java": "24ade0665d1ac33c4c8249f0d9d3d7cd02441e1d8fff117e587b57cceabbb12c",
+    "live_sfu_media.py": "2507bcc3ef4af470b03ae8c72a110452fe951b23c90083be2f2de68d35ecd2a6",
+    "test_sfu_media.py": "a4fefa621217e989736f23424bf8165535720735d89aa20bd0bd1d7ef44f57c7",
+    "test_sfu_python_blockers.py": "679b28fbabf1a4c0089a27df3545a471541edd7ef11478fa85462184a9780f31",
+    "test_sfu_native_cleanup.py": "2e423e25a7c5ced8ad8f5604ee482786d7925c47ad03f0d5252eddcfbfc5db78",
+    "check_sfu_media_mutations.py": "2e9f585f68519d2f93bd6f34c629cb4d4b5cd01b3d974e7cff37295ad643ba04",
+    "check_sfu_python_blocker_mutations.py": "cba4a19c905065e1ff64ab72909fb5f3f04944b488d9d9b1530559fcd9cb532b",
+    "sfu_media_suite.py": "1c1ae0a4087b52ebc0e3aa28d9c02bb4a942d47194549773892ea41e2e3f39d5"
+  }
+}

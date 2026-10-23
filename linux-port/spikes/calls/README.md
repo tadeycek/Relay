@@ -65,7 +65,23 @@ timeout 90 ./gradlew -p linux-port/spikes/calls --no-daemon \
 
 The guard is checked **before native loading or network requests**. Local tests exercise disabled, missing-credential and invalid-URL cases. The successful Linux-only path proves desktop↔desktop relay; the separate Android suite proves cross-platform generated audio. The Linux-only probe checks every gathered candidate is relay **and** follows actual selected-pair stats to assert relay/relay, TLS relay protocol and positive traffic on both peers. Neither path proves an independently enforced UDP block or physical listening. No host firewall changes are scripted or authorized.
 
-## Guarded SFU control-plane smoke (NOT RUN)
+## Live SFU media (VERIFIED; Linux-only feasibility)
+
+Three Linux native participants publish generated tones and each receives the other two: six directed streams,
+per-receiver RTP and decoded PCM energy. A fresh positive and three real silent-publisher negatives passed in the
+[parent final-source suite](../../evidence/WP02-live-sfu.md), with all nine track records inactive on API readback
+in each run. [Earlier SFU snapshot and failure history](SFU-LIVE-EVIDENCE.md). This is not Android SFU, physical
+audio, E2EE, production room authorization or long-duration reliability proof.
+
+```sh
+cd linux-port/spikes/calls
+RELAY_SPIKE_LIVE=1 JAVA_HOME="$HOME/tools/jdk-21.0.12.1+1" python3 sfu_media_suite.py
+```
+
+Keep the long-term SFU secret only in the private local coordinator. No production Worker or account-plan change
+is made. `--collect-existing` only validates older actual private reports; it does not execute a new live suite.
+
+## Legacy SFU control-plane smoke (not separately run)
 
 `live_sfu.py` requires `RELAY_SPIKE_LIVE=1`, `RELAY_SFU_APP_ID` and `RELAY_SFU_APP_SECRET`. It creates an ephemeral unconnected session with `POST /sessions/new`, then reads that exact session back. Requests have fixed provider origin, no redirects, 20-second timeouts and 64 KiB response caps. Neither session id nor provider response nor credentials is logged. An unconnected session expires provider-side; this is not an account configuration operation. Only run with owner approval for creating a temporary session.
 
