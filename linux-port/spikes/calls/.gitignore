@@ -1,6 +1,0 @@
-.gradle/
-build/
-__pycache__/
-*.pyc
-*.hprof
-hs_err_pid*
