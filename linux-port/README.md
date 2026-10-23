@@ -7,6 +7,12 @@ Status: **planning only, nothing implemented.** Written 2026-10-23 on branch `fe
 `af86743` (Calculator 1.15 preview), after a design discussion with the owner plus web research done the same day.
 Nothing in `app/` or `server/` is changed by this folder.
 
+## Execution status
+
+WP01 and WP02 now have isolated runnable spikes and [evidence](tasks.md). Both remain `doing`: local results
+are verified, but original-app, live-provider and cross-platform call acceptance remain open. No production
+application/server implementation has been changed. The original planning status below describes the design docs.
+
 ## One-paragraph summary
 
 A Linux desktop client for Relay that is **the same app under the hood**. It uses the same Cloudflare mailbox, the

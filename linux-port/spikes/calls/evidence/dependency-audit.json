@@ -1,0 +1,22 @@
+[
+  {
+    "artifact": "webrtc-java-0.20.0.jar",
+    "bytes": 190128,
+    "sha256": "7c2b8349fd1a628b7ced59106ab4dd3314dd0a0e0944ea0e740f84ac9c4ff349",
+    "maven_sha256_matches": true,
+    "bundled_licenses": []
+  },
+  {
+    "artifact": "webrtc-java-0.20.0-linux-x86_64.jar",
+    "bytes": 10426924,
+    "sha256": "b2f58cf5e8d27d0488ab3c5ab6e03261549850c92ed1e73527a138510df43137",
+    "maven_sha256_matches": true,
+    "bundled_licenses": [
+      "META-INF/licenses/libva/COPYING",
+      "META-INF/licenses/nvdec/LICENSE",
+      "META-INF/licenses/nvenc/LICENSE",
+      "META-INF/licenses/webrtc/LICENSE.md",
+      "META-INF/licenses/webrtc/PATENTS"
+    ]
+  }
+]

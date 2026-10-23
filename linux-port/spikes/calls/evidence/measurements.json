@@ -1,0 +1,190 @@
+[
+  {
+    "log": "native-strict-run1.txt",
+    "native_pass": true,
+    "exited_cleanly": true,
+    "metrics": [
+      {
+        "record": "signal offer",
+        "values": {
+          "raw_utf8": 1489,
+          "zlib": 717,
+          "base64_zlib": 956,
+          "proposed_call_body": 1720
+        }
+      },
+      {
+        "record": "signal answer",
+        "values": {
+          "raw_utf8": 1454,
+          "zlib": 711,
+          "base64_zlib": 948,
+          "proposed_call_body": 1712
+        }
+      },
+      {
+        "record": "signal ice",
+        "values": {
+          "candidates": 20,
+          "json_utf8": 3711,
+          "zlib_json": 623,
+          "proposed_call_body": 4960
+        }
+      },
+      {
+        "record": "signal ice",
+        "values": {
+          "candidates": 4,
+          "json_utf8": 1065,
+          "zlib_json": 341,
+          "proposed_call_body": 1432
+        }
+      },
+      {
+        "record": "signal ice",
+        "values": {
+          "candidates": 16,
+          "json_utf8": 3120,
+          "zlib_json": 612,
+          "proposed_call_body": 4172
+        }
+      },
+      {
+        "record": "ice_sdp",
+        "values": {
+          "count": 40,
+          "min_bytes": 115,
+          "max_bytes": 147,
+          "total_bytes": 5007
+        }
+      },
+      {
+        "record": "encoded_audio_a",
+        "values": {
+          "count": 150,
+          "min_bytes": 73,
+          "max_bytes": 143,
+          "total_bytes": 12244
+        }
+      },
+      {
+        "record": "encoded_audio_b",
+        "values": {
+          "count": 150,
+          "min_bytes": 71,
+          "max_bytes": 141,
+          "total_bytes": 12225
+        }
+      },
+      {
+        "record": "decoded_audio",
+        "values": {
+          "a_pcm_bytes": 300480,
+          "a_nonzero_bytes": 286238,
+          "b_pcm_bytes": 301440,
+          "b_nonzero_bytes": 286004
+        }
+      },
+      {
+        "record": "data_messages=2",
+        "values": {
+          "data_messages": 2
+        }
+      }
+    ]
+  },
+  {
+    "log": "native-strict-run2.txt",
+    "native_pass": true,
+    "exited_cleanly": true,
+    "metrics": [
+      {
+        "record": "signal offer",
+        "values": {
+          "raw_utf8": 1489,
+          "zlib": 711,
+          "base64_zlib": 948,
+          "proposed_call_body": 1708
+        }
+      },
+      {
+        "record": "signal answer",
+        "values": {
+          "raw_utf8": 1456,
+          "zlib": 714,
+          "base64_zlib": 952,
+          "proposed_call_body": 1716
+        }
+      },
+      {
+        "record": "signal ice",
+        "values": {
+          "candidates": 20,
+          "json_utf8": 3713,
+          "zlib_json": 627,
+          "proposed_call_body": 4964
+        }
+      },
+      {
+        "record": "signal ice",
+        "values": {
+          "candidates": 4,
+          "json_utf8": 1065,
+          "zlib_json": 340,
+          "proposed_call_body": 1432
+        }
+      },
+      {
+        "record": "signal ice",
+        "values": {
+          "candidates": 16,
+          "json_utf8": 3123,
+          "zlib_json": 619,
+          "proposed_call_body": 4176
+        }
+      },
+      {
+        "record": "ice_sdp",
+        "values": {
+          "count": 40,
+          "min_bytes": 115,
+          "max_bytes": 147,
+          "total_bytes": 5012
+        }
+      },
+      {
+        "record": "encoded_audio_a",
+        "values": {
+          "count": 150,
+          "min_bytes": 73,
+          "max_bytes": 143,
+          "total_bytes": 12244
+        }
+      },
+      {
+        "record": "encoded_audio_b",
+        "values": {
+          "count": 150,
+          "min_bytes": 71,
+          "max_bytes": 141,
+          "total_bytes": 12225
+        }
+      },
+      {
+        "record": "decoded_audio",
+        "values": {
+          "a_pcm_bytes": 300480,
+          "a_nonzero_bytes": 286238,
+          "b_pcm_bytes": 301440,
+          "b_nonzero_bytes": 286004
+        }
+      },
+      {
+        "record": "data_messages=2",
+        "values": {
+          "data_messages": 2
+        }
+      }
+    ]
+  }
+]

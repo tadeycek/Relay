@@ -2,7 +2,7 @@
 id: WP02
 title: "Spike: WebRTC Android↔Linux audio, Cloudflare TURN and SFU, signal sizes"
 phase: L0
-lane: planned
+lane: doing
 depends_on: []
 specs: ["02 §C–E", "06 §1–3", "07 §3, §6"]
 owned_files:
@@ -39,6 +39,11 @@ Retire the call unknowns: library behaviour on both platforms, Cloudflare accoun
 - **WP02-AC4** Whether the free Realtime allowance needed a card is recorded (yes/no + date).
 - **WP02-AC5** Frame-encryption interop result recorded as pass/fail with the observed frame layout; WP17 gate updated accordingly.
 - **WP02-AC6** Audio device enumeration on Ubuntu 24.04 (PipeWire) recorded.
+
+## Progress
+
+- 2026-10-23 UTC — Native Linux generated-audio exchange, Android native init and actual encrypted signalling
+  sizes verified. Android↔Linux audio, live TURN/SFU and E2EE interop remain open; see [evidence](../evidence/WP02.md).
 
 ## Evidence
 

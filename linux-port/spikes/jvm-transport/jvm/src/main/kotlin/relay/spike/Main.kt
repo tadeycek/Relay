@@ -6,7 +6,7 @@ import java.io.File
 import kotlin.system.measureTimeMillis
 
 fun main(args: Array<String>) {
-    require(args.size == 2) { "usage: prepare|verify PRIVATE_FIXTURE_DIRECTORY" }
+    require(args.size == 2) { "usage: prepare|send|verify|measure PRIVATE_FIXTURE_DIRECTORY" }
     val dir = File(args[1]).apply { mkdirs() }
     val elapsed = measureTimeMillis {
         Interop.init()
@@ -23,6 +23,20 @@ fun main(args: Array<String>) {
                 check(path.setReadable(false,false) && path.setReadable(true,true) && path.setWritable(false,false) && path.setWritable(true,true))
                 File(dir,"allowlist.txt").writeText(a.publicKey().toHex()+","+b.publicKey().toHex())
                 println("PREPARED synthetic identities and private fixtures (not printed)")
+            }
+            "measure" -> {
+                val a=Keys.generate(); val b=Keys.generate(); val hpke=Interop.fresh()
+                val files=dir.listFiles { file -> file.extension=="callbody" }!!.sortedBy { it.name }
+                require(files.isNotEmpty()) { "No recorded call bodies" }
+                for(file in files) {
+                    val body=file.readText(); require(body.toByteArray().size<=16*1024)
+                    val inner=Interop.encrypt(Interop.publicKey(hpke),body)
+                    val envelope=Interop.wrap(a,b.publicKey().toHex(),inner)
+                    val frame=JSONObject().put("type","signal").put("to",b.publicKey().toHex()).put("envelope",envelope)
+                    val opened=Interop.unwrap(b,envelope,a.publicKey().toHex())
+                    check(Interop.decrypt(hpke,opened.body)==body)
+                    println("WIRE ${file.name.substringBefore('-')} body_bytes=${body.toByteArray().size} inner_bytes=${inner.toByteArray().size} envelope_bytes=${envelope.toByteArray().size} signal_frame_bytes=${frame.toString().toByteArray().size}")
+                }
             }
             "send" -> {
                 val f=JSONObject(File(dir,"input.json").readText())
