@@ -28,6 +28,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 
 ## Current evidence
 
+- [WP02 live TURN](evidence/WP02-live-turn.md): Android↔Linux forced relay/TLS443 and silence mutations independently rerun; SFU/E2EE/hardware and independent UDP-blocking gates remain open.
+
 - [WP02 Android↔Linux](evidence/WP02-cross-platform.md): native generated audio and negative mutations verified; live/hardware gates open.
 
 - [WP01 actual app UI](evidence/WP01-app-ui.md): production conversation receive/reply verified locally; live gate open.
@@ -37,6 +39,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 - [WP01](evidence/WP01.md): local interop passed; original-app UI and live-provider checks open.
 
 ## Log
+
+- 2026-10-23 UTC — WP02 remains `doing`; live Android↔Linux TURN/TLS443 and both silence mutations independently rerun. No firewall/billing/deployment changes; SFU/E2EE/hardware gates remain open.
 
 - 2026-10-23 UTC — WP02 remains `doing`; local Android↔Linux media proof verified, cloud/hardware gates open.
 

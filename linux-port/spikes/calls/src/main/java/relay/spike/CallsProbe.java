@@ -35,6 +35,12 @@ public final class CallsProbe {
             iceSizes.add(c.sdp.getBytes(StandardCharsets.UTF_8).length);
         }
         public void onConnectionChange(RTCPeerConnectionState s) { System.out.println("connection " + name + "=" + s); }
+        public void onIceGatheringChange(RTCIceGatheringState s) { System.out.println("gathering " + name + "=" + s); }
+        public void onIceCandidateError(RTCPeerConnectionIceErrorEvent e) {
+            System.out.printf("ice_error side=%s code=%d allocate_timeout=%s auth=%s%n", name, e.getErrorCode(),
+                e.getErrorText().toLowerCase(Locale.ROOT).contains("timed out"),
+                e.getErrorText().toLowerCase(Locale.ROOT).contains("unauthorized"));
+        }
         public void onTrack(RTCRtpTransceiver transceiver) {
             transceivers.add(transceiver);
             RTCRtpReceiver receiver = transceiver.getReceiver(); receivers.add(receiver);
@@ -85,7 +91,7 @@ public final class CallsProbe {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(TIMEOUT_SECONDS);
         while (!condition.getAsBoolean()) {
             if (callbackFailure.get() != null) throw new IllegalStateException("Native callback failed", callbackFailure.get());
-            if (System.nanoTime() > deadline) throw new TimeoutException(label);
+            if (System.nanoTime() > deadline) { System.out.println("timeout_phase=" + label); throw new TimeoutException(label); }
             Thread.sleep(20);
         }
     }
@@ -150,8 +156,37 @@ public final class CallsProbe {
             if (!url.matches("turns:[A-Za-z0-9.-]+:443\\?transport=tcp")) throw new IllegalArgumentException("TURN URL must be turns:host:443?transport=tcp");
             server.urls.add(url); server.username = required("RELAY_TURN_USERNAME"); server.password = required("RELAY_TURN_PASSWORD");
             config.iceServers.add(server); config.iceTransportPolicy = RTCIceTransportPolicy.RELAY;
+            // Probe uses the default route only: unrelated Docker/virtual adapters can
+            // hold gathering open after successful TURN allocations on the real route.
+            config.portAllocatorConfig = new PortAllocatorConfig().setDisableAdapterEnumeration(true);
         }
         return config;
+    }
+    static void selectedRelayPair(Side side) throws Exception {
+        CompletableFuture<RTCStatsReport> pending = new CompletableFuture<>();
+        side.pc.getStats(pending::complete);
+        Map<String, RTCStats> all = pending.get(10, TimeUnit.SECONDS).getStats();
+        boolean found = false;
+        for (RTCStats transport : all.values()) {
+            if (transport.getType() != RTCStatsType.TRANSPORT) continue;
+            Object selected = transport.getAttributes().get("selectedCandidatePairId");
+            if (!(selected instanceof String id)) continue;
+            RTCStats pair = all.get(id);
+            if (pair == null || pair.getType() != RTCStatsType.CANDIDATE_PAIR) throw new AssertionError("Selected ICE pair missing");
+            Map<String,Object> attrs = pair.getAttributes();
+            RTCStats local = all.get(attrs.get("localCandidateId")), remote = all.get(attrs.get("remoteCandidateId"));
+            if (local == null || remote == null
+                    || !"relay".equals(local.getAttributes().get("candidateType"))
+                    || !"relay".equals(remote.getAttributes().get("candidateType"))
+                    || !"tls".equals(local.getAttributes().get("relayProtocol"))
+                    || !"succeeded".equals(attrs.get("state"))) throw new AssertionError("Selected ICE pair not TURN/TLS");
+            long sent = ((Number)attrs.getOrDefault("bytesSent", 0)).longValue();
+            long received = ((Number)attrs.getOrDefault("bytesReceived", 0)).longValue();
+            if (sent <= 0 || received <= 0) throw new AssertionError("Selected TURN pair carried no traffic");
+            System.out.printf("selected_pair side=%s local=relay remote=relay relay_protocol=tls sent=%d received=%d%n", side.name, sent, received);
+            found = true;
+        }
+        if (!found) throw new AssertionError("Selected ICE transport not reported");
     }
     static String required(String name) { String s=System.getenv(name); if(s==null || s.isBlank()) throw new IllegalArgumentException("Missing " + name); return s; }
     static void stats(String label, List<Integer> values) {
@@ -205,6 +240,7 @@ public final class CallsProbe {
             }
             await(() -> a.nonzero.get()>0 && b.nonzero.get()>0,"Decoded nonzero audio both ways");
             if(callbackFailure.get()!=null) throw new IllegalStateException("Callback failure",callbackFailure.get());
+            if (turn) { selectedRelayPair(a); selectedRelayPair(b); }
             measureIce(a.candidates); measureIce(b.candidates);
             stats("ice_sdp",iceSizes); stats("encoded_audio_a",a.encoded); stats("encoded_audio_b",b.encoded);
             if (a.encoded.isEmpty() || b.encoded.isEmpty()) throw new AssertionError("No encoded frames");

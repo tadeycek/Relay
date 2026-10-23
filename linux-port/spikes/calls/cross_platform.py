@@ -1,4 +1,4 @@
-"""Local Android/native Linux proof (never a provider/hardware test)."""
+"""Android/native Linux proof with optional live Cloudflare TURN (--turn)."""
 import argparse
 import json
 import os
@@ -12,11 +12,14 @@ HERE = Path(__file__).resolve().parent
 PACKAGE = 'org.relay.callsprobe'
 
 
-def validate(result):
+def validate(result, turn=False):
     assert set(result) == {'android', 'linux'}, 'Both distinct platforms required'
     for side in ('android', 'linux'):
         r = result[side]
         assert r['connected'] is True, f'{side}: native peer not connected'
+        if turn:
+            for key, expected in (('local_candidate_type', 'relay'), ('remote_candidate_type', 'relay'), ('relay_protocol', 'tls')):
+                assert r.get(key) == expected, f'{side}: selected {key} must be {expected}'
         for key in ('packets', 'bytes', 'nonzero', 'generated_frames'):
             assert r[key] > 0, f'{side}: missing {key}'
         assert r['samples'] >= 24000, f'{side}: less than half a second decoded PCM'
@@ -25,6 +28,7 @@ def validate(result):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--turn', action='store_true', help='Live Cloudflare TURN, relay-only TLS443 on both peers')
     parser.add_argument('--silent', choices=['android', 'linux'], help='Negative mutation: source sends zero PCM')
     parser.add_argument('--skip-install', action='store_true', help='Reuse the APK installed by the immediately preceding run')
     parser.add_argument('--output', type=Path, help='Sanitized JSON metrics only')
@@ -52,6 +56,16 @@ def main():
     log_path = private / f'cross-platform-{mode}.log'
     process = None
     mapped = False
+    credentials = None
+    expires = None
+    turn_username = None
+    turn_helpers = None
+    if args.turn:
+        import runpy
+        turn_helpers = runpy.run_path(str(HERE / 'turn-cross-platform.py'))
+        credentials, expires = turn_helpers['generate']()
+        turn_username = credentials[1]
+        print('turn_credentials=GENERATED ttl_seconds=600 secret_transport=stdin_and_loopback')
     try:
         if not args.skip_install:
             device('install', '-r', str(apk))
@@ -61,7 +75,13 @@ def main():
             command = [str(java), '-cp', str(jars), 'relay.spike.CrossPlatformProbe', str(port)]
             if args.silent == 'linux':
                 command.append('--silent-linux')
-            process = subprocess.Popen(command, stdout=native_log, stderr=subprocess.STDOUT)
+            if args.turn:
+                command.append('--turn')
+            process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=native_log, stderr=subprocess.STDOUT)
+            if credentials:
+                process.stdin.write(('\n'.join(credentials) + '\n').encode())
+            process.stdin.close()
+            credentials = None
             end = time.monotonic() + 30
             while 'BRIDGE_READY' not in log_path.read_text():
                 assert process.poll() is None, f'Linux native peer exited; private diagnostic: {log_path}'
@@ -102,20 +122,35 @@ def main():
                 print(line)
         if args.output:
             args.output.write_text(json.dumps(result, indent=2, sort_keys=True) + '\n')
-        validate(result)
-        print('cross_platform=PASS synthetic_audio=true microphone_capture=false listening_test=false provider_test=false')
+        validate(result, turn=args.turn)
+        print(f'cross_platform=PASS synthetic_audio=true microphone_capture=false listening_test=false provider_test={str(args.turn).lower()}')
     finally:
-        if process and process.poll() is None:
-            process.terminate()
+        try:
             try:
-                process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=5)
-        device('shell', 'am', 'force-stop', PACKAGE, check=False)
-        if mapped:
-            device('reverse', '--remove', f'tcp:{port}')
-            assert f'tcp:{port} tcp:{port}' not in device('reverse', '--list'), 'Owned reverse mapping cleanup failed'
+                if process and process.poll() is None:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
+            finally:
+                try:
+                    device('shell', 'am', 'force-stop', PACKAGE, check=False)
+                finally:
+                    if mapped:
+                        try:
+                            device('reverse', '--remove', f'tcp:{port}')
+                        finally:
+                            assert f'tcp:{port} tcp:{port}' not in device('reverse', '--list'), 'Owned reverse mapping cleanup failed'
+        finally:
+            if expires:
+                print(f'turn_credentials_expire_unix={int(expires)} ttl_seconds=600')
+            if turn_helpers and turn_username:
+                status = turn_helpers['revoke'](turn_username)
+                if status != 204:
+                    raise RuntimeError(f'TURN credential revocation failed: expected HTTP 204, got {status}')
+                print('turn_credentials_revoked_http=204')
 
 
 if __name__ == '__main__':

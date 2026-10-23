@@ -1,0 +1,91 @@
+{
+  "parent_evidence_recorded_utc": "2026-10-23T16:55:26.932863+00:00",
+  "rows": [
+    {
+      "run": "positive",
+      "receiver": "android",
+      "packets": 353,
+      "bytes": 28444,
+      "samples": 413760,
+      "nonzero": 337349,
+      "square_sum": 24211522793631,
+      "generated_frames": 853,
+      "relay_protocol": "tls",
+      "local_candidate_type": "relay",
+      "remote_candidate_type": "relay"
+    },
+    {
+      "run": "positive",
+      "receiver": "linux",
+      "packets": 402,
+      "bytes": 32833,
+      "samples": 387840,
+      "nonzero": 382483,
+      "square_sum": 25141108929569,
+      "generated_frames": 800,
+      "relay_protocol": "tls",
+      "local_candidate_type": "relay",
+      "remote_candidate_type": "relay"
+    },
+    {
+      "run": "silent-android",
+      "receiver": "android",
+      "packets": 353,
+      "bytes": 28435,
+      "samples": 362400,
+      "nonzero": 334011,
+      "square_sum": 24038656129899,
+      "generated_frames": 749,
+      "relay_protocol": "tls",
+      "local_candidate_type": "relay",
+      "remote_candidate_type": "relay"
+    },
+    {
+      "run": "silent-android",
+      "receiver": "linux",
+      "packets": 400,
+      "bytes": 14159,
+      "samples": 388800,
+      "nonzero": 4334,
+      "square_sum": 4436,
+      "generated_frames": 800,
+      "relay_protocol": "tls",
+      "local_candidate_type": "relay",
+      "remote_candidate_type": "relay"
+    },
+    {
+      "run": "silent-linux",
+      "receiver": "android",
+      "packets": 353,
+      "bytes": 12246,
+      "samples": 353760,
+      "nonzero": 2306,
+      "square_sum": 2414,
+      "generated_frames": 726,
+      "relay_protocol": "tls",
+      "local_candidate_type": "relay",
+      "remote_candidate_type": "relay"
+    },
+    {
+      "run": "silent-linux",
+      "receiver": "linux",
+      "packets": 403,
+      "bytes": 32976,
+      "samples": 388320,
+      "nonzero": 383431,
+      "square_sum": 25207678306473,
+      "generated_frames": 800,
+      "relay_protocol": "tls",
+      "local_candidate_type": "relay",
+      "remote_candidate_type": "relay"
+    }
+  ],
+  "live_tests": 3,
+  "live_failures": 0,
+  "live_skips": 0,
+  "ephemeral_credentials_revoked_http": [
+    204,
+    204,
+    204
+  ]
+}

@@ -54,6 +54,21 @@ final class CrossPlatformRun {
         out.writeInt(b.length); out.write(b); out.flush();
     }
     void run(Context context,int port,boolean silent) throws Exception {
+        try(Socket bridge=new Socket()) {
+            bridge.connect(new InetSocketAddress("127.0.0.1",port),10000); bridge.setSoTimeout(35000);
+            runConnected(context,silent,bridge);
+        }
+    }
+    void runConnected(Context context,boolean silent,Socket bridge) throws Exception {
+        DataInputStream in=new DataInputStream(bridge.getInputStream()); DataOutputStream out=new DataOutputStream(bridge.getOutputStream());
+        writeText(out,"relay-android-native-v1");
+        String mode=readText(in);
+        List<PeerConnection.IceServer> iceServers=Collections.emptyList();
+        if(mode.equals("turn")) {
+            String url=readText(in),user=readText(in),password=readText(in);
+            if(!url.equals("turns:turn.cloudflare.com:443?transport=tcp")||user.length()>4096||password.length()>4096)throw new IOException("invalid ephemeral TURN config");
+            iceServers=Collections.singletonList(PeerConnection.IceServer.builder(url).setUsername(user).setPassword(password).createIceServer());
+        } else if(!mode.equals("local"))throw new IOException("invalid bridge mode");
         PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context)
             .setEnableInternalTracer(false)
             .setInjectableLogger((message,severity,tag)->{},Logging.Severity.LS_ERROR)
@@ -86,7 +101,8 @@ final class CrossPlatformRun {
         constraints.optional.add(new MediaConstraints.KeyValuePair("googNoiseSuppression","false"));
         AudioSource source=factory.createAudioSource(constraints);
         AudioTrack local=factory.createAudioTrack("android-660hz",source);
-        PeerConnection.RTCConfiguration config=new PeerConnection.RTCConfiguration(Collections.emptyList());
+        PeerConnection.RTCConfiguration config=new PeerConnection.RTCConfiguration(iceServers);
+        if(mode.equals("turn"))config.iceTransportsType=PeerConnection.IceTransportsType.RELAY;
         config.sdpSemantics=PeerConnection.SdpSemantics.UNIFIED_PLAN;
         PeerConnection pc=factory.createPeerConnection(config,new PeerConnection.Observer() {
             public void onSignalingChange(PeerConnection.SignalingState s){}
@@ -107,10 +123,7 @@ final class CrossPlatformRun {
         });
         if(pc==null)throw new IOException("peer creation failed");
         pc.addTrack(local,Collections.singletonList("android"));
-        try(Socket socket=new Socket()) {
-            socket.connect(new InetSocketAddress("127.0.0.1",port),10000); socket.setSoTimeout(35000);
-            DataInputStream in=new DataInputStream(socket.getInputStream()); DataOutputStream out=new DataOutputStream(socket.getOutputStream());
-            writeText(out,"relay-android-native-v1");
+        try(Socket socket=bridge) {
             set(pc,new SessionDescription(SessionDescription.Type.OFFER,readText(in)),false);
             CompletableFuture<SessionDescription> answer=new CompletableFuture<>();
             pc.createAnswer(new SdpResult() {
@@ -118,13 +131,14 @@ final class CrossPlatformRun {
                 void failed(){answer.completeExceptionally(new IOException("SDP answer rejected (details suppressed)"));}
             },new MediaConstraints());
             set(pc,answer.get(25,TimeUnit.SECONDS),true);
-            waitFor(()->pc.iceGatheringState()==PeerConnection.IceGatheringState.COMPLETE);
+            waitFor(()->mode.equals("turn")?candidates.get()>0:pc.iceGatheringState()==PeerConnection.IceGatheringState.COMPLETE);
             writeText(out,pc.getLocalDescription().description);
             waitFor(()->pc.connectionState()==PeerConnection.PeerConnectionState.CONNECTED);
             Thread.sleep(7000);
             CompletableFuture<RTCStatsReport> stats=new CompletableFuture<>(); pc.getStats(stats::complete);
+            RTCStatsReport report=stats.get(10,TimeUnit.SECONDS);
             long packets=0,bytes=0;
-            for(RTCStats s:stats.get(10,TimeUnit.SECONDS).getStatsMap().values()) {
+            for(RTCStats s:report.getStatsMap().values()) {
                 Map<String,Object> m=s.getMembers();
                 if("inbound-rtp".equals(s.getType()) && ("audio".equals(m.get("kind"))||"audio".equals(m.get("mediaType")))) {
                     packets+=((Number)m.getOrDefault("packetsReceived",0)).longValue();
@@ -134,6 +148,8 @@ final class CrossPlatformRun {
             boolean connected=pc.connectionState()==PeerConnection.PeerConnectionState.CONNECTED;
             out.writeLong(packets); out.writeLong(bytes); out.writeLong(samples.get()); out.writeLong(nonzero.get());
             out.writeLong(squares.get()); out.writeLong(generated.get()); out.writeBoolean(connected); out.flush();
+            String[] selected=selected(report);
+            for(String value:selected)writeText(out,value);
             boolean passed=connected && packets>0 && bytes>0 && samples.get()>=24000 && nonzero.get()>0 && squares.get()/Math.max(1,samples.get())>250000;
             Log.i(TAG,"android_receive="+(passed?"PASS":"FAIL")+" packets="+packets+" bytes="+bytes+" samples="+samples.get()+" nonzero="+nonzero.get()+" generated_frames="+generated.get()+" ice_candidates="+candidates.get()+" microphone_opened=false synthetic_audio=true");
             in.readBoolean();
@@ -142,5 +158,20 @@ final class CrossPlatformRun {
             pc.close(); pc.dispose(); local.dispose(); source.dispose(); factory.dispose(); adm.release();
             Log.i(TAG,"android_cross_platform_cleanup=COMPLETE");
         }
+    }
+    static String safe(Object value) {
+        String s=String.valueOf(value);
+        return Arrays.asList("relay","host","srflx","prflx","tls","tcp","udp").contains(s)?s:"unexposed";
+    }
+    static String[] selected(RTCStatsReport report) throws IOException {
+        Map<String,RTCStats> all=report.getStatsMap();
+        for(RTCStats s:all.values())if("transport".equals(s.getType())) {
+            RTCStats pair=all.get(s.getMembers().get("selectedCandidatePairId"));
+            if(pair==null)continue;
+            RTCStats local=all.get(pair.getMembers().get("localCandidateId")),remote=all.get(pair.getMembers().get("remoteCandidateId"));
+            if(local==null||remote==null)throw new IOException("selected candidates missing");
+            return new String[]{safe(local.getMembers().get("candidateType")),safe(remote.getMembers().get("candidateType")),safe(local.getMembers().get("relayProtocol"))};
+        }
+        throw new IOException("selected transport missing");
     }
 }

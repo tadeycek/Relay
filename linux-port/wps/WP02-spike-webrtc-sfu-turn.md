@@ -42,6 +42,10 @@ Retire the call unknowns: library behaviour on both platforms, Cloudflare accoun
 
 ## Progress
 
+- 2026-10-23 UTC — Live Android↔Linux Cloudflare TURN/TLS443 independently rerun, including both real silent-source
+  mutations (3 live native tests) and local regression (3). [Evidence](../evidence/WP02-live-turn.md).
+  Independent UDP-blocking, live SFU/E2EE and hardware gates remain open; lane stays `doing`.
+
 - 2026-10-23 UTC — Actual Android↔Linux native generated audio independently rerun; positive and both silent-source
   mutations passed (3 native integration tests). [Parent evidence](../evidence/WP02-cross-platform.md); live/hardware gates open.
 

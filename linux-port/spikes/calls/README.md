@@ -1,6 +1,9 @@
 # WP02 — standalone native calls spike
 
-**Verdict: PARTIAL WP02; local Android↔Linux native generated audio now verified in both directions.** This is not the Relay call engine, a physical listening test or Cloudflare media evidence. The new [follow-up evidence](FOLLOWUP-EVIDENCE.md) records the executable cross-platform proof and real silence mutations; canonical WP evidence and the earlier [delegate snapshot](EVIDENCE-DRAFT.md) remain historical baselines for this follow-up.
+**Verdict: PARTIAL WP02.** Local Android↔Linux generated media and live Cloudflare TURN/TLS443 generated media
+are verified in both directions. See [local evidence](FOLLOWUP-EVIDENCE.md) and
+[parent live TURN evidence](../../evidence/WP02-live-turn.md). These are standalone feasibility probes, not the Relay
+call engine, physical listening tests, independently enforced UDP blocking, or proof of group frame E2EE.
 
 ## Run locally (no credentials)
 
@@ -29,7 +32,21 @@ The probe:
 
 By default only sizes and device names are logged; SDP, candidates, credentials, identity keys and media data are not persisted. Optional `RELAY_SPIKE_BODY_DIR` records proposed call bodies (including ephemeral SDP/ICE) into an existing **private, gitignored** directory for the WP01 wire-size integration; do not attach those body files to evidence. The fixed all-zero/one measurement identifiers are not keys. Measurements vary with certificates, random ICE credentials and host interfaces.
 
-## Guarded live TURN path (NOT RUN)
+## Guarded live TURN path (VERIFIED; standalone probe)
+
+The original scaffold below has now been exercised with real short-lived credentials and selected-pair assertions.
+See [Linux live evidence](LIVE-TURN-EVIDENCE.md), [Android live snapshot](TURN-CROSS-PLATFORM-EVIDENCE.md), and
+[parent independent rerun](../../evidence/WP02-live-turn.md). Preferred Linux runner:
+
+```sh
+RELAY_SPIKE_LIVE=1 PYTHONDONTWRITEBYTECODE=1 python3 linux-port/spikes/calls/live_turn.py
+# After booting the owned emulator and building both probes:
+PYTHONDONTWRITEBYTECODE=1 python3 linux-port/spikes/calls/check_cross_platform_mutations.py --turn
+```
+
+The runners generate/revoke ephemeral credentials without putting secrets in command-line arguments or evidence.
+The Android bridge receives only short-lived ICE credentials, never the long-term provider token.
+No independently enforced UDP firewall block or physical listening test is claimed.
 
 `relayProbe` uses the **same** two-native-peer synthetic-audio/data-channel experiment, with `RTCIceTransportPolicy.RELAY`. It requires all of:
 
@@ -46,7 +63,7 @@ timeout 90 ./gradlew -p linux-port/spikes/calls --no-daemon \
   --console=plain --rerun-tasks relayProbe
 ```
 
-The guard is checked **before native loading or network requests**. Local tests exercise disabled, missing-credential and invalid-URL cases. A future successful run would prove only desktop↔desktop relay; it does not prove Android interop, UDP-blocked fallback, audible audio, or Cloudflare account setup. It checks every gathered candidate is relay, but does not inspect selected-pair stats or independently prove the transport. No firewall changes are scripted or authorized.
+The guard is checked **before native loading or network requests**. Local tests exercise disabled, missing-credential and invalid-URL cases. The successful Linux-only path proves desktop↔desktop relay; the separate Android suite proves cross-platform generated audio. The Linux-only probe checks every gathered candidate is relay **and** follows actual selected-pair stats to assert relay/relay, TLS relay protocol and positive traffic on both peers. Neither path proves an independently enforced UDP block or physical listening. No host firewall changes are scripted or authorized.
 
 ## Guarded SFU control-plane smoke (NOT RUN)
 

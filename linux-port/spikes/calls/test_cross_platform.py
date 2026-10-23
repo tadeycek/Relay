@@ -35,5 +35,24 @@ class ReceiveAcceptance(unittest.TestCase):
         with self.assertRaises(AssertionError):
             validate({'linux': self.good()['linux']})
 
+class TurnAcceptance(ReceiveAcceptance):
+    def good(self):
+        value = super().good()
+        for r in value.values():
+            r.update(local_candidate_type='relay', remote_candidate_type='relay', relay_protocol='tls')
+        return value
+
+    def test_turn_rejects_each_direct_or_non_tls_endpoint(self):
+        for side in ('android', 'linux'):
+            for key, bad in [('local_candidate_type', 'host'), ('remote_candidate_type', 'srflx'), ('relay_protocol', 'tcp'), ('relay_protocol', '')]:
+                with self.subTest(side=side, key=key, bad=bad):
+                    value = self.good()
+                    value[side][key] = bad
+                    with self.assertRaises(AssertionError):
+                        validate(value, turn=True)
+
+    def test_turn_positive(self):
+        validate(self.good(), turn=True)
+
 if __name__ == '__main__':
     unittest.main()

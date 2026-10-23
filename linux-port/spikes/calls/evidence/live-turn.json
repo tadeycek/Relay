@@ -1,0 +1,34 @@
+{
+  "credentials_revoked_http": 204,
+  "decoded_pcm": {
+    "a_bytes": 304320,
+    "a_nonzero_bytes": 285273,
+    "b_bytes": 306240,
+    "b_nonzero_bytes": 286025
+  },
+  "host_firewall_changed": false,
+  "independent_udp_block_test": false,
+  "mode": "forced-turn-tls443",
+  "physical_audio": false,
+  "run_completed_utc": "2026-10-23T16:51:20.206703+00:00",
+  "run_started_utc": "2026-10-23T16:51:15.879130+00:00",
+  "selected_pairs": [
+    {
+      "local": "relay",
+      "received": 21711,
+      "relay_protocol": "tls",
+      "remote": "relay",
+      "sent": 21727,
+      "side": "a"
+    },
+    {
+      "local": "relay",
+      "received": 21727,
+      "relay_protocol": "tls",
+      "remote": "relay",
+      "sent": 21711,
+      "side": "b"
+    }
+  ],
+  "synthetic_audio": true
+}

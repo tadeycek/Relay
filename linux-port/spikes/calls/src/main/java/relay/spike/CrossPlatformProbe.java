@@ -37,9 +37,38 @@ public final class CrossPlatformProbe {
     static String row(long packets,long bytes,long samples,long nonzero,long squares,long generated,boolean connected) {
         return "{\"packets\":"+packets+",\"bytes\":"+bytes+",\"samples\":"+samples+",\"nonzero\":"+nonzero+",\"square_sum\":"+squares+",\"generated_frames\":"+generated+",\"connected\":"+connected+"}";
     }
+    static String safe(String value) {
+        return Set.of("relay","host","srflx","prflx","tls","tcp","udp").contains(value)?value:"unexposed";
+    }
+    static String[] selected(RTCStatsReport report) throws IOException {
+        Map<String,RTCStats> all=report.getStats();
+        for(RTCStats s:all.values()) if(s.getType()==RTCStatsType.TRANSPORT) {
+            RTCStats pair=all.get(s.getAttributes().get("selectedCandidatePairId"));
+            if(pair==null)continue;
+            RTCStats local=all.get(pair.getAttributes().get("localCandidateId"));
+            RTCStats remote=all.get(pair.getAttributes().get("remoteCandidateId"));
+            if(local==null||remote==null)throw new IOException("selected candidates missing");
+            return new String[]{safe(String.valueOf(local.getAttributes().get("candidateType"))),safe(String.valueOf(remote.getAttributes().get("candidateType"))),safe(String.valueOf(local.getAttributes().get("relayProtocol")))};
+        }
+        throw new IOException("selected transport missing");
+    }
+    static String withSelected(String row,String[] selected) {
+        return row.substring(0,row.length()-1)+",\"local_candidate_type\":\""+selected[0]+"\",\"remote_candidate_type\":\""+selected[1]+"\",\"relay_protocol\":\""+selected[2]+"\"}";
+    }
     public static void main(String[] args) throws Exception {
         int port=Integer.parseInt(args[0]);
-        boolean silent=args.length>1 && args[1].equals("--silent-linux");
+        boolean silent=Arrays.asList(args).contains("--silent-linux");
+        boolean turn=Arrays.asList(args).contains("--turn");
+        RTCConfiguration config=new RTCConfiguration();
+        String url="",user="",password="";
+        if(turn) {
+            BufferedReader input=new BufferedReader(new InputStreamReader(System.in,StandardCharsets.UTF_8));
+            url=input.readLine(); user=input.readLine(); password=input.readLine();
+            if(!"turns:turn.cloudflare.com:443?transport=tcp".equals(url)||user==null||password==null||user.length()>4096||password.length()>4096)throw new IOException("invalid ephemeral TURN config");
+            RTCIceServer ice=new RTCIceServer(); ice.urls=List.of(url); ice.username=user; ice.password=password;
+            config.iceServers=List.of(ice); config.iceTransportPolicy=RTCIceTransportPolicy.RELAY;
+            config.portAllocatorConfig=new PortAllocatorConfig().setDisableAdapterEnumeration(true);
+        }
         Counts counts=new Counts();
         List<RTCRtpTransceiver> transceivers=new CopyOnWriteArrayList<>();
         List<RTCRtpReceiver> receivers=new CopyOnWriteArrayList<>();
@@ -49,7 +78,7 @@ public final class CrossPlatformProbe {
         CustomAudioSource source=new CustomAudioSource();
         AudioTrack track=factory.createAudioTrack("linux-440hz",source);
         AtomicInteger candidates=new AtomicInteger();
-        RTCPeerConnection pc=factory.createPeerConnection(new RTCConfiguration(),new PeerConnectionObserver() {
+        RTCPeerConnection pc=factory.createPeerConnection(config,new PeerConnectionObserver() {
             public void onIceCandidate(RTCIceCandidate c) { candidates.incrementAndGet(); }
             public void onTrack(RTCRtpTransceiver t) {
                 transceivers.add(t); RTCRtpReceiver r=t.getReceiver(); receivers.add(r);
@@ -69,8 +98,15 @@ public final class CrossPlatformProbe {
                 DataInputStream in=new DataInputStream(socket.getInputStream());
                 DataOutputStream out=new DataOutputStream(socket.getOutputStream());
                 if(!readText(in).equals("relay-android-native-v1")) throw new IOException("wrong endpoint");
+                writeText(out,turn?"turn":"local");
+                if(turn) { writeText(out,url); writeText(out,user); writeText(out,password); }
                 RTCSessionDescription offer=CallsProbe.create(pc,true); CallsProbe.set(pc,offer,true);
-                CallsProbe.await(()->pc.getIceGatheringState()==RTCIceGatheringState.COMPLETE,"Linux gathering");
+                try {
+                    // RELAY policy permits only relay candidates; one is sufficient for this bounded exchange.
+                    CallsProbe.await(()->turn?candidates.get()>0:pc.getIceGatheringState()==RTCIceGatheringState.COMPLETE,"Linux gathering");
+                } finally {
+                    System.out.println("GATHER_SUMMARY linux_candidates="+candidates.get()+" state="+pc.getIceGatheringState());
+                }
                 writeText(out,pc.getLocalDescription().sdp);
                 String answer=readText(in);
                 CallsProbe.set(pc,new RTCSessionDescription(RTCSdpType.ANSWER,answer),false);
@@ -89,9 +125,11 @@ public final class CrossPlatformProbe {
                 // Android sends only numeric receive metrics, never SDP, keys or candidate addresses.
                 long ap=in.readLong(), ab=in.readLong(), as=in.readLong(), an=in.readLong(), aq=in.readLong(), ag=in.readLong();
                 boolean ac=in.readBoolean();
+                String[] androidSelected={safe(readText(in)),safe(readText(in)),safe(readText(in))};
                 CompletableFuture<RTCStatsReport> stats=new CompletableFuture<>(); pc.getStats(stats::complete);
+                RTCStatsReport report=stats.get(10,TimeUnit.SECONDS);
                 long packets=0, bytes=0;
-                for(RTCStats s:stats.get(10,TimeUnit.SECONDS).getStats().values()) {
+                for(RTCStats s:report.getStats().values()) {
                     Map<String,Object> m=s.getAttributes();
                     if(s.getType()==RTCStatsType.INBOUND_RTP && ("audio".equals(m.get("kind")) || "audio".equals(m.get("mediaType")))) {
                         packets+=((Number)m.getOrDefault("packetsReceived",0)).longValue();
@@ -99,7 +137,7 @@ public final class CrossPlatformProbe {
                     }
                 }
                 System.out.println("SIGNAL_SUMMARY linux_candidates="+candidates.get()+" offer_bytes="+pc.getLocalDescription().sdp.getBytes(StandardCharsets.UTF_8).length+" answer_bytes="+answer.getBytes(StandardCharsets.UTF_8).length);
-                System.out.println("CROSS_PLATFORM_RESULT {\"linux\":"+row(packets,bytes,counts.samples.get(),counts.nonzero.get(),counts.squares.get(),800,pc.getConnectionState()==RTCPeerConnectionState.CONNECTED)+",\"android\":"+row(ap,ab,as,an,aq,ag,ac)+"}");
+                System.out.println("CROSS_PLATFORM_RESULT {\"linux\":"+withSelected(row(packets,bytes,counts.samples.get(),counts.nonzero.get(),counts.squares.get(),800,pc.getConnectionState()==RTCPeerConnectionState.CONNECTED),selected(report))+",\"android\":"+withSelected(row(ap,ab,as,an,aq,ag,ac),androidSelected)+"}");
                 out.writeBoolean(true); out.flush(); // Let Android clean up after its metrics have been received.
             }
         } finally {
