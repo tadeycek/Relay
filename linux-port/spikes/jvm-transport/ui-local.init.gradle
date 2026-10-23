@@ -1,0 +1,9 @@
+// Applied ONLY by run-app-ui.py to this local debug test artifact. No production URL or startup network.
+allprojects {
+    afterEvaluate { project ->
+        if (project.path == ':app') {
+            project.android.defaultConfig.buildConfigField 'String', 'MAILBOX_URL', '\"\"'
+            project.android.defaultConfig.testInstrumentationRunner = 'com.relay.app.calculator.JvmInteropRunner'
+        }
+    }
+}

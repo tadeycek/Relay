@@ -43,7 +43,14 @@ Run only JVM negative tests:
 `gradle/verification-metadata.xml` belongs to this standalone project. Regenerate only deliberately, resolving
 `:jvm:test :jvm:installDist :android:assembleDebug :android:assembleDebugAndroidTest` with `-PandroidProbe`.
 
-## Boundaries
+## Actual app UI follow-up
+
+`run-app-ui.py` exercises the real 1.15 app conversation, production outbox and transport against the local Worker.
+See [follow-up evidence](../../evidence/WP01-app-ui.md) for exact commands, isolation and remaining gates. It only
+resets disposable app state after an explicit flag and exact ownership marker. `test_app_ui_guards.py` checks those
+protections without running adb. Do not install this local test artifact on a personal phone.
+
+## Original companion boundaries
 
 This proves cross-runtime crypto and local mailbox interoperability, **not** a release 1.15 app displaying a chat,
 live `relay-mailbox-test` delivery, multi-device linking, a physical phone, Tor or incoming-call behaviour.

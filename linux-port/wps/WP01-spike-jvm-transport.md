@@ -38,6 +38,9 @@ Show that a plain JVM process on Linux can authenticate to the test mailbox and 
 
 ## Progress
 
+- 2026-10-23 UTC — Real production conversation UI receive/reply and JVM decrypt passed with an isolated debug
+  endpoint/startup and seeded synthetic contact; [follow-up evidence](../evidence/WP01-app-ui.md). Live-service gate open.
+
 - 2026-10-23 UTC — Local Android companion/JVM crypto and real local Worker exchange verified. Original 1.15 UI
   and live test Worker acceptance remain open; see [evidence](../evidence/WP01.md).
 

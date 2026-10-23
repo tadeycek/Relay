@@ -28,11 +28,15 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 
 ## Current evidence
 
+- [WP01 actual app UI](evidence/WP01-app-ui.md): production conversation receive/reply verified locally; live gate open.
+
 - [WP02](evidence/WP02.md): Linux native audio and Android initialization passed; live/cross-platform acceptance open.
 
 - [WP01](evidence/WP01.md): local interop passed; original-app UI and live-provider checks open.
 
 ## Log
+
+- 2026-10-23 UTC — WP01 remains `doing`; actual app UI acceptance added, root unit suite 329 passed. No main merge.
 
 - 2026-10-23 UTC — WP02 `doing`: parent-rerun native probes and encrypted frame measurements; live/cross-platform gates open.
 

@@ -1,0 +1,5 @@
+com.relay.app.calculator.JvmAppInteropTest:.
+
+Time: 28.61
+
+OK (1 test)

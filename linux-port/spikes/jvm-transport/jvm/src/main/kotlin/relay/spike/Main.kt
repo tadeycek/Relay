@@ -11,6 +11,7 @@ fun main(args: Array<String>) {
     val elapsed = measureTimeMillis {
         Interop.init()
         when (args[0]) {
+            "prepare-ui", "send-ui", "verify-ui" -> appUiCommand(args[0],dir)
             "prepare" -> {
                 val a = Keys.generate(); val b = Keys.generate()
                 val h = Interop.fresh(); val dh = Interop.fresh()
