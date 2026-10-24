@@ -16,8 +16,8 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 | Path | What |
 |---|---|
 | `src/index.ts` | Edge router: health, routing, refuses anonymous or oversized requests before they cost a Durable Object request |
-| `src/mailbox.ts` | The mailbox Durable Object: auth replay check, transactional store, catch-up, receipts, live signals, hibernating sockets, schema migrations |
-| `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after all confirm or 8 days |
+| `src/mailbox.ts` | The mailbox Durable Object: auth replay check, transactional store, catch-up, receipts, live signals, hibernating sockets, schema migrations, linked-device cursors (WP04) |
+| `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after every recipient device confirms (dormant/unlinked devices waived) or 8 days |
 | `src/auth.ts` | NIP-98 request auth |
 | `src/push.ts` | Content-free Firebase wake-ups, service-account JWT signing and OAuth token caching |
 | `src/protocol.ts` | Limits, error codes, shared types |
@@ -103,6 +103,25 @@ Use `--push-only` to repeat just pairing/token-registration and the controlled c
 Migration v7 supports both original v6 token tables and v6 tables that already contain `last_wake_at`.
 Existing tokens, members and pending messages are preserved; the old table is never recreated.
 
+## Linked devices (WP04)
+
+One queue per identity can now be shared by several devices (a phone plus up to 3 computers), each with its own
+cursor: a message is deleted once every **active** device has acked it, and a device silent for more than 72 hours
+stops holding the queue and media. A client that sends no `device` parameter behaves exactly as before. The
+contract is in [PROTOCOL.md](PROTOCOL.md#linked-devices-per-device-cursors-v11-wp04).
+
+- **Not a security boundary.** `device=primary` is a query parameter, not proof of being the phone: every device
+  holding the Nostr secret can sign it. An unlinked computer can still read the identity's mailbox with the shared
+  key. WP05 adds per-device authentication keys; until then this is queue bookkeeping only.
+- Tables: `devices` and `cursor_state` in the Mailbox object (created by `migrateDevices()`, tracked by the meta key
+  `devices_schema` so the numbered `schema` stays 7); `recipients` in each media object becomes `(pubkey, device)`
+  (media schema 2). Identities without devices never touch the new tables and cost no extra rows.
+- Settings: `MAX_LINKED_DEVICES` (3), `DORMANT_AFTER_MS` (72 h). Not deployed: `relay-mailbox-test` was not touched
+  and the 48 h pilot (WP04-AC6) has not run.
+- Row costs, measured with `EXPOSE_METRICS=1` by `test/devices-budget.test.ts` (`npx vitest run
+  test/devices-budget.test.ts --reporter=verbose` prints a `WP04-ROWS` line): see
+  [linux-port/evidence/WP04.md](../../linux-port/evidence/WP04.md).
+
 ## Free-plan budget
 
 Workers Free per day (Cloudflare pricing page, checked 2026-10-18): 100,000 Durable Object requests,
@@ -110,7 +129,8 @@ Workers Free per day (Cloudflare pricing page, checked 2026-10-18): 100,000 Dura
 operations fail until 00:00 UTC. Rows written is the binding limit. Measured costs: about 5.3 rows written per
 delivery and about 2 per confirmed message. That's roughly 27,000 a day for an assumed 10 users × 100 messages,
 30% to groups, including the 10-minute uptime probe. Live signals write nothing; a photo costs a handful of
-rows (one per 1 MiB chunk plus one per recipient). Set `EXPOSE_METRICS=1` to get an `x-relay-sql-rows` header
+rows (one per 1 MiB chunk plus one per recipient pair). A linked identity costs more: about 5 rows written for
+the ack that frees a message with two devices (2 for the first device's ack) against 3 for a legacy receipt. Set `EXPOSE_METRICS=1` to get an `x-relay-sql-rows` header
 (row counts only) on every response.
 
 ## Uptime probe

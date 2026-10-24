@@ -3,9 +3,14 @@ import { AUTH_WINDOW_S, verifyRequestAuth, type AuthOutcome, type Membership } f
 import { PushSender, serviceAccountFrom } from "./push";
 import {
   DELIVERY_ID,
+  DEVICE_SEEN_REFRESH_MS,
+  LINKED_DEVICE_ID,
+  MAX_DEVICE_LABEL_CHARS,
+  PRIMARY_DEVICE,
   PROTOCOL_VERSION,
   PUBKEY,
   allowlistFrom,
+  deviceParam,
   errorResponse,
   json,
   limitsFrom,
@@ -37,15 +42,33 @@ interface Session {
   pubkey: string;
   connectedAt: number;
   expiresAt: number;
+  /** A linked device's id. Absent for the primary and for every legacy client, so their attachment is unchanged. */
+  device?: string;
   /** Live-signal rate window: start of the current minute and how many were relayed in it. */
   signalWindow?: number;
   signalCount?: number;
 }
 
+/** One row of `devices` (WP04). `gap_through` > 0 means a dormant return missed deletions up to that seq. */
+interface DeviceRow extends Record<string, SqlStorageValue> {
+  pubkey: string;
+  device: string;
+  label: string;
+  acked: number;
+  last_seen: number;
+  added_at: number;
+  gap_through: number;
+  gap_shown: number;
+}
+
+/** Outcome of identifying the calling device: legacy identities cost no extra row reads. */
+type DeviceAccess = { ok: true; linked: false } | { ok: true; linked: true; row: DeviceRow } | { ok: false; response: Response };
+
 type AuthOk = Extract<AuthOutcome, { ok: true }>;
 type SizedDelivery = Delivery & { size: number };
 
 const nowS = () => Math.floor(Date.now() / 1000);
+const deviceTag = (pubkey: string, device: string) => `d:${pubkey}:${device}`;
 const isSeq = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 
 function safeSend(ws: WebSocket, frame: unknown): boolean {
@@ -93,6 +116,12 @@ export class Mailbox extends DurableObject<Env> {
   private readonly rows = { read: 0, written: 0 };
   /** In memory on purpose: after a restart the first write simply prunes again. */
   private lastPruneAt = 0;
+  /**
+   * Identities that have a `devices` table row (WP04), loaded on start like [members]. Everyone else is a
+   * legacy single-device identity and takes exactly the code path that existed before per-device cursors,
+   * with no extra reads or writes.
+   */
+  private readonly linked = new Set<string>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -105,6 +134,7 @@ export class Mailbox extends DurableObject<Env> {
     this.push = account ? new PushSender(account, (request) => this.pushFetch(request)) : null;
     this.migrate();
     for (const row of this.q<{ pubkey: string }>("SELECT pubkey FROM members")) this.members.add(row.pubkey);
+    for (const row of this.q<{ pubkey: string }>("SELECT DISTINCT pubkey FROM devices")) this.linked.add(row.pubkey);
     // Keepalives are answered by the runtime without waking a hibernated object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
@@ -113,11 +143,16 @@ export class Mailbox extends DurableObject<Env> {
     const url = new URL(request.url);
     let response: Response;
     try {
+      if (url.pathname === "/v1/devices" || url.pathname.startsWith("/v1/devices/")) {
+        response = await this.handleDevices(request, url);
+        if (response.status !== 101) response.headers.set("x-relay-instance", this.instance);
+        return response;
+      }
       switch (`${request.method} ${url.pathname}`) {
         case "POST /v1/send": response = await this.handleSend(request); break;
         case "GET /v1/inbox": response = await this.handleInbox(request, url); break;
-        case "POST /v1/ack": response = await this.handleAck(request); break;
-        case "GET /v1/ws": response = await this.handleUpgrade(request); break;
+        case "POST /v1/ack": response = await this.handleAck(request, url); break;
+        case "GET /v1/ws": response = await this.handleUpgrade(request, url); break;
         case "POST /v1/invite": response = await this.handleInvite(request); break;
         case "POST /v1/pair": response = await this.handlePair(request); break;
         case "POST /v1/push-token": response = await this.handlePushToken(request); break;
@@ -170,34 +205,48 @@ export class Mailbox extends DurableObject<Env> {
 
     return this.metered(() => {
       if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
-      return json({ v: PROTOCOL_VERSION, ...this.page(auth.pubkey, query.after, query.limit, this.limits.maxPageBytes) });
+      const access = this.enter(auth.pubkey, query.device, Date.now());
+      if (!access.ok) return access.response;
+      const page = this.page(auth.pubkey, query.after, query.limit, this.limits.maxPageBytes);
+      return json({ v: PROTOCOL_VERSION, ...page, ...this.gapFields(auth.pubkey, access) });
     });
   }
 
-  private async handleAck(request: Request): Promise<Response> {
+  private async handleAck(request: Request, url: URL): Promise<Response> {
     const body = await request.arrayBuffer();
     if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
     const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const device = deviceParam(url);
     const through = parseAck(body);
-    if (through === null) return errorResponse(400, "bad_request");
+    if (through === null || device === null) return errorResponse(400, "bad_request");
 
     return this.metered(() => {
       if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
-      const acked = this.ack(auth.pubkey, through);
-      this.prune(Date.now());
-      return json({ v: PROTOCOL_VERSION, acked, through });
+      const now = Date.now();
+      const access = this.enter(auth.pubkey, device, now);
+      if (!access.ok) return access.response;
+      const acked = access.linked ? this.ackDevice(access.row, through, now) : this.ack(auth.pubkey, through);
+      this.prune(now);
+      return json({ v: PROTOCOL_VERSION, acked, through, ...this.ackGap(access) });
     });
   }
 
-  private async handleUpgrade(request: Request): Promise<Response> {
+  private async handleUpgrade(request: Request, url: URL): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return errorResponse(426, "upgrade_required");
+    const device = deviceParam(url);
+    if (device === null) return errorResponse(400, "bad_request");
     const auth = await verifyRequestAuth(request, null, nowS(), this.membership);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
-    const recorded = this.metered(() => (this.recordAuth(auth) ? json(null) : errorResponse(401, "auth_replayed")));
+    const now = Date.now();
+    let access: DeviceAccess = { ok: true, linked: false };
+    const recorded = this.metered(() => {
+      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      access = this.enter(auth.pubkey, device, now);
+      return access.ok ? json(null) : access.response;
+    });
     if (!recorded.ok) return recorded;
 
-    const now = Date.now();
     const open = this.ctx.getWebSockets(auth.pubkey)
       .map((ws) => ({ ws, connectedAt: (ws.deserializeAttachment() as Session | null)?.connectedAt ?? 0 }))
       .sort((a, b) => a.connectedAt - b.connectedAt);
@@ -205,11 +254,259 @@ export class Mailbox extends DurableObject<Env> {
 
     const { 0: client, 1: server } = new WebSocketPair();
     // The pubkey tag is how pushes find a recipient's sockets, including after hibernation.
-    this.ctx.acceptWebSocket(server, [auth.pubkey]);
+    // A linked device's sockets also carry a device tag, so removing the device can find and close them.
+    this.ctx.acceptWebSocket(server, device === PRIMARY_DEVICE ? [auth.pubkey] : [auth.pubkey, deviceTag(auth.pubkey, device)]);
     const session: Session = { v: 1, pubkey: auth.pubkey, connectedAt: now, expiresAt: now + this.limits.sessionTtlMs };
+    if (device !== PRIMARY_DEVICE) session.device = device;
     server.serializeAttachment(session);
-    safeSend(server, { type: "ready", v: PROTOCOL_VERSION, instance: this.instance, expiresAt: session.expiresAt });
+    safeSend(server, { type: "ready", v: PROTOCOL_VERSION, instance: this.instance, expiresAt: session.expiresAt, ...this.gapFields(auth.pubkey, access) });
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // ---- Devices: per-device cursors (WP04) ------------------------------------------------------
+  //
+  // One queue per identity. Each linked device has its own acknowledged cursor, and a message is deleted
+  // once every ACTIVE device has acked it (the minimum of the active cursors). A device silent for longer
+  // than `dormantAfterMs` stops holding the queue. THE `device` PARAMETER IS NOT AUTHENTICATION: every
+  // device holding the Nostr secret can sign any value, so none of this is a security boundary (G1).
+
+  /**
+   * Identifies the calling device and applies dormancy, in this order: (1) look the device up, (2) decide
+   * whether it was dormant using the stored last_seen, (3) only then refresh last_seen. If a dormant device
+   * returns after others deleted past its cursor, a gap watermark is persisted before anything else can ack.
+   * Legacy identities (no devices rows) return immediately without touching storage.
+   */
+  private enter(pubkey: string, device: string, now: number): DeviceAccess {
+    if (!this.linked.has(pubkey)) {
+      return device === PRIMARY_DEVICE ? { ok: true, linked: false } : { ok: false, response: errorResponse(403, "unknown_device") };
+    }
+    return this.ctx.storage.transactionSync((): DeviceAccess => {
+      const row = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND device = ?", pubkey, device)[0];
+      if (!row) return { ok: false, response: errorResponse(403, "unknown_device") };
+      const dormant = device !== PRIMARY_DEVICE && now - row.last_seen > this.limits.dormantAfterMs;
+      if (dormant) {
+        // Raise (never lower) the cursor to the deletion floor, so the min() below can't be dragged under it.
+        const floor = this.q<{ floor: number }>("SELECT floor FROM cursor_state WHERE pubkey = ?", pubkey)[0]?.floor ?? 0;
+        if (row.acked < floor) {
+          if (floor > row.gap_through) row.gap_shown = 0;
+          row.gap_through = Math.max(row.gap_through, floor);
+          row.acked = floor;
+        }
+        row.last_seen = now;
+        this.q("UPDATE devices SET acked = ?, last_seen = ?, gap_through = ?, gap_shown = ? WHERE pubkey = ? AND device = ?",
+          row.acked, row.last_seen, row.gap_through, row.gap_shown, pubkey, device);
+      } else if (now - row.last_seen >= DEVICE_SEEN_REFRESH_MS) {
+        row.last_seen = now;
+        this.q("UPDATE devices SET last_seen = ? WHERE pubkey = ? AND device = ?", now, pubkey, device);
+      }
+      return { ok: true, linked: true, row };
+    });
+  }
+
+  /** `gap`/`oldest` for ready, inbox and batch frames. Marks the gap as shown, which lets a later ack clear it. */
+  private gapFields(pubkey: string, access: DeviceAccess): { gap?: true; oldest?: number } {
+    if (!access.ok || !access.linked || access.row.gap_through <= 0) return {};
+    if (access.row.gap_shown === 0) {
+      access.row.gap_shown = 1;
+      this.q("UPDATE devices SET gap_shown = 1 WHERE pubkey = ? AND device = ?", pubkey, access.row.device);
+    }
+    const oldest = this.q<{ seq: number | null }>("SELECT MIN(seq) AS seq FROM deliveries WHERE recipient = ?", pubkey)[0]?.seq;
+    return oldest === null || oldest === undefined ? { gap: true } : { gap: true, oldest };
+  }
+
+  private ackGap(access: DeviceAccess): { gap?: true } {
+    return access.ok && access.linked && access.row.gap_through > 0 ? { gap: true } : {};
+  }
+
+  /** Highest seq ever assigned by the mailbox. AUTOINCREMENT keeps it even when every row is deleted. */
+  private seqHead(): number {
+    return this.q<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'deliveries'")[0]?.seq ?? 0;
+  }
+
+  /**
+   * Device receipt. The cursor only moves forward and never past the mailbox head (a receipt naming a seq
+   * beyond anything stored must not pre-acknowledge future messages). A gap is cleared only by an ack that
+   * comes after the gap was shown to the device. Mutates [row] so callers see the new state.
+   */
+  private ackDevice(row: DeviceRow, through: number, now: number): number {
+    return this.ctx.storage.transactionSync(() => {
+      const head = this.seqHead();
+      const acked = Math.max(row.acked, Math.min(through, head));
+      let gapThrough = row.gap_through;
+      let gapShown = row.gap_shown;
+      if (gapThrough > 0 && gapShown === 1 && acked >= gapThrough) {
+        gapThrough = 0;
+        gapShown = 0;
+      }
+      if (acked !== row.acked || gapThrough !== row.gap_through || gapShown !== row.gap_shown) {
+        this.q("UPDATE devices SET acked = ?, gap_through = ?, gap_shown = ? WHERE pubkey = ? AND device = ?",
+          acked, gapThrough, gapShown, row.pubkey, row.device);
+      }
+      row.acked = acked;
+      row.gap_through = gapThrough;
+      row.gap_shown = gapShown;
+      return this.deleteBelowMin(row.pubkey, now, head);
+    });
+  }
+
+  /**
+   * Deletes everything every active device has acked. The new floor (and the head it was computed against)
+   * is persisted BEFORE the rows go, so a dormant device returning later can tell what it missed. The floor
+   * only ever rises.
+   */
+  private deleteBelowMin(pubkey: string, now: number, head: number): number {
+    const min = this.q<{ m: number | null }>(
+      "SELECT MIN(acked) AS m FROM devices WHERE pubkey = ? AND (device = 'primary' OR last_seen >= ?)",
+      pubkey, now - this.limits.dormantAfterMs,
+    )[0]?.m;
+    if (min === null || min === undefined) return 0;
+    this.q(
+      "INSERT INTO cursor_state (pubkey, floor, high) VALUES (?, ?, ?) ON CONFLICT(pubkey) DO UPDATE SET floor = excluded.floor, high = MAX(high, excluded.high) WHERE excluded.floor > floor",
+      pubkey, min, head,
+    );
+    return this.ack(pubkey, min);
+  }
+
+  /** A socket whose device was removed: tell it, then close with 4009. */
+  private revoked(ws: WebSocket, ref: string | undefined): void {
+    safeSend(ws, { type: "error", ref, error: { code: "unknown_device", retryable: false } });
+    safeClose(ws, 4009, "unlinked");
+  }
+
+  /** `POST/GET /v1/devices`, `DELETE /v1/devices/<id>`: primary only. */
+  private async handleDevices(request: Request, url: URL): Promise<Response> {
+    const target = url.pathname === "/v1/devices" ? null : url.pathname.slice("/v1/devices/".length);
+    const allowed = target === null
+      ? request.method === "POST" || request.method === "GET"
+      : request.method === "DELETE";
+    if (!allowed) return errorResponse(405, "method_not_allowed");
+    const device = deviceParam(url);
+    if (device === null) return errorResponse(400, "bad_request");
+    const body = await request.arrayBuffer();
+    if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
+    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
+    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    let registration: { device: string; label: string } | null = null;
+    if (request.method === "POST") {
+      const value = parseJson(body);
+      const id = value?.device;
+      const label = value?.label ?? "";
+      if (value?.v !== PROTOCOL_VERSION || typeof id !== "string" || !LINKED_DEVICE_ID.test(id) ||
+          typeof label !== "string" || [...label].length > MAX_DEVICE_LABEL_CHARS) {
+        return errorResponse(400, "bad_request");
+      }
+      registration = { device: id, label };
+    }
+    if (target !== null && target !== PRIMARY_DEVICE && !LINKED_DEVICE_ID.test(target)) return errorResponse(400, "bad_request");
+
+    let unlinked = null as string | null;
+    const response = this.metered(() => {
+      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      const now = Date.now();
+      // The caller must be the primary. A known non-primary device is told so; a stranger is "unknown".
+      if (device !== PRIMARY_DEVICE) {
+        const known = this.linked.has(auth.pubkey) &&
+          this.q("SELECT 1 FROM devices WHERE pubkey = ? AND device = ?", auth.pubkey, device).length > 0;
+        return errorResponse(403, known ? "not_primary" : "unknown_device");
+      }
+      if (registration) return this.registerDevice(auth.pubkey, registration.device, registration.label, now);
+      if (target === null) return this.listDevices(auth.pubkey, now);
+      if (target === PRIMARY_DEVICE) return errorResponse(400, "bad_request");
+      const removed = this.removeDevice(auth.pubkey, target, now);
+      if (removed) unlinked = target;
+      return removed ? json({ v: PROTOCOL_VERSION, removed: true }) : errorResponse(404, "unknown_device");
+    });
+    if (unlinked !== null) {
+      for (const ws of this.ctx.getWebSockets(deviceTag(auth.pubkey, unlinked))) safeClose(ws, 4009, "unlinked");
+    }
+    return response;
+  }
+
+  private registerDevice(pubkey: string, device: string, label: string, now: number): Response {
+    const result = this.ctx.storage.transactionSync((): Response | { head: number; existing: boolean } => {
+      const head = this.seqHead();
+      if (!this.linked.has(pubkey)) {
+        // The implicit primary becomes an explicit row at the position it has acknowledged so far: everything
+        // before the oldest waiting message is acked (or expired), and with nothing waiting that is the head.
+        const oldest = this.q<{ seq: number | null }>("SELECT MIN(seq) AS seq FROM deliveries WHERE recipient = ?", pubkey)[0]?.seq;
+        const position = oldest === null || oldest === undefined ? head : oldest - 1;
+        this.q("INSERT INTO devices (pubkey, device, label, acked, last_seen, added_at) VALUES (?, 'primary', '', ?, ?, ?)", pubkey, position, now, now);
+        this.q("INSERT INTO cursor_state (pubkey, floor, high) VALUES (?, ?, ?) ON CONFLICT(pubkey) DO NOTHING", pubkey, position, head);
+      }
+      const existing = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND device = ?", pubkey, device)[0];
+      if (existing) {
+        // Idempotent: a retry or rename never moves the cursor (that would silently skip messages).
+        if (existing.label !== label) this.q("UPDATE devices SET label = ? WHERE pubkey = ? AND device = ?", label, pubkey, device);
+        return { head: existing.acked, existing: true };
+      }
+      const count = this.q<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE pubkey = ? AND device <> 'primary'", pubkey)[0].n;
+      if (count >= this.limits.maxLinkedDevices) return errorResponse(409, "device_limit");
+      // The new device starts at the head, in the same synchronous section as every store: no message can
+      // slip between the snapshot and the row. It never receives history.
+      this.q("INSERT INTO devices (pubkey, device, label, acked, last_seen, added_at) VALUES (?, ?, ?, ?, ?, ?)", pubkey, device, label, head, now, now);
+      return { head, existing: false };
+    });
+    this.linked.add(pubkey);
+    if (result instanceof Response) return result;
+    return json({ v: PROTOCOL_VERSION, head: result.head, ...(result.existing ? { existing: true } : {}) });
+  }
+
+  private listDevices(pubkey: string, now: number): Response {
+    const rows = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? ORDER BY added_at, device", pubkey);
+    const devices = rows.map((r) => ({
+      device: r.device,
+      label: r.label,
+      added_at: r.added_at,
+      last_seen: r.last_seen,
+      active: r.device === PRIMARY_DEVICE || now - r.last_seen <= this.limits.dormantAfterMs,
+    }));
+    return json({ v: PROTOCOL_VERSION, devices, head: this.seqHead() });
+  }
+
+  /** Drops the cursor and frees whatever only that device was holding. False if there is no such device. */
+  private removeDevice(pubkey: string, device: string, now: number): boolean {
+    return this.ctx.storage.transactionSync(() => {
+      if (!this.linked.has(pubkey)) return false;
+      const gone = this.q("DELETE FROM devices WHERE pubkey = ? AND device = ? RETURNING device", pubkey, device);
+      if (gone.length === 0) return false;
+      this.deleteBelowMin(pubkey, now, this.seqHead());
+      return true;
+    });
+  }
+
+  // ---- Media support (RPC from MediaBlob) ----------------------------------------------------
+
+  /**
+   * One read for a media upload: membership of [pubkeys], and for each the ids of its devices that are active
+   * now (always including `primary`). An identity without devices gets an empty list, which the media store
+   * treats as the single implicit `primary`.
+   */
+  async mediaRecipients(pubkeys: string[]): Promise<{ members: boolean[]; devices: string[][] }> {
+    const now = Date.now();
+    const devices = pubkeys.map((pubkey) => {
+      if (!this.linked.has(pubkey)) return [];
+      return this.q<{ device: string }>(
+        "SELECT device FROM devices WHERE pubkey = ? AND (device = 'primary' OR last_seen >= ?)",
+        pubkey, now - this.limits.dormantAfterMs,
+      ).map((r) => r.device);
+    });
+    return { members: pubkeys.map((p) => this.isMember(p)), devices };
+  }
+
+  /**
+   * State of (pubkey, device) pairs for the media store: whether the device still exists (not unlinked),
+   * whether it is active, and when it would turn dormant (0 = never, e.g. the primary).
+   */
+  async deviceStates(pairs: Array<[string, string]>): Promise<Array<{ exists: boolean; active: boolean; dormantAt: number }>> {
+    const now = Date.now();
+    return pairs.map(([pubkey, device]) => {
+      if (device === PRIMARY_DEVICE) return { exists: true, active: true, dormantAt: 0 };
+      if (!this.linked.has(pubkey)) return { exists: false, active: false, dormantAt: 0 };
+      const row = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND device = ?", pubkey, device)[0];
+      if (!row) return { exists: false, active: false, dormantAt: 0 };
+      const dormantAt = row.last_seen + this.limits.dormantAfterMs;
+      return { exists: true, active: now <= dormantAt, dormantAt };
+    });
   }
 
   // ---- Membership (joining by QR pairing) ----------------------------------------------------
@@ -310,11 +607,16 @@ export class Mailbox extends DurableObject<Env> {
       if (frame?.type === "sync" && isSeq(frame.after) && (frame.limit === undefined || isLimit(frame.limit))) {
         const limit = Math.min((frame.limit as number | undefined) ?? this.limits.maxPageMessages, this.limits.maxPageMessages);
         const bytes = Math.min(this.limits.maxPageBytes, MAX_SOCKET_PAGE_BYTES);
-        safeSend(ws, { type: "batch", ref, ...this.page(session.pubkey, frame.after, limit, bytes) });
+        const access = this.enter(session.pubkey, session.device ?? PRIMARY_DEVICE, Date.now());
+        if (!access.ok) return this.revoked(ws, ref);
+        safeSend(ws, { type: "batch", ref, ...this.page(session.pubkey, frame.after, limit, bytes), ...this.gapFields(session.pubkey, access) });
       } else if (frame?.type === "ack" && isSeq(frame.through)) {
-        const acked = this.ack(session.pubkey, frame.through);
-        this.prune(Date.now());
-        safeSend(ws, { type: "acked", ref, acked, through: frame.through });
+        const now = Date.now();
+        const access = this.enter(session.pubkey, session.device ?? PRIMARY_DEVICE, now);
+        if (!access.ok) return this.revoked(ws, ref);
+        const acked = access.linked ? this.ackDevice(access.row, frame.through, now) : this.ack(session.pubkey, frame.through);
+        this.prune(now);
+        safeSend(ws, { type: "acked", ref, acked, through: frame.through, ...this.ackGap(access) });
       } else if (frame?.type === "signal" && typeof frame.to === "string" && typeof frame.envelope === "string") {
         this.relaySignal(ws, session, frame.to, frame.envelope, ref);
       } else {
@@ -498,12 +800,24 @@ export class Mailbox extends DurableObject<Env> {
     // Messages nobody collected within the lifetime (e.g. for a phone that was wiped) would be
     // refused by the app as too old anyway; dropping them keeps the per-recipient caps honest.
     this.ctx.storage.transactionSync(() => {
-      const stale = this.q<{ recipient: string; size: number }>(
-        "DELETE FROM deliveries WHERE seq IN (SELECT seq FROM deliveries WHERE stored_at < ? LIMIT 200) RETURNING recipient, size",
+      const stale = this.q<{ recipient: string; size: number; seq: number }>(
+        "DELETE FROM deliveries WHERE seq IN (SELECT seq FROM deliveries WHERE stored_at < ? LIMIT 200) RETURNING recipient, size, seq",
         now - this.limits.pendingLifetimeMs,
       );
       const freed = new Map<string, number>();
-      for (const row of stale) freed.set(row.recipient, (freed.get(row.recipient) ?? 0) + row.size);
+      const expiredThrough = new Map<string, number>();
+      for (const row of stale) {
+        freed.set(row.recipient, (freed.get(row.recipient) ?? 0) + row.size);
+        if (this.linked.has(row.recipient)) expiredThrough.set(row.recipient, Math.max(expiredThrough.get(row.recipient) ?? 0, row.seq));
+      }
+      // Expiry deletes without every device's receipt: raise the floor so a returning device sees a gap.
+      for (const [recipient, seq] of expiredThrough) {
+        // Unlike dormancy, expiry can happen while a device is active. Persist its gap now;
+        // enter() only detects a missing floor when the caller has gone dormant.
+        this.q("UPDATE devices SET gap_through = ?, gap_shown = 0 WHERE pubkey = ? AND acked < ? AND gap_through < ?",
+          seq, recipient, seq, seq);
+        this.q("UPDATE cursor_state SET floor = ?, high = MAX(high, ?) WHERE pubkey = ? AND floor < ?", seq, seq, recipient, seq);
+      }
       for (const [recipient, bytes] of freed) this.q("UPDATE pending_bytes SET bytes = bytes - ? WHERE scope = ?", bytes, recipient);
     });
   }
@@ -553,12 +867,39 @@ export class Mailbox extends DurableObject<Env> {
       () => this.schemaV1(), () => this.schemaV2(), () => this.schemaV3(), () => this.schemaV4(), () => this.schemaV5(),
       () => this.schemaV6(), () => this.schemaV7(),
     ];
+    this.migrateDevices();
     for (let version = current + 1; version <= SCHEMA_VERSION; version++) {
       this.ctx.storage.transactionSync(() => {
         steps[version - 1]();
         this.sql.exec("INSERT INTO meta (key, value) VALUES ('schema', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", String(version));
       });
     }
+  }
+
+  /**
+   * WP04 tables. They follow the same additive, idempotent pattern as the numbered steps but are tracked by
+   * their own meta key, so `schema` keeps its value of 7 and the existing migration test stays unchanged
+   * (WP04-AC1). Legacy identities never write to these tables.
+   */
+  private migrateDevices(): void {
+    const done = this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'devices_schema'")[0]?.value === "1";
+    if (done) return;
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS devices (
+        pubkey TEXT NOT NULL,
+        device TEXT NOT NULL,
+        label TEXT NOT NULL DEFAULT '',
+        acked INTEGER NOT NULL,
+        last_seen INTEGER NOT NULL,
+        added_at INTEGER NOT NULL,
+        gap_through INTEGER NOT NULL DEFAULT 0,
+        gap_shown INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (pubkey, device)
+      ) WITHOUT ROWID`);
+      // Per identity: the highest deletion floor ever reached and the seq head it was computed against.
+      this.sql.exec("CREATE TABLE IF NOT EXISTS cursor_state (pubkey TEXT PRIMARY KEY, floor INTEGER NOT NULL, high INTEGER NOT NULL) WITHOUT ROWID");
+      this.sql.exec("INSERT INTO meta (key, value) VALUES ('devices_schema', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    });
   }
 
   /** The original layout; schemaV2 reshapes it. Kept so existing objects migrate step by step. */
@@ -677,8 +1018,10 @@ function parseSend(body: ArrayBuffer, limits: Limits): SizedDelivery[] | { statu
   return out;
 }
 
-function parseInboxQuery(url: URL, limits: Limits): { after: number; limit: number } | null {
-  for (const key of url.searchParams.keys()) if (key !== "after" && key !== "limit") return null;
+function parseInboxQuery(url: URL, limits: Limits): { after: number; limit: number; device: string } | null {
+  for (const key of url.searchParams.keys()) if (key !== "after" && key !== "limit" && key !== "device") return null;
+  const device = deviceParam(url);
+  if (device === null) return null;
   const num = (name: string, fallback: number) => {
     const raw = url.searchParams.get(name);
     return raw === null ? fallback : /^\d{1,15}$/.test(raw) ? Number(raw) : NaN;
@@ -686,7 +1029,7 @@ function parseInboxQuery(url: URL, limits: Limits): { after: number; limit: numb
   const after = num("after", 0);
   const limit = num("limit", limits.maxPageMessages);
   if (!isSeq(after) || !isLimit(limit)) return null;
-  return { after, limit: Math.min(limit, limits.maxPageMessages) };
+  return { after, limit: Math.min(limit, limits.maxPageMessages), device };
 }
 
 function parseAck(body: ArrayBuffer): number | null {

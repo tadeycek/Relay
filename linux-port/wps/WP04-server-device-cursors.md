@@ -2,7 +2,7 @@
 id: WP04
 title: "Server: per-device cursors, dormancy, per-device media confirmation"
 phase: L1
-lane: planned
+lane: doing
 depends_on: []
 specs: ["05 §1–2", "02 §E rows", "LP-D02, LP-D14"]
 owned_files:

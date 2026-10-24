@@ -24,6 +24,9 @@ export type ErrorCode =
   | "mailbox_full"
   | "rate_limited"
   | "forbidden"
+  | "unknown_device"
+  | "not_primary"
+  | "device_limit"
   | "storage_error";
 
 /** Per-delivery and request limits. Defaults are the pilot budgets from the plan; tests override them. */
@@ -49,6 +52,10 @@ export interface Limits {
   maxMembers: number;
   inviteMaxTtlMs: number;
   maxInvitesPerMember: number;
+  /** Linked devices besides the primary (WP04). */
+  maxLinkedDevices: number;
+  /** A linked device silent for longer than this stops holding the queue and media (WP04, LP-D02). */
+  dormantAfterMs: number;
 }
 
 const KIB = 1024;
@@ -82,6 +89,8 @@ export const DEFAULT_LIMITS: Limits = {
   // The app's QR invitations live 30 minutes.
   inviteMaxTtlMs: 60 * 60 * 1000,
   maxInvitesPerMember: 20,
+  maxLinkedDevices: 3,
+  dormantAfterMs: 72 * 60 * 60 * 1000,
 };
 
 /** Optional numeric overrides from Worker vars (strings), e.g. small caps in tests. */
@@ -112,6 +121,8 @@ export function limitsFrom(env: Partial<Record<string, unknown>>): Limits {
     maxMembers: pick("MAX_MEMBERS", DEFAULT_LIMITS.maxMembers),
     inviteMaxTtlMs: pick("INVITE_MAX_TTL_MS", DEFAULT_LIMITS.inviteMaxTtlMs),
     maxInvitesPerMember: pick("MAX_INVITES_PER_MEMBER", DEFAULT_LIMITS.maxInvitesPerMember),
+    maxLinkedDevices: pick("MAX_LINKED_DEVICES", DEFAULT_LIMITS.maxLinkedDevices),
+    dormantAfterMs: pick("DORMANT_AFTER_MS", DEFAULT_LIMITS.dormantAfterMs),
   };
 }
 
@@ -124,6 +135,24 @@ export function allowlistFrom(raw: unknown): Set<string> {
 export const PUBKEY = /^[0-9a-f]{64}$/;
 /** Client delivery ids: the app's payload ids are UUIDs; allow any short url-safe token. */
 export const DELIVERY_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** A device id: the implicit `primary` (the phone, and every client that sends no parameter) or 32 lowercase hex. */
+export const PRIMARY_DEVICE = "primary";
+export const DEVICE_ID = /^(?:primary|[0-9a-f]{32})$/;
+export const LINKED_DEVICE_ID = /^[0-9a-f]{32}$/;
+/** `last_seen` is written at most this often per device, to stay inside the rows-written budget. */
+export const DEVICE_SEEN_REFRESH_MS = 60 * 60 * 1000;
+export const MAX_DEVICE_LABEL_CHARS = 64;
+
+/**
+ * The `device` query parameter of a request: absent means `primary`, a malformed value is null.
+ * NOT proof of identity: every device holding the Nostr secret can sign any value (see PROTOCOL.md).
+ */
+export function deviceParam(url: URL): string | null {
+  const values = url.searchParams.getAll("device");
+  if (values.length === 0) return PRIMARY_DEVICE;
+  return values.length === 1 && DEVICE_ID.test(values[0]) ? values[0] : null;
+}
 
 export interface Delivery {
   to: string;

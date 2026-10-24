@@ -3,7 +3,8 @@ import { PROTOCOL_VERSION, errorResponse, json, limitsFrom } from "./protocol";
 export { Mailbox } from "./mailbox";
 export { MediaBlob } from "./media";
 
-const MAILBOX_ROUTES = new Set(["/v1/send", "/v1/inbox", "/v1/ack", "/v1/ws", "/v1/invite", "/v1/pair", "/v1/push-token"]);
+const MAILBOX_ROUTES = new Set(["/v1/send", "/v1/inbox", "/v1/ack", "/v1/ws", "/v1/invite", "/v1/pair", "/v1/push-token", "/v1/devices"]);
+const DEVICE_ROUTE = /^\/v1\/devices\/[0-9a-f]{32}$|^\/v1\/devices\/primary$/;
 const MEDIA_ROUTE = /^\/v1\/media\/([0-9a-f]{64})$/;
 
 /**
@@ -17,7 +18,7 @@ export default {
       return request.method === "GET" ? json({ ok: true, v: PROTOCOL_VERSION }) : errorResponse(405, "method_not_allowed");
     }
     const media = MEDIA_ROUTE.exec(pathname);
-    if (!media && !MAILBOX_ROUTES.has(pathname)) return errorResponse(404, "not_found");
+    if (!media && !MAILBOX_ROUTES.has(pathname) && !DEVICE_ROUTE.test(pathname)) return errorResponse(404, "not_found");
 
     const authorization = request.headers.get("Authorization");
     if (!authorization) return errorResponse(401, "auth_missing");

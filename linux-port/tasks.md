@@ -8,7 +8,7 @@ the log together.
 | [WP01](wps/WP01-spike-jvm-transport.md) | L0 | Spike: JVM transport and crypto interop with a real phone | — | doing |
 | [WP02](wps/WP02-spike-webrtc-sfu-turn.md) | L0 | Spike: WebRTC Android↔Linux audio, Cloudflare TURN and SFU, signal sizes | — | doing |
 | [WP03](wps/WP03-core-module-extraction.md) | L1 | Extract the shared `:core` JVM module | WP01 | doing |
-| [WP04](wps/WP04-server-device-cursors.md) | L1 | Server: per-device cursors, dormancy, per-device media confirmation | — | planned |
+| [WP04](wps/WP04-server-device-cursors.md) | L1 | Server: per-device cursors, dormancy, per-device media confirmation | — | doing |
 | [WP05](wps/WP05-phone-linking-and-sync.md) | L1 | Phone: link a computer, link slot, sync channel, sent-copies | WP03, WP04 | planned |
 | [WP06](wps/WP06-desktop-shell-link-text.md) | L2 | Desktop shell: storage, secrets, linking, text messaging | WP03, WP05 | planned |
 | [WP07](wps/WP07-desktop-groups-and-ui.md) | L2 | Desktop: groups, profiles, Discord-style UI completion | WP06 | planned |
@@ -28,6 +28,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 
 ## Current evidence
 
+- [WP04](evidence/WP04.md): per-device cursors, dormancy/gap and per-device media confirmation implemented with 159 local tests; AC4 blocked by the upload→enrol→send race, G1 primary spoofing is a WP05 gate, deploy/pilot not run.
+
 - [WP02 E2EE interop](evidence/WP02-e2ee-interop.md): Android FrameCryptor and Linux webrtc-java share one AES-GCM frame layout, local and through the live SFU; WP17 feasible; no frame-level replay protection.
 
 - [WP02 live SFU + Android](evidence/WP02-live-sfu-android.md): Android and Linux publish/subscribe through the real SFU; silence rejected both ways; E2EE/egress/hardware open.
@@ -45,6 +47,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 - [WP01](evidence/WP01.md): local interop passed; original-app UI and live-provider checks open.
 
 ## Log
+
+- 2026-10-23 UTC — WP03 `doing` (AC1–AC3 met, single-emulator UI smoke green, AC4 two-emulator not run); WP04 `doing` (159 tests, AC4 blocked, AC6 not run). Neither deployed or merged.
 
 - 2026-10-23 UTC - WP02 remains `doing`; AC5 frame-E2EE interop proven (local + live SFU), parent rerun. Key distribution, egress, hardware, UDP-block gates open.
 
