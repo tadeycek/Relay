@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Relay
+Comment=Relay desktop client
+Exec=AppRun
+Icon=relay
+Categories=Network;InstantMessaging;
+Terminal=false
+StartupNotify=true

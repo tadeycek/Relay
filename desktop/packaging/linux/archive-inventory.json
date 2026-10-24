@@ -1,0 +1,627 @@
+{
+  "jars": [
+    {
+      "jar": "lib/app/animation-core-desktop-1.7.3-87bb47dcf611207d17ac1fabc2155e1.jar",
+      "sha256": "2b347abf6c48626153a02b70eef6bbe1d3c9527515d6f9f7eceaea3c398533bb",
+      "bytes": 437746,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/animation-desktop-1.7.3-405fd87261449d20aacb4543f98b26b.jar",
+      "sha256": "474e6bd2a6ac2362e5dabd780f93b852768640aa16403b0fc505da88177f97b3",
+      "bytes": 454071,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/annotation-jvm-1.8.0-3c74b73c0c75521f67964f11b28dec9.jar",
+      "sha256": "9aab326d9492800991854360ac248f493ce7f7c3183519309b78ace9e240f6f6",
+      "bytes": 56126,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/annotations-23.0.0-8484cd17d040d837983323f760b2c660.jar",
+      "sha256": "7b0f19724082cbfcbc66e5abea2b9bc92cf08a1ea11e191933ed43801eb3cd05",
+      "bytes": 29371,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/atomicfu-jvm-0.23.2-5e4f88ed1c37222d791f5dcadf481498.jar",
+      "sha256": "101ff43ff563fca167af5ade98c3b69bf569010eab745013b84d8955034d3b3c",
+      "bytes": 36181,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/collection-jvm-1.4.0-3f0597ec99a52ecdbf6f3962c5dc77a.jar",
+      "sha256": "d5cf7b72647c7995071588fe870450ff9c8f127f253d2d4851e161b800f67ae0",
+      "bytes": 767379,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/core-3.5.4-23cc13611f7f222b9988220fa28a115.jar",
+      "sha256": "71de5d89341b5fcf5dd89da7f44e84d825d0e084cdf3ec77c9abe26b0f0ceb13",
+      "bytes": 610364,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/core-35405f6a80d473b7d7b75ef95642369.jar",
+      "sha256": "99b7b9a14802a772ecdf612f06c322565c31a7a02b2efdf5327c054174f51b0c",
+      "bytes": 607674,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/core-common-2.2.0-2212d240dfe1e8a7598ee117ccc316d.jar",
+      "sha256": "65308a06b1c00ee186cb9e19321383f043b993813f1522c47f4a3e3303bdba41",
+      "bytes": 11657,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/dbus-java-core-4.2.1-55fe3a385012be8a8c6ccb4735fc988.jar",
+      "sha256": "3a7b9fd543a1be94de99009c36ac1803f08d6d12357706c8f5040855315469d1",
+      "bytes": 306047,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/dbus-java-transport-native-unixsocket-4.2.1-1a6385aabb32b3fd1b22c6de59f71831.jar",
+      "sha256": "bb67de9bd08148123b918458efc78055146bd5ae1538487cf4a018dd0f644837",
+      "bytes": 7864,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/desktop-0.1.0-d45ed2b291d4d77fed86d67c4a06064.jar",
+      "sha256": "aa1364042400a53e35ae839539dcd552b82874292e96852522cdd434364ea406",
+      "bytes": 786331,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/desktop-jvm-1.7.3-de424e1ca627c3ee7de0f1f65430b2c5.jar",
+      "sha256": "62c816073195cc0119dc1d66b178544bdb772ef8bee4879954528c6798b17ebe",
+      "bytes": 8165,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/error_prone_annotations-2.41.0-75e3b25da8b8a2136463c4674f5e49bf.jar",
+      "sha256": "a56e782b5b50811ac204073a355a21d915a2107fce13ec711331ad036f660fcc",
+      "bytes": 20389,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/foundation-desktop-1.7.3-4dbe5e38e559448051b0edf6263c1e5c.jar",
+      "sha256": "e1dc2e97eca6acf5bb16fc587b7d92b09c89e3b7cec0589ea169a970d1c9fe48",
+      "bytes": 4339720,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/foundation-layout-desktop-1.7.3-42275c8b9c017549d648869827055c3.jar",
+      "sha256": "d2c867c13ff6632f9880e67dabab2e930007b008b9b22950fc2cc075008eceb6",
+      "bytes": 659293,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/gson-2.13.2-a2c47e14ce5e95615458fe455f5d542.jar",
+      "sha256": "dd0ce1b55a3ed2080cb70f9c655850cda86c206862310009dcb5e5c95265a5e0",
+      "bytes": 289901,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/hkdf-1.1.0-5de6b6134e655bd5e95a954ac946144a.jar",
+      "sha256": "81ec4c56e740d440bc9426fa600caee4abb6e9f4ceff576e9cece7c3817c5a06",
+      "bytes": 12169,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/java-keyring-1.0.4-c953d4dad8366c4e3f896bdfc75f5cb.jar",
+      "sha256": "edcd0db19e5a216265da034615b8bef1380168d489153f390adc484493c9aa5a",
+      "bytes": 29189,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/jkeychain-1.1.0-862d9ddb16361d975d958268c805feb.jar",
+      "sha256": "0c100a04f7006f1a6e471385305d8839120568edbd80f57b787b71ab8d79b173",
+      "bytes": 12967,
+      "embedded_natives": [
+        "osxkeychain.so"
+      ],
+      "embedded_license_entries": [
+        "META-INF/LICENSE.txt"
+      ],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/jna-5.15.0-cd756a719c1892e56d9c9d424e8983bb.jar",
+      "sha256": "a564158d28ab5127fc6a958028ed54279fe0999662c46425b6a3b09a2a52094d",
+      "bytes": 2001532,
+      "embedded_natives": [
+        "com/sun/jna/win32-x86/jnidispatch.dll",
+        "com/sun/jna/darwin-x86-64/libjnidispatch.jnilib",
+        "com/sun/jna/darwin-aarch64/libjnidispatch.jnilib",
+        "com/sun/jna/linux-x86/libjnidispatch.so",
+        "com/sun/jna/linux-x86-64/libjnidispatch.so",
+        "com/sun/jna/linux-arm/libjnidispatch.so",
+        "com/sun/jna/linux-armel/libjnidispatch.so",
+        "com/sun/jna/linux-aarch64/libjnidispatch.so",
+        "com/sun/jna/linux-ppc/libjnidispatch.so",
+        "com/sun/jna/linux-ppc64le/libjnidispatch.so",
+        "com/sun/jna/linux-mips64el/libjnidispatch.so",
+        "com/sun/jna/linux-loongarch64/libjnidispatch.so",
+        "com/sun/jna/linux-s390x/libjnidispatch.so",
+        "com/sun/jna/linux-riscv64/libjnidispatch.so",
+        "com/sun/jna/sunos-x86/libjnidispatch.so",
+        "com/sun/jna/sunos-x86-64/libjnidispatch.so",
+        "com/sun/jna/sunos-sparc/libjnidispatch.so",
+        "com/sun/jna/sunos-sparcv9/libjnidispatch.so",
+        "com/sun/jna/dragonflybsd-x86-64/libjnidispatch.so",
+        "com/sun/jna/freebsd-x86/libjnidispatch.so",
+        "com/sun/jna/freebsd-x86-64/libjnidispatch.so",
+        "com/sun/jna/freebsd-aarch64/libjnidispatch.so",
+        "com/sun/jna/openbsd-x86/libjnidispatch.so",
+        "com/sun/jna/openbsd-x86-64/libjnidispatch.so",
+        "com/sun/jna/win32-x86-64/jnidispatch.dll",
+        "com/sun/jna/win32-aarch64/jnidispatch.dll"
+      ],
+      "embedded_license_entries": [
+        "META-INF/LICENSE"
+      ],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/jna-platform-5.13.0-7cc7af47ad1f151faa57ef624b2f271.jar",
+      "sha256": "474d7b88f6e97009b6ec1d98c3024dd95c23187c65dabfbc35331bcac3d173dd",
+      "bytes": 1363209,
+      "embedded_natives": [],
+      "embedded_license_entries": [
+        "META-INF/LICENSE"
+      ],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/json-20240303-99aae5de9871d158cdb970f17be4c8da.jar",
+      "sha256": "3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed",
+      "bytes": 78332,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/jsr305-3.0.2-dd83accb899363c32b7d7a1b2e4ce40.jar",
+      "sha256": "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7",
+      "bytes": 19936,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/kotlin-stdlib-2.0.21-2cbcaf2919b072a9965b0b280cc10fb.jar",
+      "sha256": "f31cc53f105a7e48c093683bbd5437561d1233920513774b470805641bedbc09",
+      "bytes": 1747660,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/kotlin-stdlib-jdk7-1.9.24-36ceb164e825dcfd5d1c5c25482bec8.jar",
+      "sha256": "b6699b850ba0789f2e904279cd8bdc7bea9130ffd157cdba001fc7425d8a47b7",
+      "bytes": 961,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/kotlin-stdlib-jdk8-1.9.24-592f5e22e994e5dd4f3868f13bcf74d8.jar",
+      "sha256": "5b5bbfb3e1184b5e13317c3d42237fa24add443b2e7781961eea334db136adb1",
+      "bytes": 967,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/kotlinx-coroutines-core-jvm-1.8.1-c477c52e713d7633276652efdcaee272.jar",
+      "sha256": "f3d4f5de1c391bbcc20f3b3435ccbac013521e76b6902d7d59635ec15c1f797e",
+      "bytes": 1546991,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/kotlinx-coroutines-swing-1.8.1-f9f8397967cd393f2ecdfb29b162293.jar",
+      "sha256": "0c809e79dc64ab5bc9b790389fe491cc19d3574345a431276966fbc09994a659",
+      "bytes": 9846,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/kotlinx-datetime-jvm-0.6.0-d083c24780d072bb42f9867184758f13.jar",
+      "sha256": "517a71e2ef300af8b375c5d6ed49941c7297c8deece6bdb2bb1a28a7f4bc4b58",
+      "bytes": 663951,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/lifecycle-common-jvm-2.8.5-8c81b745cb7664b0f78619d2e523d018.jar",
+      "sha256": "61c873a7327c946ec033c310bb98f3f92eeabcede0e1a5200ab8a1896483c7bf",
+      "bytes": 57238,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/lifecycle-runtime-compose-desktop-2.8.4-7aa4c61a74a64c3df8de58b46c853dc8.jar",
+      "sha256": "c1e51a246e69e237e87d289be08bebd8d406ffe9ff60a125e8f2072db6119966",
+      "bytes": 63619,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/lifecycle-runtime-desktop-2.8.5-7fc568586d392d3d5dbda79492e18d.jar",
+      "sha256": "10bfe53bb2752f967751a5102cdb785eeea54e1d4df6bde88fb0f50b0a49156c",
+      "bytes": 44220,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/lifecycle-viewmodel-desktop-2.8.5-34f77ff425af3216d357e6cbf3b7d12b.jar",
+      "sha256": "21ec0e77dc02ed0d6bfe6f3cba7f43e25400446d89ded8568ee165437e0c1922",
+      "bytes": 48766,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/material-desktop-1.7.3-7cbd7baf9be1c437d8af7e5d9cd5ff6.jar",
+      "sha256": "c2121336aaaf79473d0c0347546af8d75f510e8a7774c04a903fb3cc697a5633",
+      "bytes": 2102526,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/material-icons-core-desktop-1.7.3-23eaca5d2a4caa3e4077a0e9fd549d68.jar",
+      "sha256": "bcf6c853b6db2ff148d2d3aad3b7a7ea54d93fc7b42e0afd840eb6daf1a1c681",
+      "bytes": 878084,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/material-ripple-desktop-1.7.3-eaa17112a2817a534d1be922e59182fd.jar",
+      "sha256": "c5f6bdfb229a1794a838ed1f31f7299a3b516004beffe1a8bcca753aa268be09",
+      "bytes": 74007,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/material3-desktop-1.7.3-86a5717eed6ef3c263c3552ac537a12.jar",
+      "sha256": "7642434d7d79bf14886f2f0d1739e0a2e4428effa8a69e57c82b1540c19ace12",
+      "bytes": 4238232,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/nostr-sdk-kmp-jvm-9272b12a18d9e8bb99ee398cac2dcd2.jar",
+      "sha256": "6ea06d34872e90aeb9ad5140150f9a2bb152062178f8c7749e02f48de6d116d9",
+      "bytes": 8413633,
+      "embedded_natives": [
+        "linux-x86-64/libnostr_sdk_ffi.so"
+      ],
+      "embedded_license_entries": [
+        "rust/nostr/sdk/RelayMessage$Companion$notice$$inlined$uniffiRustCall$1.class",
+        "rust/nostr/sdk/RelayMessageEnum$Notice.class",
+        "rust/nostr/sdk/TagKind$License.class",
+        "rust/nostr/sdk/TagStandard$License.class"
+      ],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/okhttp-4.12.0-6acba053af88fed87e71c6c29911d7c.jar",
+      "sha256": "b1050081b14bb7a3a7e55a4d3ef01b5dcfabc453b4573a4fc019767191d5f4e0",
+      "bytes": 789531,
+      "embedded_natives": [],
+      "embedded_license_entries": [
+        "okhttp3/internal/publicsuffix/NOTICE"
+      ],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/okio-jvm-3.9.0-5eb4b8544f2fffe6e23b53499de96d1.jar",
+      "sha256": "ddc386ff14bd25d5c934167196eaf45b18de4f28e1c55a4db37ae594cbfd37e4",
+      "bytes": 372089,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/protobuf-java-4.33.6-ccd3b2a8a48d15d7f3a46b6d12545d.jar",
+      "sha256": "c24b2464ecfe9ac1d44e3a8fe281fca09e6ad2ca73dbd689dd7d6d719df987b5",
+      "bytes": 1886534,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/runtime-desktop-1.7.3-7ab98d9506ccb634316b9b9eeecf5b8.jar",
+      "sha256": "76e3250547b9ca3cb1a49c272933b25cb3bccbc9ba12775dd6161a63d9aa7cf1",
+      "bytes": 1372096,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/runtime-saveable-desktop-1.7.3-682605976c053c6e295e37eb69ebb5f.jar",
+      "sha256": "4306363be90eaabe74b900db4c32ed1f15c7548e5b30a7093c4ee40c436b9b8c",
+      "bytes": 55768,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/secret-service-1.8.1-jdk17-b157ea0b5eca4edb50f82e2a518896.jar",
+      "sha256": "03ba2ecda8aad358a917d236de854fd746f6e6ccd9a74b62f7c524773330a346",
+      "bytes": 66422,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/skiko-awt-0.8.18-a19fd5d37c7330965054a0a732d09b18.jar",
+      "sha256": "637f5de1a208f1368ac51b5a286a4827cec828cd62dda332dc3400b8543e243d",
+      "bytes": 1222497,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/skiko-awt-runtime-linux-x64-0.8.18-d863f924539f388539c75c0c7262f3f.jar",
+      "sha256": "fe753366585a2364c7f464a85156f03d7da7d95a132fdb8961638ab38ac5e84e",
+      "bytes": 293,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/slf4j-api-2.0.7-403dffa46cdd2e3c82da19df4f394a4c.jar",
+      "sha256": "5d6298b93a1905c32cda6478808ac14c2d4a47e91535e53c41f7feeb85d946f4",
+      "bytes": 63635,
+      "embedded_natives": [],
+      "embedded_license_entries": [
+        "META-INF/LICENSE.txt"
+      ],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/sqlite-jdbc-3.50.1.0-c24f1ed3855b9954e3af766f1bba6c6.jar",
+      "sha256": "384b880bdaf0a23a2b32f20aaecdcaad68938962bb55fdcfacb495265fa0dc81",
+      "bytes": 18582765,
+      "embedded_natives": [
+        "org/sqlite/native/Windows/aarch64/sqlitejdbc.dll",
+        "org/sqlite/native/Windows/x86/sqlitejdbc.dll",
+        "org/sqlite/native/Windows/armv7/sqlitejdbc.dll",
+        "org/sqlite/native/Windows/x86_64/sqlitejdbc.dll",
+        "org/sqlite/native/Linux/aarch64/libsqlitejdbc.so",
+        "org/sqlite/native/Linux/arm/libsqlitejdbc.so",
+        "org/sqlite/native/Linux/armv6/libsqlitejdbc.so",
+        "org/sqlite/native/Linux/ppc64/libsqlitejdbc.so",
+        "org/sqlite/native/Linux/x86/libsqlitejdbc.so",
+        "org/sqlite/native/Linux/riscv64/libsqlitejdbc.so",
+        "org/sqlite/native/Linux/armv7/libsqlitejdbc.so",
+        "org/sqlite/native/Linux/x86_64/libsqlitejdbc.so",
+        "org/sqlite/native/Linux-Android/aarch64/libsqlitejdbc.so",
+        "org/sqlite/native/Linux-Android/arm/libsqlitejdbc.so",
+        "org/sqlite/native/Linux-Android/x86/libsqlitejdbc.so",
+        "org/sqlite/native/Linux-Android/x86_64/libsqlitejdbc.so",
+        "org/sqlite/native/FreeBSD/aarch64/libsqlitejdbc.so",
+        "org/sqlite/native/FreeBSD/x86/libsqlitejdbc.so",
+        "org/sqlite/native/FreeBSD/x86_64/libsqlitejdbc.so",
+        "org/sqlite/native/Mac/aarch64/libsqlitejdbc.dylib",
+        "org/sqlite/native/Mac/x86_64/libsqlitejdbc.dylib",
+        "org/sqlite/native/Linux-Musl/aarch64/libsqlitejdbc.so",
+        "org/sqlite/native/Linux-Musl/x86/libsqlitejdbc.so",
+        "org/sqlite/native/Linux-Musl/x86_64/libsqlitejdbc.so"
+      ],
+      "embedded_license_entries": [
+        "META-INF/maven/io.github.willena/sqlite-jdbc/LICENSE.zentus",
+        "META-INF/maven/io.github.willena/sqlite-jdbc/LICENSE"
+      ],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/tink-1.24.0-ffc7b90f028495e9892eea93949120.jar",
+      "sha256": "463bb0cddc8131379c4f87d8185a0314f651286c28e52a8dea5df206d8a3e175",
+      "bytes": 2976935,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/ui-desktop-1.7.3-146599b01f5da0fdd1841ac8b664de57.jar",
+      "sha256": "d8a43d211a85104da5a82459307825454b4038095700bc240057666d70f1aac6",
+      "bytes": 3406315,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/ui-geometry-desktop-1.7.3-c8a01a3ba0c9545187876a28acd79.jar",
+      "sha256": "4b86c961c0b4bce7995329fd57d4339ede11cb75d7ec90bc1b9913396addb30f",
+      "bytes": 42120,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/ui-graphics-desktop-1.7.3-bb90a9a5b8f366b9f6162a35a4e16da.jar",
+      "sha256": "9109d77cc262f90408169b1ca0ba2d15135b6034e377a80bbf3ec0234954e852",
+      "bytes": 532126,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/ui-text-desktop-1.7.3-fb336187493d2dc39a883e640415a99.jar",
+      "sha256": "80e07e4ca739f7b6122f63e9a17e6853b947220ecb1180f8dcaf419d0e468996",
+      "bytes": 767729,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/ui-tooling-preview-desktop-1.7.3-f86e811916e9fcecb72a5e1ce6eac638.jar",
+      "sha256": "c5cfad0b125e978d915f8b4c38630bc5d548e59fe8a0e838c0cc84283c605943",
+      "bytes": 1863,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/ui-unit-desktop-1.7.3-4d19fde85b276f26591df697b9b883c.jar",
+      "sha256": "598b52e257ed674145694b9790a7383a90fed2ec7154ba09ace4aa983c65b1a2",
+      "bytes": 78724,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/ui-util-desktop-1.7.3-5472e6dd5d146c395d508cf67df34db.jar",
+      "sha256": "161dcc73b929da61cee50045e96fb02f1633c36f18a2ef38b5c2c44c38606b52",
+      "bytes": 15701,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/runtime/lib/jrt-fs.jar",
+      "sha256": "45fc41e80103af6ac9e9dd1403c9228271b77a9719f262e96a800486b9646952",
+      "bytes": 110124,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    }
+  ],
+  "standalone_so": [
+    "lib/app/libskiko-linux-x64.so",
+    "lib/libapplauncher.so",
+    "lib/runtime/lib/libawt.so",
+    "lib/runtime/lib/libawt_headless.so",
+    "lib/runtime/lib/libawt_xawt.so",
+    "lib/runtime/lib/libfontmanager.so",
+    "lib/runtime/lib/libfreetype.so",
+    "lib/runtime/lib/libjava.so",
+    "lib/runtime/lib/libjavajpeg.so",
+    "lib/runtime/lib/libjawt.so",
+    "lib/runtime/lib/libjimage.so",
+    "lib/runtime/lib/libjli.so",
+    "lib/runtime/lib/libjsig.so",
+    "lib/runtime/lib/libjsound.so",
+    "lib/runtime/lib/liblcms.so",
+    "lib/runtime/lib/libmlib_image.so",
+    "lib/runtime/lib/libnet.so",
+    "lib/runtime/lib/libnio.so",
+    "lib/runtime/lib/libprefs.so",
+    "lib/runtime/lib/libsplashscreen.so",
+    "lib/runtime/lib/libsyslookup.so",
+    "lib/runtime/lib/libverify.so",
+    "lib/runtime/lib/libzip.so",
+    "lib/runtime/lib/server/libjsig.so",
+    "lib/runtime/lib/server/libjvm.so"
+  ],
+  "runtime_legal": [
+    "lib/runtime/legal/java.base/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.base/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.base/LICENSE",
+    "lib/runtime/legal/java.base/aes.md",
+    "lib/runtime/legal/java.base/asm.md",
+    "lib/runtime/legal/java.base/c-libutl.md",
+    "lib/runtime/legal/java.base/cldr.md",
+    "lib/runtime/legal/java.base/gcc.md",
+    "lib/runtime/legal/java.base/icu.md",
+    "lib/runtime/legal/java.base/public_suffix.md",
+    "lib/runtime/legal/java.base/siphash.md",
+    "lib/runtime/legal/java.base/unicode.md",
+    "lib/runtime/legal/java.base/zlib.md",
+    "lib/runtime/legal/java.datatransfer/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.datatransfer/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.datatransfer/LICENSE",
+    "lib/runtime/legal/java.desktop/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.desktop/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.desktop/LICENSE",
+    "lib/runtime/legal/java.desktop/colorimaging.md",
+    "lib/runtime/legal/java.desktop/freetype.md",
+    "lib/runtime/legal/java.desktop/giflib.md",
+    "lib/runtime/legal/java.desktop/harfbuzz.md",
+    "lib/runtime/legal/java.desktop/jpeg.md",
+    "lib/runtime/legal/java.desktop/lcms.md",
+    "lib/runtime/legal/java.desktop/libpng.md",
+    "lib/runtime/legal/java.desktop/mesa3d.md",
+    "lib/runtime/legal/java.desktop/pipewire.md",
+    "lib/runtime/legal/java.desktop/xwd.md",
+    "lib/runtime/legal/java.logging/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.logging/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.logging/LICENSE",
+    "lib/runtime/legal/java.prefs/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.prefs/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.prefs/LICENSE",
+    "lib/runtime/legal/java.sql/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.sql/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.sql/LICENSE",
+    "lib/runtime/legal/java.transaction.xa/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.transaction.xa/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.transaction.xa/LICENSE",
+    "lib/runtime/legal/java.xml/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.xml/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.xml/LICENSE",
+    "lib/runtime/legal/java.xml/bcel.md",
+    "lib/runtime/legal/java.xml/dom.md",
+    "lib/runtime/legal/java.xml/jcup.md",
+    "lib/runtime/legal/java.xml/xalan.md",
+    "lib/runtime/legal/java.xml/xerces.md",
+    "lib/runtime/legal/jdk.crypto.ec/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/jdk.crypto.ec/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/jdk.crypto.ec/LICENSE"
+  ],
+  "jar_count": 58,
+  "embedded_native_count": 52,
+  "standalone_so_count": 25,
+  "runtime_legal_count": 52
+}
