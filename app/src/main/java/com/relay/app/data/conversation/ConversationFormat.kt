@@ -45,7 +45,12 @@ object ConversationFormat {
 
     private const val PREVIEW_MAX = 80
 
-    fun preview(type: MessageType?, body: String?, isSent: Boolean): String {
+    fun preview(type: MessageType?, body: String?, isSent: Boolean, deliveryState: Int = 0): String {
+        // Never trust a wire body as a local note. The list query must supply the DB-only marker.
+        if (type == MessageType.TEXT && deliveryState == com.relay.app.calls.CallRecord.LOCAL_DELIVERY_STATE)
+            com.relay.app.calls.CallRecord.decode(body.orEmpty())?.let { entry ->
+            return com.relay.app.calls.CallRecord.label(entry, "They")
+        }
         if (com.relay.app.files.FileBody.isFile(body.orEmpty())) {
             val file = (com.relay.app.files.FileBody.parse(body.orEmpty()) { true } as? com.relay.app.files.FileBodyResult.Ok)?.body
             return (if (isSent) "You: " else "") + (file?.let { oneLine("File · ${it.name}") } ?: "Unsupported file")

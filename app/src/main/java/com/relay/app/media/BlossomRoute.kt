@@ -17,7 +17,7 @@ const val TOR_UNAVAILABLE_MESSAGE = "Tor is turned on but isn't running. Start O
  */
 internal fun mediaFetcher(context: Context, url: String): ((String, String, Long) -> ByteArray?)? =
     if (com.relay.app.transport.mailbox.MailboxConfig.available) {
-        if (com.relay.app.transport.mailbox.MailboxMedia.isOurs(url)) { u, sha, max -> com.relay.app.transport.mailbox.MailboxMedia.download(com.relay.app.transport.mailbox.AndroidNostrSigner { com.relay.app.transport.nostr.NostrIdentity.keys(context) }, u, sha, max) }
+        if (com.relay.app.transport.mailbox.MailboxMedia.isOurs(url)) { u, sha, max -> downloadPhoneMedia(context, u, sha, max) }
         else null
     } else blossomClientFor(context)?.let { client -> { u, sha, max -> client.download(u, sha, max) } }
 

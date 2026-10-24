@@ -50,6 +50,11 @@ class RelayPreferences(context: Context) {
         get() = prefs.getBoolean("typing_indicators", true)
         set(v) { prefs.edit().putBoolean("typing_indicators", v).apply() }
 
+    /** "Always relay calls": ICE policy `relay`, so the peer never learns this device's IP (06 §1). */
+    var callsRelayOnly: Boolean
+        get() = prefs.getBoolean(KEY_CALLS_RELAY_ONLY, false)
+        set(v) { prefs.edit().putBoolean(KEY_CALLS_RELAY_ONLY, v).apply() }
+
     var readReceipts: Boolean
         get() = prefs.getBoolean(KEY_READ_RECEIPTS, true)
         set(v) { prefs.edit().putBoolean(KEY_READ_RECEIPTS, v).apply() }
@@ -144,6 +149,7 @@ class RelayPreferences(context: Context) {
         private const val KEY_MSG_NOTIF = "incoming_msg_notif"
         private const val KEY_DEFAULT_PIN_EXPIRY = "default_pin_expiry"
         private const val KEY_READ_RECEIPTS = "read_receipts"
+        private const val KEY_CALLS_RELAY_ONLY = "calls_relay_only"
         private const val KEY_DND_ENABLED = "dnd_enabled"
         private const val KEY_DND_START_HOUR = "dnd_start_hour"
         private const val KEY_DND_END_HOUR = "dnd_end_hour"

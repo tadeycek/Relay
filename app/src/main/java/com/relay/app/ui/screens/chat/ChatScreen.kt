@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Image
@@ -218,6 +219,18 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 contact = contact,
                 onBack = { navController.popBackStack() },
                 actions = {
+                    val callTarget = contact?.takeIf { it.isDeleted.not() && it.nostrPubkey != null }
+                    if (callTarget != null) {
+                        IconButton(onClick = {
+                            com.relay.app.calls.CallController.placeCall(context, callTarget.nostrPubkey!!, callTarget.name)
+                        }) {
+                            Icon(
+                                androidx.compose.material.icons.Icons.Outlined.Call,
+                                contentDescription = "Call",
+                                tint = TextSecondary,
+                            )
+                        }
+                    }
                     ConversationMenu(contactId,
                         onShare = if(contact?.isDeleted != true) ({ confirmShareLocation = true }) else null,
                         onRequest = if(contact?.isDeleted != true) ({ confirmRequestLocation = true }) else null)

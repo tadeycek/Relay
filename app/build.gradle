@@ -116,6 +116,10 @@ dependencies {
     implementation platform('com.google.firebase:firebase-bom:33.7.0')
     implementation 'com.google.firebase:firebase-messaging'
 
+    // 1:1 voice calls (WP13): the same native WebRTC build the call spikes used. Audio only; DTLS-SRTP
+    // between the two phones, with Cloudflare STUN plus TURN credentials from GET /v1/call/ice.
+    implementation 'io.github.webrtc-sdk:android:144.7559.15'
+
     // JVM unit tests for the pure logic (payload codec, outbox policy, dedupe, QR codec, handlers).
     // org.json is included because android.jar's org.json is only stubs on the JVM.
     testImplementation 'junit:junit:4.13.2'

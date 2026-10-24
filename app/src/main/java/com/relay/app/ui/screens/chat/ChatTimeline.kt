@@ -68,7 +68,9 @@ object ChatTimeline {
                 dividerAdded = true
                 previous = null
             }
-            if (m.type == MessageType.SCREENSHOT || m.type == MessageType.LOCATION_REQUEST || m.type == MessageType.LOCATION_DECLINED) {
+            if (m.type == MessageType.SCREENSHOT || m.type == MessageType.LOCATION_REQUEST || m.type == MessageType.LOCATION_DECLINED ||
+                com.relay.app.calls.CallRecord.isLocalRow(m)
+            ) {
                 items.add(ChatItem.Note(m))
                 previous = null
                 return@forEachIndexed

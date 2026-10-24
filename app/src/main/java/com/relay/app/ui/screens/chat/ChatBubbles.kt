@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.outlined.LocationOff
 import androidx.compose.material.icons.outlined.LocationOn
@@ -123,6 +125,33 @@ private fun UnreadDivider(count: Int) {
 @Composable
 private fun SystemNote(message: Message, contactName: String, groupId: Long?) {
     if(message.type==MessageType.SCREENSHOT) { MediaEventNote(message,contactName,groupId); return }
+    // A call left a local log row: one centred line, "Missed call" / "Call ended · 2:31" (WP13).
+    val call = if (com.relay.app.calls.CallRecord.isLocalRow(message))
+        com.relay.app.calls.CallRecord.decode(message.body) else null
+    if (call != null) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = RelaySpacing.md),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                if (call.outcome == com.relay.app.call.CallOutcome.MISSED) Icons.Filled.CallEnd else Icons.Filled.Call,
+                contentDescription = null,
+                tint = if (call.outcome == com.relay.app.call.CallOutcome.MISSED) com.relay.app.ui.theme.Danger else TextSecondary,
+                modifier = Modifier.size(14.dp),
+            )
+            Text(
+                text = com.relay.app.calls.CallRecord.label(call, contactName) + " · " +
+                    java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(message.timestamp)),
+                style = MaterialTheme.typography.bodySmall,
+                color = TextSecondary,
+                modifier = Modifier.padding(start = RelaySpacing.sm),
+            )
+        }
+        return
+    }
     val (icon, text) = when (message.type) {
         MessageType.SCREENSHOT -> Icons.Outlined.CameraAlt to
             ((if (message.isSent) "You took a screenshot" else "$contactName took a screenshot") + " · " + java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()).format(java.util.Date(message.timestamp)))

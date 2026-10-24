@@ -157,6 +157,9 @@ private fun LocationPage(vm: SettingsViewModel) {
 private fun PrivacyPage(vm: SettingsViewModel) {
     ToggleRow("Typing indicators", vm.typingIndicators, vm::updateTypingIndicators,
         supporting = "Let verified friends see when you type. Indicators disappear automatically.")
+    ToggleRow("Always relay calls", vm.callsRelayOnly, vm::updateCallsRelayOnly,
+        supporting = "Routes every call through Cloudflare TURN so the other person never sees your IP address. " +
+            "Takes effect from the next call.")
     // Tor mode is switched off for the delivery-server pilot (2026-10-18); TorSetupGuide and
     // TorExplanation stay in TorGuide.kt for when it returns.
 }

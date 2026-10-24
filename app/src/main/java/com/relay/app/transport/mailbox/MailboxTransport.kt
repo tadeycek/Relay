@@ -212,6 +212,35 @@ class MailboxTransport(
         outcome
     }
 
+    /**
+     * Stores one delivery marked `urgent: true` — the call-invite wake path (`PROTOCOL.md`, "urgent on a
+     * delivery"). Best effort: the caller has already sent the live signal and does not wait for this.
+     * A refused send is dropped (the live invite and its resend still reach a connected callee).
+     */
+    suspend fun deliverUrgent(recipient: String, payload: RelayPayload): Boolean = withContext(Dispatchers.IO) {
+        if (!MailboxProtocol.isRecipient(recipient)) return@withContext false
+        if (!MailboxProtocol.isDeliveryId(payload.id)) return@withContext false
+        try {
+            val envelope = store.packet(payload.id, recipient) ?: store.savePacket(payload.id, recipient, wrap(recipient, payload))
+            val url = "$base/v1/send"
+            val body = MailboxUrgent.withUrgent(MailboxProtocol.sendBody(recipient, payload.id, envelope))
+                .toByteArray(Charsets.UTF_8)
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", MailboxAuth.header(AndroidNostrSigner { PhoneDeviceEnrollment.authKeys(appContext, identity) }, "POST", url, body))
+                .post(body.toRequestBody(JSON))
+                .build()
+            http.newCall(request).execute().use { response ->
+                val stored = response.isSuccessful
+                if (stored) runCatching { store.deletePacket(payload.id, recipient) }
+                stored
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "urgent call invite delivery failed: ${e.message}")
+            false
+        }
+    }
+
     private suspend fun wrap(recipient: String, payload: RelayPayload): String {
         val keys = identity()
         val receiver = PublicKey.parse(recipient)

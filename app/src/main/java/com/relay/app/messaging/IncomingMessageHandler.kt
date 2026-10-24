@@ -54,6 +54,11 @@ class IncomingMessageHandler(context: Context) {
     fun handleSignal(envelope: IncomingEnvelope) {
         if (com.relay.app.calculator.CalculatorOnly.enabled(appContext)) return
         val body = envelope.payload.body
+        // Call signalling is not a message: it goes to the call engine and never reaches the message path.
+        if (com.relay.app.calls.CallHostCore.isCallBody(body)) {
+            com.relay.app.calls.CallController.onLiveSignal(appContext, envelope.senderPubkeyHex, body)
+            return
+        }
         if (!body.startsWith(TypingBody.PREFIX)) return
         val contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)
         TypingSignals.handle(appContext, envelope.senderPubkeyHex, contact, body)
@@ -67,6 +72,13 @@ class IncomingMessageHandler(context: Context) {
         if (com.relay.app.calculator.CalculatorOnly.enabled(appContext)) return false
         val now = System.currentTimeMillis()
         val payload = envelope.payload
+
+        // A stored call invite is opened exactly like a live one; the engine drops it with EXPIRED once
+        // past its own expiry, so a late delivery never rings (CALL_ENGINE.md MUST 5).
+        if (com.relay.app.calls.CallHostCore.isCallBody(payload.body)) {
+            com.relay.app.calls.CallController.onStoredDelivery(appContext, envelope.senderPubkeyHex, payload.body)
+            return true
+        }
 
         if (RetiredActivity.isControl(payload.body)) return true
         val contact = contactRepo.findByNostrPubkeySync(envelope.senderPubkeyHex)

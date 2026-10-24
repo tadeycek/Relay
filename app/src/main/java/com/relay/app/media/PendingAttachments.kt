@@ -64,6 +64,9 @@ object PendingAttachments {
     /** One worker only. Uploads run separately from text outbox dispatch. */
     suspend fun drain(context: Context) {
         val db = MessagingDb.get(context)
+        // A linked origin's own confirmation is deferred until every SENT part has published grants.
+        // Without a linked device there is no SENT publication to wait for.
+        runCatching { confirmSentMedia(context, db) }
         val jobs = db.readableDatabase.rawQuery("SELECT id,target,is_group,row_id,path,mime,caption,created_at,attempts FROM pending_attachments WHERE next_at<=? ORDER BY created_at LIMIT 8",
             arrayOf(System.currentTimeMillis().toString())).use { c -> buildList {
                 while (c.moveToNext()) add(Job(c.getString(0),c.getLong(1),c.getInt(2)!=0,c.getLong(3),c.getString(4),c.getString(5),c.getString(6),c.getLong(7),c.getInt(8)))
@@ -90,6 +93,8 @@ object PendingAttachments {
                     try {
                         check(!com.relay.app.calculator.CalculatorOnly.enabled(context))
                         if (exists(context, job)) {
+                            if (com.relay.app.transport.mailbox.MailboxConfig.available)
+                                AndroidPhoneFileStore.persistRefs(db, job.id, listOf(ref.sha256Hex))
                             if (job.group) SharedGroups.send(context, job.target, MediaBody.format(ref), job.path, job.id)
                             else {
                                 val contact = ContactRepository(db).getByIdSync(job.target) ?: error("Contact no longer exists")
@@ -114,6 +119,28 @@ object PendingAttachments {
                     arrayOf(System.currentTimeMillis() + com.relay.app.transport.outbox.OutboxPolicy.nextDelayMs(job.attempts + 1), job.id))
             }
             changed(context, job.target, job.group)
+        }
+    }
+
+    private fun confirmSentMedia(context: Context, db: com.relay.app.data.db.RelayDbHelper) {
+        if (!com.relay.app.transport.mailbox.MailboxConfig.available) return
+        val linked = com.relay.app.sync.SentSync.hint(context).get()
+        val sent = com.relay.app.transport.outbox.OutboxState.SENT.dbValue
+        val rows = db.readableDatabase.rawQuery("""SELECT f.payload_id,f.digests,f.sync_granted FROM file_media_refs f
+            WHERE EXISTS(SELECT 1 FROM outbox o WHERE o.payload_id=f.payload_id AND o.state=?)
+            AND NOT EXISTS(SELECT 1 FROM phone_files p WHERE p.payload_id=f.payload_id)
+            LIMIT 8""", arrayOf(sent.toString())).use { c -> buildList {
+            while (c.moveToNext()) add(Triple(c.getString(0), c.getString(1), c.getInt(2) != 0))
+        } }
+        for ((id, digests, published) in rows) {
+            if (!mediaOriginMayConfirm(true, linked, published)) continue
+            // A pending copy must never be mistaken for an unlinked sender after the hint changes.
+            if (db.readableDatabase.rawQuery("SELECT 1 FROM sent_sync_outbox WHERE payload_id=?", arrayOf(id)).use { it.moveToFirst() }) continue
+            val refs = digests.split('\n').filter(String::isNotBlank)
+            if (refs.size != 1 || !Regex("[0-9a-f]{64}").matches(refs.single())) continue
+            val result = runCatching { phoneMedia(context).confirm(com.relay.app.transport.mailbox.MailboxMedia.urlFor(refs.single())) }.getOrNull()
+            if (result is com.relay.app.transport.mailbox.MailboxMedia.Confirmation.Confirmed)
+                db.writableDatabase.delete("file_media_refs", "payload_id=? AND digests=?", arrayOf(id, digests))
         }
     }
 }

@@ -153,6 +153,26 @@ class ChatTimelineTest {
     }
 
     @Test
+    fun aCallLogRowIsACentredNoteAndNeverABubble() {
+        val call = com.relay.app.calls.CallRecord.encode(
+            "0123456789abcdef0123456789abcdef", incoming = true,
+            outcome = com.relay.app.call.CallOutcome.MISSED, reason = "busy", durationMs = 0, atMs = at(21, 9, 0),
+        )
+        val list = listOf(
+            msg(at(21, 9, 0), false),
+            // Only a locally written row (DB-only origin marker + derived id) is a trusted note.
+            Message(id = 500, contactId = 1, body = call, isSent = false, timestamp = at(21, 9, 5),
+                msgId = com.relay.app.calls.CallRecord.messageId("0123456789abcdef0123456789abcdef"),
+                deliveryState = com.relay.app.calls.CallRecord.LOCAL_DELIVERY_STATE),
+            msg(at(21, 9, 6), false),
+        )
+        val items = build(list)
+        val note = items.filterIsInstance<ChatItem.Note>().single()
+        assertEquals(500L, note.message.id)
+        assertEquals(2, bubbles(items).size)
+    }
+
+    @Test
     fun rowKeysAreUniqueSoTheListDoesNotReuseTheWrongRow() {
         val list = List(20) { msg(at(21, 9, it), it % 3 == 0, id = 100L + it) }
         val keys = build(list, firstUnread = 105).map { it.key }

@@ -12,8 +12,9 @@ import com.relay.app.data.repository.MessageRepository
 import com.relay.app.messaging.MessageDeletion
 import com.relay.app.messaging.MessageNotifier
 import com.relay.app.messaging.MessagingDb
+
 import com.relay.app.messaging.Outgoing
-import com.relay.app.transport.mailbox.AndroidNostrSigner
+
 import com.relay.app.transport.mailbox.MailboxConfig
 import com.relay.app.transport.mailbox.MailboxMedia
 import com.relay.app.transport.nostr.NostrIdentity
@@ -33,7 +34,12 @@ object MediaSender {
 
     fun send(context: Context, contact: Contact, file: File, mime: String, caption: String): Result {
         val ref = try { upload(context, file, mime, caption, listOfNotNull(contact.nostrPubkey)) } catch (e: Exception) { return Result.Failed(e.message ?: "Upload failed") }
-        val msgId = Outgoing.enqueue(context, contact, MediaBody.format(ref))
+        // Refs must exist before the outbox row is visible: the POST /v1/send media list and the SENT
+        // sync parts both read them, and the outbox worker is kicked inside enqueue.
+        val id = com.relay.app.transport.PayloadCodec.newId()
+        if (MailboxConfig.available) try { AndroidPhoneFileStore.persistRefs(MessagingDb.get(context), id, listOf(ref.sha256Hex)) }
+            catch (e: Exception) { return Result.Failed("Couldn't record the attachment") }
+        val msgId = Outgoing.enqueue(context, contact, MediaBody.format(ref), payloadId = id)
             ?: return Result.Failed("Couldn't queue the message")
         return Result.Sent(msgId)
     }
@@ -54,14 +60,18 @@ object MediaSender {
      */
     fun uploadBytes(context: Context, plain: ByteArray, mime: String, caption: String, recipients: List<String>): MediaRef {
         if (plain.isEmpty() || plain.size > MediaBody.MAX_MEDIA_BYTES) error("File is too large")
+        if (MailboxConfig.available) legacyStoredBytes(plain.size.toLong(), false)
 
         val encrypted = MediaCrypto.encrypt(plain)
         val blobSha256 = MediaCrypto.sha256Hex(encrypted.blob)
         val url = if (MailboxConfig.available) {
             try {
-                MailboxMedia.upload(AndroidNostrSigner { NostrIdentity.keys(context) }, encrypted.blob, blobSha256, recipients)
+                val allowed = mediaRecipients(recipients, NostrIdentity.publicKeyHex(context))
+                phoneMedia(context).upload(MailboxMedia.RawSource(encrypted.blob.size.toLong()) {
+                    encrypted.blob.inputStream()
+                }, blobSha256, allowed)
             } catch (e: Exception) {
-                Log.w(TAG, "upload to the delivery server failed: ${e.message}")
+                Log.w(TAG, "upload to the delivery server failed: ${e.javaClass.simpleName}")
                 error("Upload failed - check your connection and try again")
             }
         } else {
@@ -145,9 +155,9 @@ object MediaReceiver {
                     MessageNotifier.notifyIncoming(context, contact, type, ref.caption, alertToken)
             }
             // Stored on this phone, so the server may forget it.
-            MailboxMedia.confirm(AndroidNostrSigner { NostrIdentity.keys(context) }, ref.url)
+            if (MailboxConfig.available) phoneMedia(context).confirm(ref.url)
         } catch (e: Exception) {
-            Log.w(TAG, "media receive failed: ${e.message}")
+            Log.w(TAG, "media receive failed: ${e.javaClass.simpleName}")
             store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media couldn't be downloaded or verified]", null)
         } finally {
             slots.release()

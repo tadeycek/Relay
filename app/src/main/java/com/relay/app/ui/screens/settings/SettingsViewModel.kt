@@ -42,6 +42,14 @@ class SettingsViewModel(app: Application) : AndroidViewModel(app) {
         typingIndicators = value
     }
 
+    /** "Always relay calls": take effect on the next call host initialisation (process start). */
+    var callsRelayOnly by mutableStateOf(prefs.callsRelayOnly)
+        private set
+    fun updateCallsRelayOnly(value: Boolean) {
+        prefs.callsRelayOnly = value
+        callsRelayOnly = value
+    }
+
     var appLock by mutableStateOf(prefs.appLock)
         private set
 

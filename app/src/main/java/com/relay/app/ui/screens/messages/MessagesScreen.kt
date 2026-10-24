@@ -146,7 +146,7 @@ private fun ConversationRow(c: ConversationSummary, onClick: () -> Unit) {
                 }
                 Text(
                     // A sent message shows a delivery tick instead of the "You: " prefix.
-                    text = ConversationFormat.preview(c.lastType, c.lastBody, c.lastIsSent).removePrefix("You: "),
+                    text = ConversationFormat.preview(c.lastType, c.lastBody, c.lastIsSent, c.lastDeliveryState).removePrefix("You: "),
                     style = MaterialTheme.typography.bodyMedium,
                     color = if (unread) TextPrimary else TextSecondary,
                     maxLines = 1,
