@@ -29,6 +29,11 @@ interface SyncOutbox {
     fun discard(payloadId: String)
     /** Confirmed items due at [now], oldest first. */
     fun due(now: Long, limit: Int): List<SyncOutboxItem>
+    /**
+     * True if a confirmed row created before [createdAt] is backing off at [now]. Roster items use it so a later
+     * roster never overtakes an earlier one (or an earlier KEYS event) that is waiting for its retry.
+     */
+    fun backedOffBefore(createdAt: Long, now: Long): Boolean = false
     fun recordAttempt(payloadId: String, attempts: Int, nextAttemptAt: Long)
     fun remove(payloadId: String)
     /** Called only after all SENT parts have been accepted, never on expiry/permanent failure. */

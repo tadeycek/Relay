@@ -49,7 +49,7 @@ class DesktopGroups(
     /** Posts to every other member directly, and stores the post under the same event id the wire uses. */
     suspend fun send(conversationId: String, text: String): SendReport {
         val group = requireGroup(conversationId)
-        require(group.members.any { it.key == ownPubkey }) { "You are no longer a member of this group" }
+        require(!group.hidden && group.members.any { it.key == ownPubkey }) { "You are no longer a member of this group" }
         require(text.isNotBlank()) { "Write a message first" }
         val state = group.toState()
         val eventId = newId()
@@ -149,7 +149,7 @@ class DesktopGroups(
                 store.contacts().none { it.nostrPubkey == senderKey && it.eligibleForGroups() })) return
         if (current != null && current.owner != incoming.owner) return
         if (!GroupProtocol.acceptSync(senderKey, current?.toState(), incoming)) return
-        store.saveGroupState(incoming, now = clock())
+        store.saveGroupState(incoming, now = clock(), visible = incoming.members.any { it.key == ownPubkey })
         replayPending(store.storedGroup(incoming.owner, incoming.id)?.toState() ?: return)
     }
 

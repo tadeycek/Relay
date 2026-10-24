@@ -3,6 +3,7 @@ package com.relay.app.sync
 import com.relay.app.linking.SyncBody
 import com.relay.app.linking.SyncCodec
 import com.relay.app.linking.SyncFormatException
+import com.relay.app.linking.SyncResult
 import com.relay.app.transport.PayloadCodec
 import com.relay.app.transport.outbox.OutboxPolicy
 import java.util.Base64
@@ -57,7 +58,9 @@ class SentSyncPublisher(
     suspend fun flush(): FlushReport {
         val now = clock()
         outbox.purgeStale(now - OutboxPolicy.GIVE_UP_AFTER_MS)
-        val due = outbox.due(now, batch).filter { hint.get() || it.mediaDigests.isNotEmpty() }
+        val due = outbox.due(now, batch)
+            .filter { hint.get() || it.mediaDigests.isNotEmpty() }
+            .filterNot { GroupRosterStager.isRosterItem(it.payloadId) && outbox.backedOffBefore(it.createdAt, now) }
         if (due.isEmpty()) return FlushReport()
 
         if (due.none { it.mediaDigests.isNotEmpty() }) when (val linked = linkedDevices(now)) {
@@ -78,16 +81,16 @@ class SentSyncPublisher(
             if (OutboxPolicy.isExpired(item.createdAt, now)) {
                 outbox.remove(item.payloadId); dropped++; continue
             }
-            val wires = try {
+            val planned = try {
                 wiresFor(item)
             } catch (e: SyncFormatException) {
                 null
             }
-            if (wires == null) {
+            if (planned == null) {
                 // Not a payload the codec accepts (or over its bounds): it can never be published.
                 outbox.remove(item.payloadId); dropped++; continue
             }
-            val syncId = SentSyncWire.syncIdFor(item.payloadId)
+            val (syncId, wires) = planned
             var failed = false
             for ((index, wire) in wires.withIndex()) {
                 val body = SentSyncWire.envelope(wire, SentSyncWire.eventId(syncId, index, wires.size), REVISION, now, item.mediaDigests)
@@ -108,11 +111,16 @@ class SentSyncPublisher(
         return FlushReport(posted, done, dropped = dropped)
     }
 
-    private fun wiresFor(item: SyncOutboxItem): List<String>? {
+    /** The sync id and wire bodies of one queued item. A group-roster item carries its prebuilt sealed GROUP body. */
+    private fun wiresFor(item: SyncOutboxItem): Pair<String, List<String>>? {
+        if (GroupRosterStager.isRosterItem(item.payloadId)) {
+            val body = (SyncCodec.decode(item.payloadJson) as? SyncResult.Ok)?.body as? SyncBody.Group ?: return null
+            return body.syncId to SyncCodec.chunk(body)
+        }
         val payload = PayloadCodec.decode(item.payloadJson) ?: return null
         val b64 = Base64.getEncoder().encodeToString(item.payloadJson.toByteArray(Charsets.UTF_8))
         val body = SyncBody.Sent(origin, SentSyncWire.syncIdFor(payload.id), REVISION, item.target, b64)
-        return SyncCodec.chunk(body)
+        return body.syncId to SyncCodec.chunk(body)
     }
 
     private suspend fun linkedDevices(now: Long): DevicesResult {

@@ -1,6 +1,7 @@
 package com.relay.app.desktop
 
 import com.relay.app.groups.GroupProtocol
+import com.relay.app.linking.GroupRosterSync
 import com.relay.app.transport.mailbox.MailboxMessage
 import org.json.JSONArray
 import org.json.JSONObject
@@ -67,6 +68,7 @@ class DesktopMessageStore(
         }
         connection = DriverManager.getConnection("jdbc:sqlite:${databaseFile.toAbsolutePath()}", config.toProperties())
         migrate()
+        ensureGroupHiddenColumn()
         createSyncTables()
         connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS file_transfers(id TEXT PRIMARY KEY, record TEXT NOT NULL)") }
         connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS file_sync_refs(wire TEXT PRIMARY KEY, file_id TEXT NOT NULL, media TEXT NOT NULL)") }
@@ -106,7 +108,8 @@ class DesktopMessageStore(
 
     fun conversations(): List<DesktopConversation> = synchronized(lock) {
         connection.createStatement().use { st ->
-            st.executeQuery("SELECT id, peer, title, updated_at FROM conversations ORDER BY updated_at DESC, id ASC").use { rs ->
+            st.executeQuery("SELECT id, peer, title, updated_at FROM conversations WHERE NOT EXISTS " +
+                    "(SELECT 1 FROM group_rosters g WHERE g.conversation_id = conversations.id AND g.hidden = 1) ORDER BY updated_at DESC, id ASC").use { rs ->
                 buildList {
                     while (rs.next()) add(DesktopConversation(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4)))
                 }
@@ -346,6 +349,79 @@ class DesktopMessageStore(
             connection.commit()
             secureFiles()
             result
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    /** Test seam: runs inside [commitGroupSync] after the roster write and before the cursor write. */
+    @Volatile internal var afterRosterWriteHook: (() -> Unit)? = null
+
+    override fun commitGroupSync(roster: GroupRosterSync.Roster, cursor: Long, now: Long): GroupCommit = synchronized(lock) {
+        val st = roster.state
+        val conv = groupConversationId(st.owner, st.id)
+        connection.autoCommit = false
+        try {
+            val conflict = connection.prepareStatement("SELECT 1 FROM group_rosters WHERE shared_id = ? AND owner <> ?").use { ps ->
+                ps.setString(1, st.id); ps.setString(2, st.owner); ps.executeQuery().use { it.next() }
+            }
+            var changed = false
+            if (!conflict) {
+                var storedRevision = -1L; var storedAvatarRevision = -1L; var storedHidden = false; var exists = false
+                connection.prepareStatement("SELECT revision, avatar_revision, hidden FROM group_rosters WHERE conversation_id = ?").use { ps ->
+                    ps.setString(1, conv)
+                    ps.executeQuery().use { rs ->
+                        if (rs.next()) { exists = true; storedRevision = rs.getLong(1); storedAvatarRevision = rs.getLong(2); storedHidden = rs.getInt(3) != 0 }
+                    }
+                }
+                val members = JSONArray().apply {
+                    for (m in st.members) put(JSONObject().put("key", m.key).put("name", m.name).put("inner", m.inner).put("relays", JSONArray(m.relays)))
+                }
+                var retitle = false
+                if (!exists) {
+                    connection.prepareStatement(
+                        "INSERT INTO group_rosters(conversation_id, owner, shared_id, name, revision, members, avatar_revision, updated_at, hidden) VALUES(?, ?, ?, ?, ?, ?, -1, ?, ?)",
+                    ).use { ps ->
+                        ps.setString(1, conv); ps.setString(2, st.owner); ps.setString(3, st.id); ps.setString(4, st.name)
+                        ps.setLong(5, st.revision); ps.setString(6, members.toString()); ps.setLong(7, now); ps.setInt(8, if (roster.tombstone) 1 else 0)
+                        ps.executeUpdate()
+                    }
+                    changed = true; retitle = true
+                } else if (st.revision > storedRevision) {
+                    connection.prepareStatement(
+                        "UPDATE group_rosters SET name = ?, revision = ?, members = ?, updated_at = ?, hidden = ? WHERE conversation_id = ? AND revision < ?",
+                    ).use { ps ->
+                        ps.setString(1, st.name); ps.setLong(2, st.revision); ps.setString(3, members.toString()); ps.setLong(4, now)
+                        ps.setInt(5, if (roster.tombstone) 1 else 0); ps.setString(6, conv); ps.setLong(7, st.revision)
+                        changed = ps.executeUpdate() == 1
+                    }
+                    retitle = changed
+                } else if (roster.tombstone && st.revision == storedRevision && !storedHidden) {
+                    // Same revision, but we left or were removed: hide only (a tombstone never un-hides).
+                    connection.prepareStatement("UPDATE group_rosters SET hidden = 1 WHERE conversation_id = ?").use { ps ->
+                        ps.setString(1, conv); changed = ps.executeUpdate() == 1
+                    }
+                }
+                if (retitle) {
+                    connection.prepareStatement(
+                        "INSERT INTO conversations(id, peer, title, updated_at) VALUES(?, '', ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title",
+                    ).use { ps -> ps.setString(1, conv); ps.setString(2, st.name); ps.setLong(3, now); ps.executeUpdate() }
+                }
+                if (roster.avatarRevision > storedAvatarRevision && validDesktopAvatar(roster.avatar)) {
+                    connection.prepareStatement("UPDATE group_rosters SET avatar = ?, avatar_revision = ? WHERE conversation_id = ? AND avatar_revision < ?").use { ps ->
+                        ps.setBytes(1, roster.avatar); ps.setLong(2, roster.avatarRevision); ps.setString(3, conv); ps.setLong(4, roster.avatarRevision)
+                        if (ps.executeUpdate() == 1) changed = true
+                    }
+                }
+            }
+            afterRosterWriteHook?.invoke()
+            if (cursor > syncCursor()) setMeta(SYNC_CURSOR, cursor.toString())
+            connection.commit()
+            secureFiles()
+            if (conflict) GroupCommit.CONFLICT else if (changed) GroupCommit.APPLIED else GroupCommit.STALE
         } catch (e: Exception) {
             runCatching { connection.rollback() }
             throw e
@@ -651,7 +727,7 @@ class DesktopMessageStore(
      * later replay can be compared. The conversation row is created or retitled here, so a group
      * appears in the rail even before its first message.
      */
-    fun saveGroupState(state: GroupProtocol.State, now: Long = System.currentTimeMillis()) {
+    fun saveGroupState(state: GroupProtocol.State, now: Long = System.currentTimeMillis(), visible: Boolean = false) {
         val conv = groupConversationId(state.owner, state.id)
         val members = JSONArray().apply {
             for (m in state.members) put(JSONObject().put("key", m.key).put("name", m.name).put("inner", m.inner).put("relays", JSONArray(m.relays)))
@@ -662,7 +738,8 @@ class DesktopMessageStore(
                 connection.prepareStatement(
                     "INSERT INTO group_rosters(conversation_id, owner, shared_id, name, revision, members, avatar_revision, updated_at) " +
                         "VALUES(?, ?, ?, ?, ?, ?, -1, ?) ON CONFLICT(conversation_id) DO UPDATE SET " +
-                        "name = excluded.name, revision = excluded.revision, members = excluded.members, updated_at = excluded.updated_at " +
+                        "name = excluded.name, revision = excluded.revision, members = excluded.members, updated_at = excluded.updated_at" +
+                        (if (visible) ", hidden = 0 " else " ") +
                         "WHERE group_rosters.revision < excluded.revision",
                 ).use { ps ->
                     ps.setString(1, conv); ps.setString(2, state.owner); ps.setString(3, state.id)
@@ -691,7 +768,7 @@ class DesktopMessageStore(
 
     fun storedGroup(conversationId: String): StoredGroup? = synchronized(lock) {
         connection.prepareStatement(
-            "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at " +
+            "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at, hidden " +
                 "FROM group_rosters WHERE conversation_id = ?",
         ).use { ps ->
             ps.setString(1, conversationId)
@@ -701,7 +778,7 @@ class DesktopMessageStore(
 
     fun storedGroup(owner: String, sharedId: String): StoredGroup? = synchronized(lock) {
         connection.prepareStatement(
-            "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at " +
+            "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at, hidden " +
                 "FROM group_rosters WHERE owner = ? AND shared_id = ?",
         ).use { ps ->
             ps.setString(1, owner); ps.setString(2, sharedId)
@@ -712,7 +789,7 @@ class DesktopMessageStore(
     fun storedGroups(): List<StoredGroup> = synchronized(lock) {
         connection.createStatement().use { st ->
             st.executeQuery(
-                "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at " +
+                "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at, hidden " +
                     "FROM group_rosters ORDER BY updated_at DESC",
             ).use { rs -> buildList { while (rs.next()) add(readGroup(rs)) } }
         }
@@ -737,7 +814,7 @@ class DesktopMessageStore(
         return StoredGroup(
             conversationId = rs.getString(1), owner = rs.getString(2), sharedId = rs.getString(3),
             name = rs.getString(4), revision = rs.getLong(5), members = members,
-            avatar = rs.getBytes(7), avatarRevision = rs.getLong(8), updatedAt = rs.getLong(9),
+            avatar = rs.getBytes(7), avatarRevision = rs.getLong(8), updatedAt = rs.getLong(9), hidden = rs.getInt(10) != 0,
         )
     }
 
@@ -969,6 +1046,20 @@ class DesktopMessageStore(
         synchronized(lock) { runCatching { connection.close() } }
     }
 
+    /** Additive and idempotent (no `user_version` bump): the tombstone flag of a synced group roster. */
+    private fun ensureGroupHiddenColumn() {
+        synchronized(lock) {
+            val has = connection.createStatement().use { st ->
+                st.executeQuery("PRAGMA table_info(group_rosters)").use { rs ->
+                    var found = false
+                    while (rs.next()) if (rs.getString("name") == "hidden") found = true
+                    found
+                }
+            }
+            if (!has) connection.createStatement().use { it.execute("ALTER TABLE group_rosters ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0") }
+        }
+    }
+
     private fun migrate() {
         synchronized(lock) {
             val version = schemaVersion()
@@ -1195,8 +1286,10 @@ data class StoredGroup(
     val avatar: ByteArray?,
     val avatarRevision: Long,
     val updatedAt: Long,
+    /** Tombstoned by sync (deleted, removed or left on the phone): kept for history, hidden from the rail. */
+    val hidden: Boolean = false,
 ) {
-    override fun equals(other: Any?): Boolean = this === other || (other is StoredGroup &&
+    override fun equals(other: Any?): Boolean = this === other || (other is StoredGroup && hidden == other.hidden &&
         conversationId == other.conversationId && owner == other.owner && sharedId == other.sharedId &&
         name == other.name && revision == other.revision && members == other.members &&
         avatarRevision == other.avatarRevision && updatedAt == other.updatedAt &&

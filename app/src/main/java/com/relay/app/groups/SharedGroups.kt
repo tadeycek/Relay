@@ -117,7 +117,8 @@ object SharedGroups {
         GroupProtocol.format(GroupProtocol.Sync(state)) // validate before writing
         val id = transaction(context) { db ->
             val id = save(db, state, null)
-            friends.forEach { queue(context, db, friend(it), id, GroupProtocol.Sync(state)) }; id
+            friends.forEach { queue(context, db, friend(it), id, GroupProtocol.Sync(state)) }
+            com.relay.app.sync.SentSync.stageGroupRoster(context, id); id
         }
         com.relay.app.messaging.MessagingRuntime.launchIo { GroupProfiles.syncPending(context) }
         notify(context, id); return id
@@ -138,6 +139,7 @@ object SharedGroups {
         GroupProtocol.format(GroupProtocol.Sync(next))
         transaction(context) {
             save(db, next, group)
+            com.relay.app.sync.SentSync.stageGroupRoster(context, id)
             // Notify removed members too; blocked/deleted contacts are not contacted.
             rosterRecipients(db, (old.members + next.members).distinctBy { it.key }, old.owner).forEach { queue(context, db, it, id, GroupProtocol.Sync(next)) }
         }
@@ -156,6 +158,7 @@ object SharedGroups {
             if (next.members == old.members) continue
             transaction(context) {
                 save(db, next, stored)
+                com.relay.app.sync.SentSync.stageGroupRoster(context, stored.localId)
                 rosterRecipients(db, next.members, own).forEach { queue(context, db, it, stored.localId, GroupProtocol.Sync(next)) }
             }
             notify(context, stored.localId)
@@ -171,6 +174,7 @@ object SharedGroups {
                 save(db, closed, stored)
             }
             db.writableDatabase.execSQL("UPDATE shared_groups SET hidden=1 WHERE group_id=?", arrayOf(id))
+            com.relay.app.sync.SentSync.stageGroupRoster(context, id)
             db.writableDatabase.delete("group_messages", "group_id=?", arrayOf(id.toString()))
         }
         com.relay.app.messaging.GroupMessageNotifier.cancel(context, id)
@@ -268,7 +272,7 @@ object SharedGroups {
         if (existing?.hidden == true || !GroupProtocol.acceptSync(sender, existing?.state, incoming)) return
         // An invitation that doesn't list us is someone else's group.
         if (existing == null && incoming.members.none { it.key == own }) return
-        val id = transaction(context) { save(db, incoming, existing) }
+        val id = transaction(context) { save(db, incoming, existing).also { com.relay.app.sync.SentSync.stageGroupRoster(context, it) } }
         if (incoming.members.any { it.key == own }) GroupAvatars.request(context, id, incoming)
         notify(context, id)
         replayPending(context, db, incoming)

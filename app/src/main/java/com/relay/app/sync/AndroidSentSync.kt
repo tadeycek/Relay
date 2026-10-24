@@ -73,6 +73,32 @@ object SentSync {
         stage(context, "group:${state.owner}:${state.id}", packet.event, packet.time, GroupProtocol.format(packet))
     }
 
+    /**
+     * A group roster or its picture changed (create, rename, add, remove, avatar, delete, or a roster received as a
+     * member): queue a sealed GROUP event for the linked computers. Call it in the same transaction as the change.
+     * No-op (no read, no row, no request) unless this install linked a computer; best effort like every mirror.
+     */
+    fun stageGroupRoster(context: Context, localGroupId: Long) {
+        if (!hint(context).get()) return
+        try {
+            val db = MessagingDb.get(context)
+            val stored = SharedGroups.get(db, localGroupId) ?: return
+            val own = NostrIdentity.publicKeyHex(context)
+            val (avatarRevision, jpeg) = com.relay.app.groups.GroupAvatars.snapshot(context, localGroupId)
+            val roster = com.relay.app.linking.GroupRosterSync.Roster(
+                state = stored.state,
+                avatarRevision = avatarRevision,
+                avatar = jpeg?.takeIf { avatarRevision >= 0 && com.relay.app.linking.GroupRosterSync.isValidAvatar(it) },
+                tombstone = stored.hidden || stored.state.members.none { it.key == own },
+            )
+            val seal: (String) -> String? = { body -> RelayCrypto.myPublicKeyBase64(context)?.let { AndroidInnerEnvelope.seal(it, body) } }
+            GroupRosterStager(AndroidSyncOutbox(db), hint(context), seal).stage(roster)
+        } catch (e: Exception) {
+            // Mirroring is best effort: it must never fail or delay the group edit.
+            Log.w(TAG, "couldn't stage a group roster: ${e.javaClass.simpleName}")
+        }
+    }
+
     private fun stage(context: Context, target: String, payloadId: String, ts: Long, plain: String) {
         try {
             val json = SentSyncWire.selfSealedPayload(payloadId, ts, plain) { body ->
@@ -172,6 +198,11 @@ class AndroidSyncOutbox(private val db: RelayDbHelper) : SyncOutbox {
                 while (c.moveToNext()) add(SyncOutboxItem(c.getString(0), c.getString(1), c.getString(2), c.getLong(3), true, c.getInt(4), c.getLong(5), com.relay.app.media.AndroidPhoneFileStore.refs(db,c.getString(0))))
             }
         }
+
+    override fun backedOffBefore(createdAt: Long, now: Long): Boolean = db.readableDatabase.rawQuery(
+        "SELECT 1 FROM $TABLE WHERE confirmed=1 AND created_at<? AND next_attempt_at>? LIMIT 1",
+        arrayOf(createdAt.toString(), now.toString()),
+    ).use { it.moveToFirst() }
 
     override fun recordAttempt(payloadId: String, attempts: Int, nextAttemptAt: Long) {
         db.writableDatabase.execSQL("UPDATE $TABLE SET attempts=?, next_attempt_at=? WHERE payload_id=?", arrayOf(attempts, nextAttemptAt, payloadId))

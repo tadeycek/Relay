@@ -1,5 +1,6 @@
 package com.relay.app.desktop
 
+import com.relay.app.linking.GroupRosterSync
 import com.relay.app.linking.ReassemblyResult
 import com.relay.app.linking.SyncBody
 import com.relay.app.linking.SyncCodec
@@ -72,6 +73,18 @@ data class OutboxEntry(val id: Long, val wire: String, val createdAt: Long, val 
 
 enum class SyncCommit { INSERTED, MERGED, NONE }
 
+/** What [SyncStore.commitGroupSync] did with a roster snapshot. The cursor moved in every case. */
+enum class GroupCommit {
+    /** The roster, its picture or its hidden flag changed. */
+    APPLIED,
+
+    /** Nothing newer than what is stored (duplicate, replay or out-of-order older revision). */
+    STALE,
+
+    /** The group id is already stored under a different owner: refused. */
+    CONFLICT,
+}
+
 /** The slice of the encrypted store the sync needs. [DesktopMessageStore] implements it. */
 interface SyncStore {
     /** Inserts [message] and queues [wires] in one transaction. False = the id already existed (nothing queued). */
@@ -83,6 +96,14 @@ interface SyncStore {
 
     /** Inserts [message] (nullable) and moves the cursor to [cursor], atomically. Never moves the cursor back. */
     fun commitSync(message: DesktopMessage?, cursor: Long): SyncCommit
+
+    /**
+     * Applies a validated GROUP roster snapshot (WP05-AC4) and moves the cursor to [cursor], in ONE transaction:
+     * either both are durable or neither. Only a strictly newer revision replaces the roster (the
+     * [DesktopMessageStore.saveGroupState] compare-and-set); a tombstone hides the group; a newer picture
+     * revision replaces the picture. The cursor never moves back.
+     */
+    fun commitGroupSync(roster: GroupRosterSync.Roster, cursor: Long, now: Long): GroupCommit
 }
 
 // ---- server envelope ------------------------------------------------------------------------------
@@ -257,6 +278,10 @@ data class ApplyReport(
     val unreadable: Int = 0,
     val pendingParts: Int = 0,
     val unknownContact: Int = 0,
+    /** GROUP rosters that changed local state / were duplicates or older / were refused (bad origin, key, schema, bounds). */
+    val groupApplied: Int = 0,
+    val groupStale: Int = 0,
+    val groupRejected: Int = 0,
     val cursor: Long = 0,
     val acked: Boolean = false,
     /** Transient failure that stopped the run (cursor stays where the last commit left it). */
@@ -285,6 +310,8 @@ class SentSyncApplier(
         data object OtherKind : Outcome
         data class Malformed(val syncId: String? = null) : Outcome
         data object Unreadable : Outcome
+        data class Roster(val roster: GroupRosterSync.Roster, val syncId: String?) : Outcome
+        data class RosterRejected(val syncId: String?) : Outcome
         data class Pending(val syncId: String) : Outcome
     }
 
@@ -302,6 +329,7 @@ class SentSyncApplier(
         var after = committed
         var fetched = 0; var inserted = 0; var merged = 0; var own = 0; var other = 0
         var malformed = 0; var unreadable = 0; var unknown = 0
+        var groupApplied = 0; var groupStale = 0; var groupRejected = 0
         var error: String? = null
         val reassembler = SyncReassembler()
         val pendingFirst = LinkedHashMap<String, Long>() // sync id -> cursor of its first part
@@ -339,6 +367,22 @@ class SentSyncApplier(
                             break@pages
                         }
                     }
+                    is Outcome.Roster -> {
+                        outcome.syncId?.let { pendingFirst.remove(it) }
+                        try {
+                            val target = maxOf(committed, safe(event.cursor))
+                            when (store.commitGroupSync(outcome.roster, target, clock())) {
+                                GroupCommit.APPLIED -> groupApplied++
+                                GroupCommit.STALE -> groupStale++
+                                GroupCommit.CONFLICT -> groupRejected++
+                            }
+                            committed = target
+                        } catch (e: Exception) {
+                            error = "commit failed"
+                            break@pages
+                        }
+                    }
+                    is Outcome.RosterRejected -> { groupRejected++; outcome.syncId?.let { pendingFirst.remove(it) } }
                     is Outcome.Pending -> pendingFirst.putIfAbsent(outcome.syncId, event.cursor)
                     Outcome.OwnOrigin -> own++
                     Outcome.OtherKind -> other++
@@ -369,10 +413,23 @@ class SentSyncApplier(
                 else -> Unit // the local cursor is the truth; the next cycle acks again
             }
         }
-        ApplyReport(fetched, inserted, merged, own, other, malformed, unreadable, pendingFirst.size, unknown, committed, acked, error)
+        ApplyReport(fetched, inserted, merged, own, other, malformed, unreadable, pendingFirst.size, unknown, groupApplied, groupStale, groupRejected, committed, acked, error)
     }
 
     @Volatile private var lastAcked = 0L
+
+    /**
+     * GROUP (LP-D03: rosters are authored on the phone). The event must come from the phone (`origin = primary`;
+     * a computer never authors a roster), arrive on this account's own authenticated sync channel, and open with
+     * our own key; the plaintext must pass the [GroupRosterSync] schema and bounds. A live roster that no longer
+     * lists us is a tombstone (removal of self). Anything else is refused and counted, never applied.
+     */
+    private fun judgeGroup(body: SyncBody.Group, syncId: String?): Outcome {
+        if (body.origin != GroupRosterSync.ORIGIN_PRIMARY) return Outcome.RosterRejected(syncId)
+        val roster = (GroupRosterSync.open(body, openBody) as? GroupRosterSync.Result.Ok)?.roster ?: return Outcome.RosterRejected(syncId)
+        val gone = roster.tombstone || roster.state.members.none { it.key == ownPubkeyHex }
+        return Outcome.Roster(roster.copy(tombstone = gone), syncId)
+    }
 
     /** Returns the verdict and, for a part-based event, its sync id. */
     private fun process(event: SyncEventDto, reassembler: SyncReassembler): Pair<Outcome, String?> {
@@ -404,6 +461,7 @@ class SentSyncApplier(
             }
         }
         if (body.origin == ownDeviceId) return Outcome.OwnOrigin
+        if (body is SyncBody.Group) return judgeGroup(body, partSyncId)
         val sent = body as? SyncBody.Sent ?: return Outcome.OtherKind
 
         val payload = runCatching {

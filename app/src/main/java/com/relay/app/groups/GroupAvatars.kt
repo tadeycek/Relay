@@ -25,6 +25,8 @@ object GroupAvatars {
         "SELECT jpeg FROM group_avatars WHERE group_id=?", arrayOf(id.toString())).use { if (it.moveToFirst() && !it.isNull(0)) it.getBlob(0) else null }
     private fun revision(context: Context, id: Long) = MessagingDb.get(context).readableDatabase.rawQuery(
         "SELECT revision FROM group_avatars WHERE group_id=?", arrayOf(id.toString())).use { if (it.moveToFirst()) it.getLong(0) else -1L }
+    /** Revision (-1 = never set) and bytes (null = none or removed) for the roster sync. */
+    internal fun snapshot(context: Context, id: Long): Pair<Long, ByteArray?> = revision(context, id) to load(context, id)
     private fun valid(jpeg: ByteArray?): Boolean {
         if (jpeg == null) return true
         if (jpeg.size > com.relay.app.media.ProfilePhotoBody.MAX_BYTES) return false
@@ -46,6 +48,7 @@ object GroupAvatars {
         try {
             save(context, id, update)
             sync(context, id, group.state, force = true)
+            com.relay.app.sync.SentSync.stageGroupRoster(context, id)
             sql.setTransactionSuccessful()
         } finally { sql.endTransaction() }
         changes.value += 1; SharedGroups.notify(context, id)
@@ -95,6 +98,7 @@ object GroupAvatars {
             if (stored.state.members.none { it.key == com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }) return true
             if (update.revision <= revision(context, id)) return true
             save(context, id, update)
+            com.relay.app.sync.SentSync.stageGroupRoster(context, id)
             changes.value += 1; SharedGroups.notify(context, id)
         }
         return true
