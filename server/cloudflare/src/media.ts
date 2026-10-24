@@ -59,7 +59,7 @@ export class MediaBlob extends DurableObject<Env> {
     let response: Response;
     try {
       switch (request.method) {
-        case "PUT": response = await this.put(request, hash); break;
+        case "PUT": response = await this.put(request, hash, device); break;
         case "GET": response = await this.get(request, hash, device); break;
         case "DELETE": response = await this.confirm(request, hash, device); break;
         default: response = errorResponse(405, "method_not_allowed");
@@ -104,19 +104,24 @@ export class MediaBlob extends DurableObject<Env> {
     this.migrate();
   }
 
-  private async put(request: Request, hash: string): Promise<Response> {
+  private async put(request: Request, hash: string, device: string): Promise<Response> {
     const body = await request.arrayBuffer();
     if (body.byteLength === 0) return errorResponse(400, "bad_request");
     if (body.byteLength > this.limits.maxMediaBytes) return errorResponse(413, "request_too_large");
     const auth = await verifyRequestAuth(request, body, nowS(), null);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const who = await this.mailbox().resolveSigner(auth.pubkey, device);
+    if (!who) return errorResponse(401, "auth_invalid");
+    if (who.revoked) return errorResponse(401, "auth_revoked");
+    if (who.device !== device) return errorResponse(403, device === PRIMARY_DEVICE ? "not_primary" : "unknown_device");
+    const identity = who.identity;
     // The address is the content: it can't be stored under someone else's hash.
     if ((await sha256Hex(body)) !== hash) return errorResponse(400, "bad_request");
     const recipients = [...new Set((request.headers.get("x-relay-recipients") ?? "").split(",").map((r) => r.trim().toLowerCase()).filter(Boolean))];
     if (recipients.length === 0 || recipients.length > this.limits.maxMediaRecipients) return errorResponse(400, "bad_request");
     if (!recipients.every((r) => PUBKEY.test(r))) return errorResponse(400, "bad_request");
     // One call to the Mailbox object answers both questions: who is a member, and which devices are active.
-    const { members, devices } = await this.mailbox().mediaRecipients([auth.pubkey, ...recipients]);
+    const { members, devices } = await this.mailbox().mediaRecipients([identity, ...recipients]);
     const [uploaderIsMember, ...recipientsAreMembers] = members;
     if (!uploaderIsMember) return errorResponse(403, "not_allowed");
     if (!recipientsAreMembers.every(Boolean)) return errorResponse(400, "unknown_recipient");
@@ -134,7 +139,7 @@ export class MediaBlob extends DurableObject<Env> {
         for (let i = 0, chunk = 0; i < body.byteLength; i += this.limits.mediaChunkBytes, chunk++) {
           this.run("INSERT INTO chunks (n, data) VALUES (?, ?)", chunk, body.slice(i, i + this.limits.mediaChunkBytes));
         }
-        this.run("INSERT INTO info (id, size, uploader, stored_at) VALUES (1, ?, ?, ?)", body.byteLength, auth.pubkey, now);
+        this.run("INSERT INTO info (id, size, uploader, stored_at) VALUES (1, ?, ?, ?)", body.byteLength, identity, now);
       }
       // Sending the same file again (a retry, or to more people) only adds recipients.
       for (const [pubkey, device] of pairs) {
@@ -150,10 +155,14 @@ export class MediaBlob extends DurableObject<Env> {
   private async get(request: Request, hash: string, device: string): Promise<Response> {
     const auth = await verifyRequestAuth(request, null, nowS(), null);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const who = await this.mailbox().resolveSigner(auth.pubkey, device);
+    if (!who) return errorResponse(401, "auth_invalid");
+    if (who.revoked) return errorResponse(401, "auth_revoked");
+    if (who.device !== device) return errorResponse(403, device === PRIMARY_DEVICE ? "not_primary" : "unknown_device");
     if (!this.recordAuth(auth.eventId, auth.createdAt)) return errorResponse(401, "auth_replayed");
-    const refused = await this.refuseUnknownDevice(auth.pubkey, device);
+    const refused = await this.refuseUnknownDevice(who.identity, device);
     if (refused) return refused;
-    if (!this.isRecipient(auth.pubkey, device)) return this.missingOrForbidden();
+    if (!this.isRecipient(who.identity, device)) return this.missingOrForbidden();
     const chunks = this.run<{ data: ArrayBuffer }>("SELECT data FROM chunks ORDER BY n");
     const size = chunks.reduce((sum, c) => sum + c.data.byteLength, 0);
     const out = new Uint8Array(size);
@@ -168,11 +177,15 @@ export class MediaBlob extends DurableObject<Env> {
   private async confirm(request: Request, hash: string, device: string): Promise<Response> {
     const auth = await verifyRequestAuth(request, null, nowS(), null);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const who = await this.mailbox().resolveSigner(auth.pubkey, device);
+    if (!who) return errorResponse(401, "auth_invalid");
+    if (who.revoked) return errorResponse(401, "auth_revoked");
+    if (who.device !== device) return errorResponse(403, device === PRIMARY_DEVICE ? "not_primary" : "unknown_device");
     if (!this.recordAuth(auth.eventId, auth.createdAt)) return errorResponse(401, "auth_replayed");
-    const refused = await this.refuseUnknownDevice(auth.pubkey, device);
+    const refused = await this.refuseUnknownDevice(who.identity, device);
     if (refused) return refused;
-    if (!this.isRecipient(auth.pubkey, device)) return this.missingOrForbidden();
-    this.run("UPDATE recipients SET confirmed = 1 WHERE pubkey = ? AND device = ?", auth.pubkey, device);
+    if (!this.isRecipient(who.identity, device)) return this.missingOrForbidden();
+    this.run("UPDATE recipients SET confirmed = 1 WHERE pubkey = ? AND device = ?", who.identity, device);
     return json({ v: PROTOCOL_VERSION, remaining: await this.settle(), hash });
   }
 

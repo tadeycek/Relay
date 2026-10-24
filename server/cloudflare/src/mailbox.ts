@@ -5,6 +5,7 @@ import {
   DELIVERY_ID,
   DEVICE_SEEN_REFRESH_MS,
   LINKED_DEVICE_ID,
+  MAX_ADMIN_OPS_PER_MINUTE,
   MAX_DEVICE_LABEL_CHARS,
   PRIMARY_DEVICE,
   PROTOCOL_VERSION,
@@ -40,6 +41,13 @@ const PRUNE_INTERVAL_MS = 60_000;
 interface Session {
   v: 1;
   pubkey: string;
+  /**
+   * The key that signed this upgrade. Authorization is re-checked against live state on every frame and
+   * push: a shared identity key stops working the moment the identity migrates, and a device key stops
+   * working when its device is revoked or rotated, even if a close sweep never reached this socket.
+   * Absent only on attachments written before this field existed (treated as the identity key).
+   */
+  signer?: string;
   connectedAt: number;
   expiresAt: number;
   /** A linked device's id. Absent for the primary and for every legacy client, so their attachment is unchanged. */
@@ -59,6 +67,22 @@ interface DeviceRow extends Record<string, SqlStorageValue> {
   added_at: number;
   gap_through: number;
   gap_shown: number;
+  /** Empty for WP04 rows that predate G1; the device key's public key otherwise. */
+  auth_pubkey: string;
+  protocol_version: number;
+  /** 0 while active; ms timestamp once revoked. Revoked rows keep the cursor for audit and are ignored by the queue. */
+  revoked_at: number;
+}
+
+/** A request that passed device authorization: the shared identity, the device acting, and whether it is the admin key. */
+interface Authorized {
+  auth: AuthOk;
+  identity: string;
+  device: string;
+  admin: boolean;
+  legacy: boolean;
+  /** The public key that signed the request. Used to re-check the binding inside write transactions. */
+  signer: string;
 }
 
 /** Outcome of identifying the calling device: legacy identities cost no extra row reads. */
@@ -122,6 +146,12 @@ export class Mailbox extends DurableObject<Env> {
    * with no extra reads or writes.
    */
   private readonly linked = new Set<string>();
+  /** Admin key -> shared identity. Only the phone holds the admin key (G1). */
+  private readonly adminByKey = new Map<string, string>();
+  /** Identities that have migrated to per-device keys. Their shared identity key is disabled for device operations. */
+  private readonly migrated = new Set<string>();
+  /** Best-effort admin-operation rate limiter: identity -> timestamps within the last minute. */
+  private readonly adminOps = new Map<string, number[]>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -135,6 +165,10 @@ export class Mailbox extends DurableObject<Env> {
     this.migrate();
     for (const row of this.q<{ pubkey: string }>("SELECT pubkey FROM members")) this.members.add(row.pubkey);
     for (const row of this.q<{ pubkey: string }>("SELECT DISTINCT pubkey FROM devices")) this.linked.add(row.pubkey);
+    for (const row of this.q<{ pubkey: string; admin_pubkey: string }>("SELECT pubkey, admin_pubkey FROM identity_admin")) {
+      this.migrated.add(row.pubkey);
+      this.adminByKey.set(row.admin_pubkey, row.pubkey);
+    }
     // Keepalives are answered by the runtime without waking a hibernated object.
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
@@ -171,62 +205,77 @@ export class Mailbox extends DurableObject<Env> {
   private async handleSend(request: Request): Promise<Response> {
     const body = await request.arrayBuffer();
     if (body.byteLength > this.limits.maxRequestBytes) return errorResponse(413, "request_too_large");
-    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
-    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const authorized = await this.authorize(request, body, new URL(request.url));
+    if (authorized instanceof Response) return authorized;
     const parsed = parseSend(body, this.limits);
     if ("code" in parsed) return errorResponse(parsed.status, parsed.code);
     const hashes = await Promise.all(parsed.map((d) => sha256Hex(d.envelope)));
 
-    return this.metered(() => {
-      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
-      const now = Date.now();
-      const results = parsed.map((d, i) => this.store(auth.pubkey, d, hashes[i], now));
-      this.prune(now);
-      const woken = new Set<string>();
-      results.forEach((result, i) => {
-        if (result.status === "stored") {
-          const d = parsed[i];
-          if (!this.pushLive(d.to, { seq: result.seq, from: auth.pubkey, id: d.id, envelope: d.envelope, storedAt: now }) && !woken.has(d.to)) {
-            woken.add(d.to);
-            this.ctx.waitUntil(this.wake(d.to, now));
-          }
+    return this.metered(() => this.sendStored(authorized, parsed, hashes, Date.now()));
+  }
+
+  /**
+   * The write section of `POST /v1/send`. Authorization was checked before the (awaited) body hashing;
+   * a revocation or a migration can land in between, so the binding is re-read here, in the same
+   * synchronous section as the inserts. Without this a send authorized a moment before a DELETE would
+   * still be stored.
+   */
+  private sendStored(authorized: Authorized, parsed: SizedDelivery[], hashes: string[], now: number): Response {
+    if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+    if (!this.sendBindingActive(authorized)) return errorResponse(401, "auth_revoked");
+    const results = parsed.map((d, i) => this.store(authorized.identity, d, hashes[i], now));
+    this.prune(now);
+    const woken = new Set<string>();
+    results.forEach((result, i) => {
+      if (result.status === "stored") {
+        const d = parsed[i];
+        if (!this.pushLive(d.to, { seq: result.seq, from: authorized.identity, id: d.id, envelope: d.envelope, storedAt: now }) && !woken.has(d.to)) {
+          woken.add(d.to);
+          this.ctx.waitUntil(this.wake(d.to, now));
         }
-      });
-      return json({ v: PROTOCOL_VERSION, results });
+      }
     });
+    return json({ v: PROTOCOL_VERSION, results });
+  }
+
+  /** Whether the caller's key may still act at this instant: not migrated away, not revoked. */
+  private sendBindingActive(authorized: Authorized): boolean {
+    if (authorized.legacy && this.migrated.has(authorized.identity)) return false;
+    if (!this.linked.has(authorized.identity)) return true;
+    const row = this.q<DeviceRow>("SELECT revoked_at FROM devices WHERE pubkey = ? AND device = ?", authorized.identity, authorized.device)[0];
+    return !!row && row.revoked_at === 0;
   }
 
   private async handleInbox(request: Request, url: URL): Promise<Response> {
-    const auth = await verifyRequestAuth(request, null, nowS(), this.membership);
-    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const authorized = await this.authorize(request, null, url);
+    if (authorized instanceof Response) return authorized;
     // The mailbox is always the caller's own: there is deliberately no way to name another recipient.
     const query = parseInboxQuery(url, this.limits);
     if (!query) return errorResponse(400, "bad_request");
 
     return this.metered(() => {
-      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
-      const access = this.enter(auth.pubkey, query.device, Date.now());
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+      const access = this.enter(authorized.identity, authorized.device, Date.now());
       if (!access.ok) return access.response;
-      const page = this.page(auth.pubkey, query.after, query.limit, this.limits.maxPageBytes);
-      return json({ v: PROTOCOL_VERSION, ...page, ...this.gapFields(auth.pubkey, access) });
+      const page = this.page(authorized.identity, query.after, query.limit, this.limits.maxPageBytes);
+      return json({ v: PROTOCOL_VERSION, ...page, ...this.gapFields(authorized.identity, access) });
     });
   }
 
   private async handleAck(request: Request, url: URL): Promise<Response> {
     const body = await request.arrayBuffer();
     if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
-    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
-    if (!auth.ok) return errorResponse(auth.status, auth.code);
-    const device = deviceParam(url);
+    const authorized = await this.authorize(request, body, url);
+    if (authorized instanceof Response) return authorized;
     const through = parseAck(body);
-    if (through === null || device === null) return errorResponse(400, "bad_request");
+    if (through === null) return errorResponse(400, "bad_request");
 
     return this.metered(() => {
-      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
       const now = Date.now();
-      const access = this.enter(auth.pubkey, device, now);
+      const access = this.enter(authorized.identity, authorized.device, now);
       if (!access.ok) return access.response;
-      const acked = access.linked ? this.ackDevice(access.row, through, now) : this.ack(auth.pubkey, through);
+      const acked = access.linked ? this.ackDevice(access.row, through, now) : this.ack(authorized.identity, through);
       this.prune(now);
       return json({ v: PROTOCOL_VERSION, acked, through, ...this.ackGap(access) });
     });
@@ -234,20 +283,18 @@ export class Mailbox extends DurableObject<Env> {
 
   private async handleUpgrade(request: Request, url: URL): Promise<Response> {
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return errorResponse(426, "upgrade_required");
-    const device = deviceParam(url);
-    if (device === null) return errorResponse(400, "bad_request");
-    const auth = await verifyRequestAuth(request, null, nowS(), this.membership);
-    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const authorized = await this.authorize(request, null, url);
+    if (authorized instanceof Response) return authorized;
     const now = Date.now();
     let access: DeviceAccess = { ok: true, linked: false };
     const recorded = this.metered(() => {
-      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
-      access = this.enter(auth.pubkey, device, now);
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+      access = this.enter(authorized.identity, authorized.device, now);
       return access.ok ? json(null) : access.response;
     });
     if (!recorded.ok) return recorded;
 
-    const open = this.ctx.getWebSockets(auth.pubkey)
+    const open = this.ctx.getWebSockets(authorized.identity)
       .map((ws) => ({ ws, connectedAt: (ws.deserializeAttachment() as Session | null)?.connectedAt ?? 0 }))
       .sort((a, b) => a.connectedAt - b.connectedAt);
     while (open.length >= this.limits.maxSocketsPerIdentity) safeClose(open.shift()!.ws, 4008, "replaced");
@@ -255,11 +302,11 @@ export class Mailbox extends DurableObject<Env> {
     const { 0: client, 1: server } = new WebSocketPair();
     // The pubkey tag is how pushes find a recipient's sockets, including after hibernation.
     // A linked device's sockets also carry a device tag, so removing the device can find and close them.
-    this.ctx.acceptWebSocket(server, device === PRIMARY_DEVICE ? [auth.pubkey] : [auth.pubkey, deviceTag(auth.pubkey, device)]);
-    const session: Session = { v: 1, pubkey: auth.pubkey, connectedAt: now, expiresAt: now + this.limits.sessionTtlMs };
-    if (device !== PRIMARY_DEVICE) session.device = device;
+    this.ctx.acceptWebSocket(server, authorized.device === PRIMARY_DEVICE ? [authorized.identity] : [authorized.identity, deviceTag(authorized.identity, authorized.device)]);
+    const session: Session = { v: 1, pubkey: authorized.identity, signer: authorized.signer, connectedAt: now, expiresAt: now + this.limits.sessionTtlMs };
+    if (authorized.device !== PRIMARY_DEVICE) session.device = authorized.device;
     server.serializeAttachment(session);
-    safeSend(server, { type: "ready", v: PROTOCOL_VERSION, instance: this.instance, expiresAt: session.expiresAt, ...this.gapFields(auth.pubkey, access) });
+    safeSend(server, { type: "ready", v: PROTOCOL_VERSION, instance: this.instance, expiresAt: session.expiresAt, ...this.gapFields(authorized.identity, access) });
     return new Response(null, { status: 101, webSocket: client });
   }
 
@@ -282,7 +329,7 @@ export class Mailbox extends DurableObject<Env> {
     }
     return this.ctx.storage.transactionSync((): DeviceAccess => {
       const row = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND device = ?", pubkey, device)[0];
-      if (!row) return { ok: false, response: errorResponse(403, "unknown_device") };
+      if (!row || row.revoked_at > 0) return { ok: false, response: errorResponse(403, "unknown_device") };
       const dormant = device !== PRIMARY_DEVICE && now - row.last_seen > this.limits.dormantAfterMs;
       if (dormant) {
         // Raise (never lower) the cursor to the deletion floor, so the min() below can't be dragged under it.
@@ -301,6 +348,191 @@ export class Mailbox extends DurableObject<Env> {
       }
       return { ok: true, linked: true, row };
     });
+  }
+
+  /**
+   * Resolves a NIP-98 signer to the shared identity and the acting device without enforcing membership.
+   * This is the single place the G1 binding is interpreted; `authorize` adds membership and endpoint rules.
+   * Returns null for a signer that must not act at all (the shared key of a migrated identity).
+   */
+  resolveSigner(signer: string, device: string): { identity: string; device: string; admin: boolean; legacy: boolean; revoked: boolean } | null {
+    if (this.migrated.has(signer)) return null;
+    const adminIdentity = this.adminByKey.get(signer);
+    if (adminIdentity !== undefined) {
+      // The phone-only admin key acts as the primary device and never as a linked device.
+      return { identity: adminIdentity, device: PRIMARY_DEVICE, admin: true, legacy: false, revoked: false };
+    }
+    // Deterministic even before the UNIQUE index backfill finishes: a key resolves to one row.
+    const row = this.q<DeviceRow>("SELECT * FROM devices WHERE auth_pubkey = ? AND auth_pubkey <> '' ORDER BY pubkey, device", signer)[0];
+    if (row) {
+      return { identity: row.pubkey, device: row.device, admin: false, legacy: false, revoked: row.revoked_at > 0 };
+    }
+    // An unmigrated identity: the WP04 behaviour. Membership is checked by the caller.
+    return { identity: signer, device, admin: false, legacy: true, revoked: false };
+  }
+
+  /**
+   * Authorizes one HTTP request against the G1 contract. The NIP-98 event signature is verified first by the
+   * existing path; this method then resolves the signer to an identity/device and enforces the binding:
+   *  - before migration, the shared identity key works exactly as in WP04;
+   *  - after migration, the shared identity key is refused, the admin key may act only as primary, and each
+   *    device key may act only as the device it was enrolled for;
+   *  - revoked devices are refused with 401 auth_revoked on every surface.
+   * The caller still records the event id for replay protection.
+   */
+  private async authorize(
+    request: Request,
+    body: ArrayBuffer | null,
+    url: URL,
+    opts: { allowIdentityMigration?: boolean } = {},
+  ): Promise<Authorized | Response> {
+    const auth = await verifyRequestAuth(request, body, nowS(), null);
+    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const device = deviceParam(url);
+    if (device === null) return errorResponse(400, "bad_request");
+    const signer = auth.pubkey;
+
+    if (opts.allowIdentityMigration) {
+      if (this.migrated.has(signer)) return errorResponse(401, "auth_invalid");
+      if (this.adminByKey.has(signer)) return errorResponse(401, "auth_invalid");
+      if (this.q("SELECT 1 FROM devices WHERE auth_pubkey = ? AND auth_pubkey <> ''", signer).length > 0) return errorResponse(401, "auth_invalid");
+      if (!this.isMember(signer)) return errorResponse(403, "not_allowed");
+      return { auth, identity: signer, device: PRIMARY_DEVICE, admin: false, legacy: true, signer };
+    }
+
+    const who = this.resolveSigner(signer, device);
+    if (!who) return errorResponse(401, "auth_invalid");
+    if (who.revoked) return errorResponse(401, "auth_revoked");
+    if (who.device !== device) {
+      return errorResponse(403, device === PRIMARY_DEVICE ? "not_primary" : "unknown_device");
+    }
+    if (!this.isMember(who.identity)) return errorResponse(403, "not_allowed");
+    return { auth, identity: who.identity, device: who.device, admin: who.admin, legacy: who.legacy, signer };
+  }
+
+  /** Best-effort per-identity admin rate limit. In memory, so a restart resets it; replay is separately persisted. */
+  private checkAdminRate(identity: string): boolean {
+    const now = Date.now();
+    const windowStart = now - 60_000;
+    const recent = (this.adminOps.get(identity) ?? []).filter((t) => t >= windowStart);
+    if (recent.length >= MAX_ADMIN_OPS_PER_MINUTE) {
+      this.adminOps.set(identity, recent);
+      return false;
+    }
+    recent.push(now);
+    this.adminOps.set(identity, recent);
+    return true;
+  }
+
+  /** `POST /v1/devices/admin`: the shared identity key installs the phone-only admin key and migrates. */
+  private async handleAdminMigration(request: Request, url: URL): Promise<Response> {
+    if (request.method !== "POST") return errorResponse(405, "method_not_allowed");
+    const body = await request.arrayBuffer();
+    if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
+    const auth = await verifyRequestAuth(request, body, nowS(), null);
+    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const device = deviceParam(url);
+    if (device === null) return errorResponse(400, "bad_request");
+    if (device !== PRIMARY_DEVICE) return errorResponse(403, "not_primary");
+    const signer = auth.pubkey;
+    if (this.adminByKey.has(signer) || this.q("SELECT 1 FROM devices WHERE auth_pubkey = ? AND auth_pubkey <> ''", signer).length > 0) {
+      return errorResponse(401, "auth_invalid");
+    }
+    if (!this.isMember(signer)) return errorResponse(403, "not_allowed");
+    const value = parseJson(body);
+    const adminPubkey = value?.admin_pubkey;
+    if (value?.v !== PROTOCOL_VERSION || typeof adminPubkey !== "string" || !PUBKEY.test(adminPubkey)) return errorResponse(400, "bad_request");
+    const identity = signer;
+    if (adminPubkey === identity || this.isMember(adminPubkey)) return errorResponse(400, "bad_request");
+    if (!this.checkAdminRate(identity)) return errorResponse(429, "rate_limited");
+
+    let head = 0;
+    const response = this.metered(() => {
+      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      // Keys are one-purpose: an admin key must not already be a device key (any identity) or another
+      // identity's admin key, or attribution would depend on which table is consulted first.
+      if (this.adminByKey.has(adminPubkey) || this.q("SELECT 1 FROM devices WHERE auth_pubkey = ? AND auth_pubkey <> ''", adminPubkey).length > 0) {
+        return errorResponse(409, "admin_key_in_use");
+      }
+      if (this.migrated.has(identity)) return errorResponse(401, "auth_invalid");
+      const now = Date.now();
+      const outcome = this.ctx.storage.transactionSync((): Response | number => {
+        if (this.q("SELECT 1 FROM identity_admin WHERE pubkey = ?", identity).length > 0) return errorResponse(409, "already_migrated");
+        // Re-checked in the same synchronous section as the writes. Claiming the admin key first turns a
+        // UNIQUE violation into a clean 409 instead of a 503, and happens before any cursor is moved.
+        if (this.q("SELECT 1 FROM devices WHERE auth_pubkey = ? AND auth_pubkey <> ''", adminPubkey).length > 0) {
+          return errorResponse(409, "admin_key_in_use");
+        }
+        const claimed = this.q<{ pubkey: string }>(
+          "INSERT INTO identity_admin (pubkey, admin_pubkey, migrated_at) VALUES (?, ?, ?) ON CONFLICT(admin_pubkey) DO NOTHING RETURNING pubkey",
+          identity, adminPubkey, now,
+        );
+        if (claimed.length === 0) return errorResponse(409, "admin_key_in_use");
+        const nextHead = this.seqHead();
+        const primary = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND device = 'primary'", identity)[0];
+        if (primary) {
+          this.q("UPDATE devices SET auth_pubkey = ?, protocol_version = ? WHERE pubkey = ? AND device = 'primary'", adminPubkey, PROTOCOL_VERSION, identity);
+        } else {
+          const oldest = this.q<{ seq: number | null }>("SELECT MIN(seq) AS seq FROM deliveries WHERE recipient = ?", identity)[0]?.seq;
+          const position = oldest === null || oldest === undefined ? nextHead : oldest - 1;
+          this.q("INSERT INTO devices (pubkey, device, label, acked, last_seen, added_at, auth_pubkey, protocol_version, revoked_at) VALUES (?, 'primary', '', ?, ?, ?, ?, ?, 0)", identity, position, now, now, adminPubkey, PROTOCOL_VERSION);
+          this.q("INSERT INTO cursor_state (pubkey, floor, high) VALUES (?, ?, ?) ON CONFLICT(pubkey) DO NOTHING", identity, position, nextHead);
+        }
+        return nextHead;
+      });
+      if (outcome instanceof Response) return outcome;
+      head = outcome;
+      return json({ v: PROTOCOL_VERSION, migrated: true, head });
+    });
+    if (response.status === 200) {
+      this.migrated.add(identity);
+      this.adminByKey.set(adminPubkey, identity);
+      // Every socket for this identity was authenticated by the shared identity key (device keys can
+      // only exist after migration). Close them all: the phone reconnects with the admin key. The frame
+      // gate re-checks the signer too, so a socket this sweep misses is still refused.
+      for (const ws of this.ctx.getWebSockets(identity)) safeClose(ws, 4001, "auth_invalid");
+    }
+    return response;
+  }
+
+  /** `POST /v1/devices` after migration: the admin key enrolls a linked device's own authentication key. */
+  private enrollDevice(pubkey: string, device: string, label: string, authPubkey: string, now: number): Response {
+    // A key is bound to exactly one (identity, device) pair, and admin keys and device keys are disjoint,
+    // so resolving a key never has to choose between two meanings.
+    if (this.adminByKey.has(authPubkey)) return errorResponse(409, "admin_key_in_use");
+    const result = this.ctx.storage.transactionSync((): Response | { head: number; existing: boolean; rotated: boolean } => {
+      const head = this.seqHead();
+      const owner = this.q<DeviceRow>("SELECT * FROM devices WHERE auth_pubkey = ? AND auth_pubkey <> ''", authPubkey)[0];
+      if (owner && !(owner.pubkey === pubkey && owner.device === device)) return errorResponse(409, "auth_key_in_use");
+      const existing = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND device = ?", pubkey, device)[0];
+      if (existing && existing.revoked_at === 0) {
+        // Idempotent: a retry or rename never moves the cursor. Rotating the key is allowed, but the old
+        // socket is closed below: the key it authenticated with is gone. Rotation is not revocation;
+        // DELETE is.
+        const rotated = existing.auth_pubkey !== "" && existing.auth_pubkey !== authPubkey;
+        if (existing.label !== label || existing.auth_pubkey !== authPubkey) {
+          this.q("UPDATE devices SET label = ?, auth_pubkey = ?, protocol_version = ? WHERE pubkey = ? AND device = ?", label, authPubkey, PROTOCOL_VERSION, pubkey, device);
+        }
+        return { head: existing.acked, existing: true, rotated };
+      }
+      const count = this.q<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE pubkey = ? AND device <> 'primary' AND revoked_at = 0", pubkey)[0].n;
+      if (count >= this.limits.maxLinkedDevices) return errorResponse(409, "device_limit");
+      if (existing) {
+        // Re-enrolling a revoked id revives it at the head: it missed everything while revoked.
+        this.q("UPDATE devices SET label = ?, auth_pubkey = ?, protocol_version = ?, acked = ?, last_seen = ?, added_at = ?, revoked_at = 0, gap_through = 0, gap_shown = 0 WHERE pubkey = ? AND device = ?", label, authPubkey, PROTOCOL_VERSION, head, now, now, pubkey, device);
+        return { head, existing: false, rotated: false };
+      }
+      this.q("INSERT INTO devices (pubkey, device, label, acked, last_seen, added_at, auth_pubkey, protocol_version, revoked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)", pubkey, device, label, head, now, now, authPubkey, PROTOCOL_VERSION);
+      return { head, existing: false, rotated: false };
+    });
+    if (result instanceof Response) return result;
+    this.linked.add(pubkey);
+    if (result.rotated) {
+      // The old key stops resolving immediately. Closing the socket makes the change visible to a client
+      // that would otherwise keep its authenticated session until the TTL.
+      for (const ws of this.ctx.getWebSockets(deviceTag(pubkey, device))) safeClose(ws, 4001, "auth_invalid");
+    }
+    return json({ v: PROTOCOL_VERSION, head: result.head, ...(result.existing ? { existing: true } : {}) });
   }
 
   /** `gap`/`oldest` for ready, inbox and batch frames. Marks the gap as shown, which lets a later ack clear it. */
@@ -356,7 +588,7 @@ export class Mailbox extends DurableObject<Env> {
    */
   private deleteBelowMin(pubkey: string, now: number, head: number): number {
     const min = this.q<{ m: number | null }>(
-      "SELECT MIN(acked) AS m FROM devices WHERE pubkey = ? AND (device = 'primary' OR last_seen >= ?)",
+      "SELECT MIN(acked) AS m FROM devices WHERE pubkey = ? AND revoked_at = 0 AND (device = 'primary' OR last_seen >= ?)",
       pubkey, now - this.limits.dormantAfterMs,
     )[0]?.m;
     if (min === null || min === undefined) return 0;
@@ -373,8 +605,9 @@ export class Mailbox extends DurableObject<Env> {
     safeClose(ws, 4009, "unlinked");
   }
 
-  /** `POST/GET /v1/devices`, `DELETE /v1/devices/<id>`: primary only. */
+  /** `POST/GET /v1/devices`, `DELETE /v1/devices/<id>`: primary or admin key only. */
   private async handleDevices(request: Request, url: URL): Promise<Response> {
+    if (url.pathname === "/v1/devices/admin") return this.handleAdminMigration(request, url);
     const target = url.pathname === "/v1/devices" ? null : url.pathname.slice("/v1/devices/".length);
     const allowed = target === null
       ? request.method === "POST" || request.method === "GET"
@@ -384,40 +617,49 @@ export class Mailbox extends DurableObject<Env> {
     if (device === null) return errorResponse(400, "bad_request");
     const body = await request.arrayBuffer();
     if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
-    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
-    if (!auth.ok) return errorResponse(auth.status, auth.code);
-    let registration: { device: string; label: string } | null = null;
+    const authorized = await this.authorize(request, body, url);
+    if (authorized instanceof Response) return authorized;
+    if (authorized.device !== PRIMARY_DEVICE) {
+      const known = this.linked.has(authorized.identity) &&
+        this.q("SELECT 1 FROM devices WHERE pubkey = ? AND device = ?", authorized.identity, authorized.device).length > 0;
+      return errorResponse(403, known ? "not_primary" : "unknown_device");
+    }
+    if (authorized.admin && !this.checkAdminRate(authorized.identity)) return errorResponse(429, "rate_limited");
+    if (!authorized.admin && !authorized.legacy) return errorResponse(403, "not_primary");
+
+    let registration: { device: string; label: string; auth_pubkey: string } | null = null;
     if (request.method === "POST") {
       const value = parseJson(body);
       const id = value?.device;
       const label = value?.label ?? "";
+      const authPubkey = typeof value?.auth_pubkey === "string" ? value.auth_pubkey : "";
+      const needsKey = this.migrated.has(authorized.identity);
       if (value?.v !== PROTOCOL_VERSION || typeof id !== "string" || !LINKED_DEVICE_ID.test(id) ||
-          typeof label !== "string" || [...label].length > MAX_DEVICE_LABEL_CHARS) {
+          typeof label !== "string" || [...label].length > MAX_DEVICE_LABEL_CHARS ||
+          (needsKey && !PUBKEY.test(authPubkey))) {
         return errorResponse(400, "bad_request");
       }
-      registration = { device: id, label };
+      if (needsKey && (authPubkey === authorized.identity || this.isMember(authPubkey))) return errorResponse(400, "bad_request");
+      registration = { device: id, label, auth_pubkey: needsKey ? authPubkey : "" };
     }
     if (target !== null && target !== PRIMARY_DEVICE && !LINKED_DEVICE_ID.test(target)) return errorResponse(400, "bad_request");
 
     let unlinked = null as string | null;
     const response = this.metered(() => {
-      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
       const now = Date.now();
-      // The caller must be the primary. A known non-primary device is told so; a stranger is "unknown".
-      if (device !== PRIMARY_DEVICE) {
-        const known = this.linked.has(auth.pubkey) &&
-          this.q("SELECT 1 FROM devices WHERE pubkey = ? AND device = ?", auth.pubkey, device).length > 0;
-        return errorResponse(403, known ? "not_primary" : "unknown_device");
+      if (registration) {
+        if (authorized.admin) return this.enrollDevice(authorized.identity, registration.device, registration.label, registration.auth_pubkey, now);
+        return this.registerDevice(authorized.identity, registration.device, registration.label, now);
       }
-      if (registration) return this.registerDevice(auth.pubkey, registration.device, registration.label, now);
-      if (target === null) return this.listDevices(auth.pubkey, now);
+      if (target === null) return this.listDevices(authorized.identity, now);
       if (target === PRIMARY_DEVICE) return errorResponse(400, "bad_request");
-      const removed = this.removeDevice(auth.pubkey, target, now);
+      const removed = this.removeDevice(authorized.identity, target, now);
       if (removed) unlinked = target;
       return removed ? json({ v: PROTOCOL_VERSION, removed: true }) : errorResponse(404, "unknown_device");
     });
     if (unlinked !== null) {
-      for (const ws of this.ctx.getWebSockets(deviceTag(auth.pubkey, unlinked))) safeClose(ws, 4009, "unlinked");
+      for (const ws of this.ctx.getWebSockets(deviceTag(authorized.identity, unlinked))) safeClose(ws, 4009, "unlinked");
     }
     return response;
   }
@@ -434,13 +676,18 @@ export class Mailbox extends DurableObject<Env> {
         this.q("INSERT INTO cursor_state (pubkey, floor, high) VALUES (?, ?, ?) ON CONFLICT(pubkey) DO NOTHING", pubkey, position, head);
       }
       const existing = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND device = ?", pubkey, device)[0];
-      if (existing) {
+      if (existing && existing.revoked_at === 0) {
         // Idempotent: a retry or rename never moves the cursor (that would silently skip messages).
         if (existing.label !== label) this.q("UPDATE devices SET label = ? WHERE pubkey = ? AND device = ?", label, pubkey, device);
         return { head: existing.acked, existing: true };
       }
-      const count = this.q<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE pubkey = ? AND device <> 'primary'", pubkey)[0].n;
+      const count = this.q<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE pubkey = ? AND device <> 'primary' AND revoked_at = 0", pubkey)[0].n;
       if (count >= this.limits.maxLinkedDevices) return errorResponse(409, "device_limit");
+      if (existing) {
+        // Re-registering a revoked id revives it at the head: it missed everything while revoked.
+        this.q("UPDATE devices SET label = ?, acked = ?, last_seen = ?, added_at = ?, revoked_at = 0, gap_through = 0, gap_shown = 0 WHERE pubkey = ? AND device = ?", label, head, now, now, pubkey, device);
+        return { head, existing: false };
+      }
       // The new device starts at the head, in the same synchronous section as every store: no message can
       // slip between the snapshot and the row. It never receives history.
       this.q("INSERT INTO devices (pubkey, device, label, acked, last_seen, added_at) VALUES (?, ?, ?, ?, ?, ?)", pubkey, device, label, head, now, now);
@@ -452,7 +699,7 @@ export class Mailbox extends DurableObject<Env> {
   }
 
   private listDevices(pubkey: string, now: number): Response {
-    const rows = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? ORDER BY added_at, device", pubkey);
+    const rows = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND revoked_at = 0 ORDER BY added_at, device", pubkey);
     const devices = rows.map((r) => ({
       device: r.device,
       label: r.label,
@@ -467,7 +714,7 @@ export class Mailbox extends DurableObject<Env> {
   private removeDevice(pubkey: string, device: string, now: number): boolean {
     return this.ctx.storage.transactionSync(() => {
       if (!this.linked.has(pubkey)) return false;
-      const gone = this.q("DELETE FROM devices WHERE pubkey = ? AND device = ? RETURNING device", pubkey, device);
+      const gone = this.q("UPDATE devices SET revoked_at = ?, last_seen = ? WHERE pubkey = ? AND device = ? AND revoked_at = 0 RETURNING device", now, now, pubkey, device);
       if (gone.length === 0) return false;
       this.deleteBelowMin(pubkey, now, this.seqHead());
       return true;
@@ -486,7 +733,7 @@ export class Mailbox extends DurableObject<Env> {
     const devices = pubkeys.map((pubkey) => {
       if (!this.linked.has(pubkey)) return [];
       return this.q<{ device: string }>(
-        "SELECT device FROM devices WHERE pubkey = ? AND (device = 'primary' OR last_seen >= ?)",
+        "SELECT device FROM devices WHERE pubkey = ? AND revoked_at = 0 AND (device = 'primary' OR last_seen >= ?)",
         pubkey, now - this.limits.dormantAfterMs,
       ).map((r) => r.device);
     });
@@ -503,7 +750,7 @@ export class Mailbox extends DurableObject<Env> {
       if (device === PRIMARY_DEVICE) return { exists: true, active: true, dormantAt: 0 };
       if (!this.linked.has(pubkey)) return { exists: false, active: false, dormantAt: 0 };
       const row = this.q<DeviceRow>("SELECT * FROM devices WHERE pubkey = ? AND device = ?", pubkey, device)[0];
-      if (!row) return { exists: false, active: false, dormantAt: 0 };
+      if (!row || row.revoked_at > 0) return { exists: false, active: false, dormantAt: 0 };
       const dormantAt = row.last_seen + this.limits.dormantAfterMs;
       return { exists: true, active: now <= dormantAt, dormantAt };
     });
@@ -527,8 +774,8 @@ export class Mailbox extends DurableObject<Env> {
   private async handleInvite(request: Request): Promise<Response> {
     const body = await request.arrayBuffer();
     if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
-    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
-    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const authorized = await this.authorize(request, body, new URL(request.url));
+    if (authorized instanceof Response) return authorized;
     const value = parseJson(body);
     const code = value?.code;
     const expiresAt = value?.expiresAt;
@@ -538,12 +785,12 @@ export class Mailbox extends DurableObject<Env> {
     }
     const until = Math.min(expiresAt as number, now + this.limits.inviteMaxTtlMs);
     return this.metered(() => {
-      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
       this.q("DELETE FROM invites WHERE expires_at < ?", now);
-      this.q("INSERT INTO invites (code_hash, inviter, expires_at) VALUES (?, ?, ?) ON CONFLICT(code_hash) DO NOTHING", code, auth.pubkey, until);
+      this.q("INSERT INTO invites (code_hash, inviter, expires_at) VALUES (?, ?, ?) ON CONFLICT(code_hash) DO NOTHING", code, authorized.identity, until);
       this.q(
         "DELETE FROM invites WHERE inviter = ? AND code_hash NOT IN (SELECT code_hash FROM invites WHERE inviter = ? ORDER BY expires_at DESC LIMIT ?)",
-        auth.pubkey, auth.pubkey, this.limits.maxInvitesPerMember,
+        authorized.identity, authorized.identity, this.limits.maxInvitesPerMember,
       );
       return json({ v: PROTOCOL_VERSION, expiresAt: until });
     });
@@ -560,10 +807,15 @@ export class Mailbox extends DurableObject<Env> {
     // Anyone may ask: a newcomer isn't a member yet. What they get depends on what they can prove.
     const auth = await verifyRequestAuth(request, body, nowS(), null);
     if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const device = deviceParam(new URL(request.url));
+    if (device === null) return errorResponse(400, "bad_request");
+    const who = this.resolveSigner(auth.pubkey, device);
+    if (!who || who.revoked || who.device !== device) return errorResponse(401, "auth_invalid");
+    const requester = who.identity;
     const value = parseJson(body);
     const peer = value?.peer;
     const code = value?.code;
-    if (value?.v !== PROTOCOL_VERSION || typeof peer !== "string" || !PUBKEY.test(peer) || peer === auth.pubkey ||
+    if (value?.v !== PROTOCOL_VERSION || typeof peer !== "string" || !PUBKEY.test(peer) || peer === requester ||
         typeof code !== "string" || code.length === 0 || code.length > 128) {
       return errorResponse(400, "bad_request");
     }
@@ -571,16 +823,16 @@ export class Mailbox extends DurableObject<Env> {
     return this.metered(() => {
       if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
       const now = Date.now();
-      if (this.isMember(auth.pubkey)) {
-        if (!this.isMember(peer)) this.admit(peer, auth.pubkey, now);
+      if (this.isMember(requester)) {
+        if (!this.isMember(peer)) this.admit(peer, requester, now);
       } else {
         const invite = this.q<{ inviter: string }>(
           "DELETE FROM invites WHERE code_hash = ? AND inviter = ? AND expires_at >= ? RETURNING inviter",
           codeHash, peer, now,
         )[0];
-        if (invite && this.isMember(invite.inviter)) this.admit(auth.pubkey, invite.inviter, now);
+        if (invite && this.isMember(invite.inviter)) this.admit(requester, invite.inviter, now);
       }
-      return json({ v: PROTOCOL_VERSION, you: this.isMember(auth.pubkey), peer: this.isMember(peer) });
+      return json({ v: PROTOCOL_VERSION, you: this.isMember(requester), peer: this.isMember(peer) });
     });
   }
 
@@ -651,7 +903,39 @@ export class Mailbox extends DurableObject<Env> {
       safeClose(ws, 4003, "not_allowed");
       return null;
     }
+    // The attachment records the key that signed the upgrade. Re-check it against live state on every
+    // frame and every push, so a missed close sweep cannot leave a migrated or revoked key alive.
+    const failure = this.bindingFailure(s);
+    if (failure) {
+      safeClose(ws, failure.code, failure.reason);
+      return null;
+    }
     return s;
+  }
+
+  /**
+   * Why a socket's signer may no longer act, or null if it may. Sessions written before `signer`
+   * existed are treated as their identity key, which is what that upgrade used.
+   */
+  private bindingFailure(s: Session): { code: number; reason: string } | null {
+    const signer = s.signer ?? s.pubkey;
+    if (signer === s.pubkey && this.migrated.has(signer)) return { code: 4001, reason: "auth_invalid" };
+    const adminIdentity = this.adminByKey.get(signer);
+    if (adminIdentity !== undefined) {
+      return adminIdentity === s.pubkey ? null : { code: 4001, reason: "auth_invalid" };
+    }
+    const row = this.q<DeviceRow>(
+      "SELECT * FROM devices WHERE auth_pubkey = ? AND auth_pubkey <> '' ORDER BY pubkey, device",
+      signer,
+    )[0];
+    if (row) {
+      if (row.pubkey !== s.pubkey || row.device !== (s.device ?? PRIMARY_DEVICE)) return { code: 4001, reason: "auth_invalid" };
+      if (row.revoked_at > 0) return { code: 4009, reason: "unlinked" };
+      return null;
+    }
+    // No row: only the identity's own shared key before migration may act this way. A rotated device key
+    // has no row either, so it is refused here rather than resurfacing as a legacy identity.
+    return signer === s.pubkey && !this.migrated.has(s.pubkey) ? null : { code: 4001, reason: "auth_invalid" };
   }
 
   /**
@@ -691,17 +975,17 @@ export class Mailbox extends DurableObject<Env> {
   private async handlePushToken(request: Request): Promise<Response> {
     const body = await request.arrayBuffer();
     if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
-    const auth = await verifyRequestAuth(request, body, nowS(), this.membership);
-    if (!auth.ok) return errorResponse(auth.status, auth.code);
+    const authorized = await this.authorize(request, body, new URL(request.url));
+    if (authorized instanceof Response) return authorized;
     const parsed = parseJson(body);
     const token = parsed?.token;
     if (parsed?.v !== PROTOCOL_VERSION || typeof token !== "string" || token.length > 4096 || /\s/.test(token)) return errorResponse(400, "bad_request");
     return this.metered(() => {
-      if (!this.recordAuth(auth)) return errorResponse(401, "auth_replayed");
-      if (token === "") this.q("DELETE FROM push_tokens WHERE pubkey = ?", auth.pubkey);
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+      if (token === "") this.q("DELETE FROM push_tokens WHERE pubkey = ?", authorized.identity);
       else this.q(
         "INSERT INTO push_tokens (pubkey, token, updated_at) VALUES (?, ?, ?) ON CONFLICT(pubkey) DO UPDATE SET last_wake_at = CASE WHEN push_tokens.token = excluded.token THEN push_tokens.last_wake_at ELSE 0 END, token = excluded.token, updated_at = excluded.updated_at",
-        auth.pubkey, token, Date.now(),
+        authorized.identity, token, Date.now(),
       );
       return json({ v: PROTOCOL_VERSION, push: token !== "" && this.push !== null });
     });
@@ -882,23 +1166,48 @@ export class Mailbox extends DurableObject<Env> {
    * (WP04-AC1). Legacy identities never write to these tables.
    */
   private migrateDevices(): void {
-    const done = this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'devices_schema'")[0]?.value === "1";
-    if (done) return;
+    const version = Number(this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'devices_schema'")[0]?.value ?? 0);
+    if (version >= 3) return;
     this.ctx.storage.transactionSync(() => {
-      this.sql.exec(`CREATE TABLE IF NOT EXISTS devices (
-        pubkey TEXT NOT NULL,
-        device TEXT NOT NULL,
-        label TEXT NOT NULL DEFAULT '',
-        acked INTEGER NOT NULL,
-        last_seen INTEGER NOT NULL,
-        added_at INTEGER NOT NULL,
-        gap_through INTEGER NOT NULL DEFAULT 0,
-        gap_shown INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (pubkey, device)
-      ) WITHOUT ROWID`);
-      // Per identity: the highest deletion floor ever reached and the seq head it was computed against.
-      this.sql.exec("CREATE TABLE IF NOT EXISTS cursor_state (pubkey TEXT PRIMARY KEY, floor INTEGER NOT NULL, high INTEGER NOT NULL) WITHOUT ROWID");
-      this.sql.exec("INSERT INTO meta (key, value) VALUES ('devices_schema', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+      if (version < 1) {
+        this.sql.exec(`CREATE TABLE IF NOT EXISTS devices (
+          pubkey TEXT NOT NULL,
+          device TEXT NOT NULL,
+          label TEXT NOT NULL DEFAULT '',
+          acked INTEGER NOT NULL,
+          last_seen INTEGER NOT NULL,
+          added_at INTEGER NOT NULL,
+          gap_through INTEGER NOT NULL DEFAULT 0,
+          gap_shown INTEGER NOT NULL DEFAULT 0,
+          auth_pubkey TEXT NOT NULL DEFAULT '',
+          protocol_version INTEGER NOT NULL DEFAULT 1,
+          revoked_at INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (pubkey, device)
+        ) WITHOUT ROWID`);
+        // Per identity: the highest deletion floor ever reached and the seq head it was computed against.
+        this.sql.exec("CREATE TABLE IF NOT EXISTS cursor_state (pubkey TEXT PRIMARY KEY, floor INTEGER NOT NULL, high INTEGER NOT NULL) WITHOUT ROWID");
+      } else if (version < 2) {
+        // v2 (WP05/G1): per-device authentication keys. Existing WP04 rows keep an empty key and stay legacy.
+        this.sql.exec("ALTER TABLE devices ADD COLUMN auth_pubkey TEXT NOT NULL DEFAULT ''");
+        this.sql.exec("ALTER TABLE devices ADD COLUMN protocol_version INTEGER NOT NULL DEFAULT 1");
+        this.sql.exec("ALTER TABLE devices ADD COLUMN revoked_at INTEGER NOT NULL DEFAULT 0");
+      }
+      // The phone-only administration key, one per identity. Its presence means the identity has migrated.
+      this.sql.exec("CREATE TABLE IF NOT EXISTS identity_admin (pubkey TEXT PRIMARY KEY, admin_pubkey TEXT NOT NULL UNIQUE, migrated_at INTEGER NOT NULL) WITHOUT ROWID");
+      if (version < 3) {
+        // v3 (WP05-A review): one device key may resolve to one (identity, device). Before the UNIQUE
+        // index can be built, rows that already share a key are made unambiguous: the lexicographically
+        // first (pubkey, device) keeps the key, every other row loses its auth_pubkey and can no longer
+        // authenticate. Blanking rather than deleting keeps cursors and the audit trail.
+        this.sql.exec(`UPDATE devices SET auth_pubkey = ''
+          WHERE auth_pubkey <> '' AND EXISTS (
+            SELECT 1 FROM devices AS keep
+            WHERE keep.auth_pubkey = devices.auth_pubkey
+              AND (keep.pubkey < devices.pubkey OR (keep.pubkey = devices.pubkey AND keep.device < devices.device))
+          )`);
+        this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS devices_auth_pubkey ON devices (auth_pubkey) WHERE auth_pubkey <> ''");
+      }
+      this.sql.exec("INSERT INTO meta (key, value) VALUES ('devices_schema', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
     });
   }
 

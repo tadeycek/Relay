@@ -128,6 +128,13 @@ hibernating between messages. A session lasts 1 hour; then the server closes it 
 and the client reconnects with fresh auth. At most 4 sockets per identity; the oldest is closed with
 `4008 replaced`. A linked device that is removed has its sockets closed with `4009 unlinked`.
 
+Since WP05-A the attachment also stores the **key that signed the upgrade**, and every frame and live push
+re-checks it against current state. A socket authenticated with the shared identity key is closed with
+`4001 auth_invalid` as soon as the identity migrates (the phone reconnects with the admin key); a socket
+whose device key was revoked closes with `4009 unlinked`, and one whose device key was rotated closes with
+`4001 auth_invalid`. The same checks run inside `sync`, `ack`, `signal` and delivery, so a socket that
+survives a close sweep (a failed close, a hibernation race) still cannot page, ack, relay or receive.
+
 | Direction | Frame |
 |---|---|
 | server → client | `{"type":"ready","v":1,"instance":"…","expiresAt":…}` once after connecting |
@@ -169,12 +176,12 @@ and `/v1/devices…`. `<id>` is `primary` or 32 lowercase hex characters.
 The parameter is part of the signed URL (the NIP-98 `u` tag covers the query string), so it can't be changed
 in flight.
 
-> **This is not authentication.** `device=primary` is only a query parameter. Every device holding the Nostr
-> secret key can sign a request for any `device` value, so a linked desktop can act as `primary`, can
-> register or remove devices, and can ack on behalf of any other device. The per-device cursor is **queue
-> bookkeeping, not a security boundary** (readiness gate G1). WP05 adds separate per-device authentication
-> keys, enrolled by a phone-only administration key, and restricts legacy identity auth to the primary;
-> until it lands, do not describe this as access control. See *Known limitations* below.
+> **This is not authentication by itself.** `device=primary` is only a query parameter. Before WP05 an
+> identity that had not migrated could sign any `device` value with its shared Nostr key, so a linked
+> desktop could act as `primary` and ack on behalf of any other device. That was never access control
+> (readiness gate G1). WP05-A now binds each enrolled device to its own key: the parameter must match the
+> device that key was enrolled for. Legacy identities that never migrate keep the old shared-key
+> behaviour, which remains the G1 limit described below.
 
 ### Cursors and deletion
 
@@ -247,9 +254,47 @@ a socket that somehow outlives its device answers its next frame with `unknown_d
 - To let the uploader's own other devices fetch a blob, the uploader names its **own pubkey** in
   `x-relay-recipients`.
 
+### Device authorization (v1.2, WP05/G1)
+
+This closes gate G1. The WP04 cursors are queue bookkeeping; they are not authentication. A phone that
+migrates its identity installs a **phone-only administration key** (an ordinary Nostr key that is not a
+member). After migration the shared identity key no longer authenticates device operations; only the
+administration key may enroll or revoke devices.
+
+| Request | Auth | Effect |
+|---|---|---|
+| `POST /v1/devices/admin {"v":1,"admin_pubkey":"<64 hex>"}` | NIP-98, shared identity key | Migrates the identity. Stores the admin key. A second attempt with the shared key is refused with `401 auth_invalid` (the shared key is disabled by then). The admin key must differ from the identity key, must not be a member, must not already be a device key on any identity and must not be another identity's admin key (`409 admin_key_in_use`). On success every socket of the identity is closed with `4001 auth_invalid`. Reply: `{"v":1,"migrated":true,"head":<seq>}`. |
+| `POST /v1/devices?device=primary {"v":1,"device":"<32 hex>","label":"…","auth_pubkey":"<64 hex>"}` | NIP-98, admin key | Enrolls a device's own authentication key. Binds id, key, identity, creation time and protocol version. A key already bound to another `(identity, device)` pair is refused with `409 auth_key_in_use`; a key that is an admin key with `409 admin_key_in_use`. Re-enrolling the same pair with a different key rotates it: the old key stops resolving and that device's sockets are closed with `4001 auth_invalid`. Rotation is not revocation — use `DELETE` for that. Reply: `{"v":1,"head":<seq>}`. |
+| `GET /v1/devices?device=primary` | NIP-98, admin key | Lists devices. |
+| `DELETE /v1/devices/<id>?device=primary` | NIP-98, admin key | Revokes the device and closes its sockets with `4009 unlinked`. |
+
+Each enrolled device signs every request with its **own** key. The server resolves the signer to its
+`(identity, device)` pair and refuses a key acting as a device it was not enrolled for. The `device` query
+parameter is still required and must match the resolved device. `device=primary` with a device key is
+`403 not_primary`. Revoked devices get `401 auth_revoked` on HTTP and close code `4009` on WS, including
+media and SFU-proxy surfaces. Enrollment also refuses a device id or key already bound to another identity
+with `409 auth_key_in_use`; the `devices.auth_pubkey` UNIQUE index makes one key resolve to exactly one
+`(identity, device)` pair. Ids are scoped per identity in storage.
+
+Administration-key operations are replay-protected by the same NIP-98 event-id table as every request and
+rate-limited to 10 per identity per minute in memory. Enrollment and revocation are serialised in one
+`transactionSync` section, so concurrent calls cannot exceed the cap.
+
+**Revocation semantics.** Revocation deletes no keys from the computer. It stops that device's key from
+using this server: inbox, ack, WebSocket, media and SFU proxy all return `401 auth_revoked` (WS close
+`4009`). A revoked device cannot reconnect, read the queue, ack, or fetch blobs. It still holds the Nostr
+and Tink secrets it already learned, so it can decrypt anything it already downloaded and can send
+messages to contacts directly. Full cryptographic revocation requires a new identity and re-pairing
+(LP-D02 consequence, 09 R3). Cursor removal alone was never revocation; this contract is server-side
+access revocation only.
+
 ### Compatibility (legacy clients)
 
-- No `device` parameter: identical requests, replies and rows.
+- No `device` parameter: identical requests and replies. An identity that has not migrated behaves as WP04,
+  including `POST /v1/devices` with the shared identity key. After G1 every request resolves its signer with
+  one indexed `devices` lookup even for a legacy identity, so "no extra rows" no longer holds: it is one
+  extra read per request, and there is no write unless the identity has devices. After migration the shared
+  key is refused for device operations (`401 auth_invalid`); senders are unaffected.
 - A legacy 1.15 phone on an identity that later has linked devices keeps working as `primary`. It sees the
   queue held for the desktop too (messages are deleted only when the desktop has acked as well, or goes
   dormant), and its media confirm only confirms the primary's pair. Its replies stay byte-identical, so it
@@ -261,17 +306,21 @@ a socket that somehow outlives its device answers its next frame with `unknown_d
 
 ### Known limitations (read before relying on this)
 
-- **Not a security boundary (G1).** `device=primary` is not proof of being the phone. Any device holding the
-  identity key can sign any `device` value, so it can register devices, remove devices (including the phone's
-  linked desktop), ack for others, and read the queue as any device.
-- **An unlinked device can still read with the shared identity key.** `DELETE /v1/devices/<id>` removes the
-  cursor and closes sockets with 4009. It does not revoke the Nostr key: the unlinked computer can reconnect
-  and call `inbox`/`ack`/`ws`/media with `device=primary` (or no parameter), read pending ciphertext addressed
-  to the identity, fetch blobs addressed to `primary`, and ack as the primary (which can delete messages the
-  phone has not stored). It also keeps the Tink and Nostr secrets it already learned. Real revocation needs
-  per-device keys (WP05) or replacing the identity.
-- A removed or dormant device that still holds the key can also pose as `primary` and receive media the
-  primary is a recipient of.
+- **Revocation is server-side access revocation.** A revoked device's key cannot use this server, but the
+  computer keeps the Nostr/Tink secrets it already learned. It can decrypt what it already downloaded and
+  can send directly to contacts. Replacing the shared identity and re-pairing is the only full revocation.
+- **Migration does not un-learn the shared identity secret.** Closing the sockets and refusing the shared
+  key stops future server use, but a device that already held the identity key still has it. That is the
+  residual G1 limit: only a new identity and re-pairing removes it.
+- **Session lifetime after these fixes.** Migration closes the identity's sockets immediately (`4001`), and
+  rotation closes only the rotated device's socket. A socket is still capped at the 1-hour session TTL, and
+  expiry (`4001 auth_expired`) or removal from the member list (`4003`) closes it. Every remaining frame
+  and push is re-checked against the signer, so the sweep is a fast path, not the only barrier.
+- **The admin key is on the phone.** The phone-only admin key is the authority. Anyone who extracts it can
+  enroll or revoke devices. The app stores it in Keystore-backed encrypted preferences.
+- **A device key is bound to one `(identity, device)` pair.** Re-enrolling a revoked id revives it at the
+  head and rotates its key. An admin key cannot target another identity's devices; the admin key's own
+  binding is the target, so a key from another identity is refused by membership (`403 not_allowed`).
 - Dormancy is checked when a request or ack arrives, not by a timer: if nobody acks, nothing is deleted. The
   next ack by any active device frees everything that dormancy released.
 - A message already deleted for a dormant device is gone. The gap flag tells the device that something is

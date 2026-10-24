@@ -16,7 +16,7 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 | Path | What |
 |---|---|
 | `src/index.ts` | Edge router: health, routing, refuses anonymous or oversized requests before they cost a Durable Object request |
-| `src/mailbox.ts` | The mailbox Durable Object: auth replay check, transactional store, catch-up, receipts, live signals, hibernating sockets, schema migrations, linked-device cursors (WP04) |
+| `src/mailbox.ts` | The mailbox Durable Object: auth replay check, transactional store, catch-up, receipts, live signals, hibernating sockets, schema migrations, device cursors and G1 device authorization (WP04/WP05) |
 | `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after every recipient device confirms (dormant/unlinked devices waived) or 8 days |
 | `src/auth.ts` | NIP-98 request auth |
 | `src/push.ts` | Content-free Firebase wake-ups, service-account JWT signing and OAuth token caching |
@@ -110,12 +110,18 @@ cursor: a message is deleted once every **active** device has acked it, and a de
 stops holding the queue and media. A client that sends no `device` parameter behaves exactly as before. The
 contract is in [PROTOCOL.md](PROTOCOL.md#linked-devices-per-device-cursors-v11-wp04).
 
-- **Not a security boundary.** `device=primary` is a query parameter, not proof of being the phone: every device
-  holding the Nostr secret can sign it. An unlinked computer can still read the identity's mailbox with the shared
-  key. WP05 adds per-device authentication keys; until then this is queue bookkeeping only.
+- **G1 device authorization (WP05 part A).** An identity can migrate to a phone-only administration key. After
+  migration only that key may enroll or revoke devices; each device signs with its own key, and a revoked key gets
+  `401 auth_revoked` on HTTP and close `4009` on WS. Migration closes the identity's open sockets with `4001`,
+  and every socket frame and live push re-checks the signing key, so a shared-key socket cannot outlive the
+  migration even if a close is missed. Device keys are unique across all identities (`409 auth_key_in_use`);
+  rotating one closes that device's socket (`4001`) but is not revocation — DELETE is. Legacy identities that
+  never migrate keep the shared-key behaviour. Revocation and migration are server-side access changes: they do
+  not erase the keys a computer already learned.
 - Tables: `devices` and `cursor_state` in the Mailbox object (created by `migrateDevices()`, tracked by the meta key
   `devices_schema` so the numbered `schema` stays 7); `recipients` in each media object becomes `(pubkey, device)`
-  (media schema 2). Identities without devices never touch the new tables and cost no extra rows.
+  (media schema 2). Identities without devices never write the new tables, but since G1 every request resolves its
+  signer with one indexed `devices` read, so legacy requests are no longer row-cost-identical to WP04.
 - Settings: `MAX_LINKED_DEVICES` (3), `DORMANT_AFTER_MS` (72 h). Not deployed: `relay-mailbox-test` was not touched
   and the 48 h pilot (WP04-AC6) has not run.
 - Row costs, measured with `EXPOSE_METRICS=1` by `test/devices-budget.test.ts` (`npx vitest run

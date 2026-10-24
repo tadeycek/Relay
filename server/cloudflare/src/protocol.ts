@@ -14,6 +14,10 @@ export type ErrorCode =
   | "auth_invalid"
   | "auth_expired"
   | "auth_replayed"
+  | "auth_revoked"
+  | "already_migrated"
+  | "admin_key_in_use"
+  | "auth_key_in_use"
   | "not_allowed"
   | "request_too_large"
   | "too_many_deliveries"
@@ -143,6 +147,8 @@ export const LINKED_DEVICE_ID = /^[0-9a-f]{32}$/;
 /** `last_seen` is written at most this often per device, to stay inside the rows-written budget. */
 export const DEVICE_SEEN_REFRESH_MS = 60 * 60 * 1000;
 export const MAX_DEVICE_LABEL_CHARS = 64;
+/** Administration-key operations (migration, enrollment, revocation) per identity per minute. */
+export const MAX_ADMIN_OPS_PER_MINUTE = 10;
 
 /**
  * The `device` query parameter of a request: absent means `primary`, a malformed value is null.

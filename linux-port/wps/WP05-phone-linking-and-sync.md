@@ -2,7 +2,7 @@
 id: WP05
 title: "Phone: link a computer, link slot, sync channel, sent-copies"
 phase: L1
-lane: planned
+lane: doing
 depends_on: [WP03, WP04]
 specs: ["04 §4", "05 §3–4", "LP-D03, LP-D06"]
 owned_files:

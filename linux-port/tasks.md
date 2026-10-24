@@ -9,7 +9,7 @@ the log together.
 | [WP02](wps/WP02-spike-webrtc-sfu-turn.md) | L0 | Spike: WebRTC Android↔Linux audio, Cloudflare TURN and SFU, signal sizes | — | doing |
 | [WP03](wps/WP03-core-module-extraction.md) | L1 | Extract the shared `:core` JVM module | WP01 | doing |
 | [WP04](wps/WP04-server-device-cursors.md) | L1 | Server: per-device cursors, dormancy, per-device media confirmation | — | doing |
-| [WP05](wps/WP05-phone-linking-and-sync.md) | L1 | Phone: link a computer, link slot, sync channel, sent-copies | WP03, WP04 | planned |
+| [WP05](wps/WP05-phone-linking-and-sync.md) | L1 | Phone: link a computer, link slot, sync channel, sent-copies | WP03, WP04 | doing |
 | [WP06](wps/WP06-desktop-shell-link-text.md) | L2 | Desktop shell: storage, secrets, linking, text messaging | WP03, WP05 | doing |
 | [WP07](wps/WP07-desktop-groups-and-ui.md) | L2 | Desktop: groups, profiles, Discord-style UI completion | WP06 | planned |
 | [WP08](wps/WP08-desktop-media.md) | L2 | Desktop: photos and videos | WP06 | planned |
@@ -27,6 +27,8 @@ the log together.
 Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17), 14 risks, 6 open questions.
 
 ## Current evidence
+
+- [WP05](evidence/WP05.md): device authorization (G1) — phone-only admin key, per-device auth keys, migration, revocation with socket close, duplicate/cross-purpose key rejection, send/revoke race and phone lost-reply handling. Linking (link slot, bundle, sync, sent copies) is part B and still open.
 
 - [WP06](evidence/WP06.md): Compose Desktop module builds, 17 tests pass, SQLCipher-encrypted store proven (wrong key refused, no plaintext on disk), encrypted text sent/received against a local Worker and stored, packaged distributable launches. Phone linking not implemented.
 
@@ -49,6 +51,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 - [WP01](evidence/WP01.md): local interop passed; original-app UI and live-provider checks open.
 
 ## Log
+
+- 2026-10-24 UTC — WP02 5-party SFU load + egress measured (`40a0116`); WP03 `2a161d3`; WP04 `9477b28`; WP06 desktop shell `45ac4a1`; WP05-A implemented + security-reviewed + hardened. Nothing deployed or merged.
 
 - 2026-10-23 UTC — WP03 `doing` (AC1–AC3 met, single-emulator UI smoke green, AC4 two-emulator not run); WP04 `doing` (159 tests, AC4 blocked, AC6 not run). Neither deployed or merged.
 
