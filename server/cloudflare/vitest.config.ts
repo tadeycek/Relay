@@ -35,6 +35,8 @@ export default defineConfig({
           MEDIA_CHUNK_BYTES: "16384",
           MAX_MEDIA_RECIPIENTS: "4",
           SIGNALS_PER_MINUTE: "5",
+          // Small cap so the link-proof guessing test stays fast; the default is checked in limits.test.ts.
+          LINK_ATTEMPTS_PER_MINUTE: "5",
           FCM_SERVICE_ACCOUNT: JSON.stringify({
             project_id: "relay-test",
             client_email: "push@relay-test.iam.gserviceaccount.com",

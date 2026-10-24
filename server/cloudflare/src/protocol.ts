@@ -31,6 +31,9 @@ export type ErrorCode =
   | "unknown_device"
   | "not_primary"
   | "device_limit"
+  | "link_busy"
+  | "sync_conflict"
+  | "sync_limit"
   | "storage_error";
 
 /** Per-delivery and request limits. Defaults are the pilot budgets from the plan; tests override them. */
@@ -60,6 +63,24 @@ export interface Limits {
   maxLinkedDevices: number;
   /** A linked device silent for longer than this stops holding the queue and media (WP04, LP-D02). */
   dormantAfterMs: number;
+  /** The sealed link bundle: identity keys, contacts, groups, settings. No history (LP-D06). */
+  maxLinkBytes: number;
+  linkTtlMs: number;
+  /** How long a GET protects the bundle for a retry before it counts as abandoned (not consumed). */
+  linkLeaseMs: number;
+  /** Guesses per slot and per client bucket per minute; in memory, best effort (WP05/G1). */
+  linkAttemptsPerMinute: number;
+  /** Decoded sync body; base64 of this still fits the existing 16 KiB envelope bound. */
+  maxSyncBodyBytes: number;
+  maxSyncParts: number;
+  /** Unfinished assemblies one identity may have at a time. */
+  maxSyncAssemblies: number;
+  syncTtlMs: number;
+  /** Retained events and bytes per identity, so the channel can never grow without bound. */
+  maxSyncEvents: number;
+  maxSyncEventBytes: number;
+  maxSyncPageEvents: number;
+  maxSyncPageBytes: number;
 }
 
 const KIB = 1024;
@@ -95,6 +116,21 @@ export const DEFAULT_LIMITS: Limits = {
   maxInvitesPerMember: 20,
   maxLinkedDevices: 3,
   dormantAfterMs: 72 * 60 * 60 * 1000,
+  // A sealed bundle of keys, contacts, groups and settings (LP-D06); no message history.
+  maxLinkBytes: 128 * KIB,
+  linkTtlMs: 10 * 60 * 1000,
+  linkLeaseMs: 60 * 1000,
+  linkAttemptsPerMinute: 10,
+  // 12 KiB decoded is at most 16 KiB base64, the envelope bound the sync body travels under.
+  maxSyncBodyBytes: 12 * KIB,
+  maxSyncParts: 8,
+  maxSyncAssemblies: 4,
+  // Self-sync is operational state, not a mailbox: a day is long enough for an offline computer.
+  syncTtlMs: 24 * 60 * 60 * 1000,
+  maxSyncEvents: 64,
+  maxSyncEventBytes: 256 * KIB,
+  maxSyncPageEvents: 8,
+  maxSyncPageBytes: 64 * KIB,
 };
 
 /** Optional numeric overrides from Worker vars (strings), e.g. small caps in tests. */
@@ -127,6 +163,18 @@ export function limitsFrom(env: Partial<Record<string, unknown>>): Limits {
     maxInvitesPerMember: pick("MAX_INVITES_PER_MEMBER", DEFAULT_LIMITS.maxInvitesPerMember),
     maxLinkedDevices: pick("MAX_LINKED_DEVICES", DEFAULT_LIMITS.maxLinkedDevices),
     dormantAfterMs: pick("DORMANT_AFTER_MS", DEFAULT_LIMITS.dormantAfterMs),
+    maxLinkBytes: pick("MAX_LINK_BYTES", DEFAULT_LIMITS.maxLinkBytes),
+    linkTtlMs: pick("LINK_TTL_MS", DEFAULT_LIMITS.linkTtlMs),
+    linkLeaseMs: pick("LINK_LEASE_MS", DEFAULT_LIMITS.linkLeaseMs),
+    linkAttemptsPerMinute: pick("LINK_ATTEMPTS_PER_MINUTE", DEFAULT_LIMITS.linkAttemptsPerMinute),
+    maxSyncBodyBytes: pick("MAX_SYNC_BODY_BYTES", DEFAULT_LIMITS.maxSyncBodyBytes),
+    maxSyncParts: pick("MAX_SYNC_PARTS", DEFAULT_LIMITS.maxSyncParts),
+    maxSyncAssemblies: pick("MAX_SYNC_ASSEMBLIES", DEFAULT_LIMITS.maxSyncAssemblies),
+    syncTtlMs: pick("SYNC_TTL_MS", DEFAULT_LIMITS.syncTtlMs),
+    maxSyncEvents: pick("MAX_SYNC_EVENTS", DEFAULT_LIMITS.maxSyncEvents),
+    maxSyncEventBytes: pick("MAX_SYNC_EVENT_BYTES", DEFAULT_LIMITS.maxSyncEventBytes),
+    maxSyncPageEvents: pick("MAX_SYNC_PAGE_EVENTS", DEFAULT_LIMITS.maxSyncPageEvents),
+    maxSyncPageBytes: pick("MAX_SYNC_PAGE_BYTES", DEFAULT_LIMITS.maxSyncPageBytes),
   };
 }
 
@@ -149,6 +197,15 @@ export const DEVICE_SEEN_REFRESH_MS = 60 * 60 * 1000;
 export const MAX_DEVICE_LABEL_CHARS = 64;
 /** Administration-key operations (migration, enrollment, revocation) per identity per minute. */
 export const MAX_ADMIN_OPS_PER_MINUTE = 10;
+
+/** `PUT|GET|DELETE /v1/link/<sha256 of the one-time code>`. The server never learns the code itself. */
+export const LINK_SLOT = /^[0-9a-f]{64}$/;
+/** The one-time code travels only in this header on the unauthenticated read: never a query parameter. */
+export const LINK_PROOF_HEADER = "x-relay-link-proof";
+/** Sync ids are opaque hex; 8 bytes is the practical minimum for uniqueness. */
+export const SYNC_ID = /^[0-9a-f]{8,64}$/;
+/** Request body ceiling for a sync part (a 12 KiB body base64-encoded plus framing). */
+export const MAX_SYNC_REQUEST_BYTES = 24 * KIB;
 
 /**
  * The `device` query parameter of a request: absent means `primary`, a malformed value is null.

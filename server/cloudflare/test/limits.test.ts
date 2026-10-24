@@ -17,6 +17,15 @@ describe("limits", () => {
     expect(DEFAULT_LIMITS.maxEnvelopeBytes).toBe(128 * KIB);
     expect(DEFAULT_LIMITS.maxPendingBytesPerRecipient).toBe(32 * KIB * KIB);
     expect(DEFAULT_LIMITS.maxPendingBytesTotal).toBe(256 * KIB * KIB);
+    // WP05: a 128 KiB sealed bundle, a 10-minute slot, a 60 s lease and 10 proof guesses a minute.
+    expect(DEFAULT_LIMITS.maxLinkBytes).toBe(128 * KIB);
+    expect(DEFAULT_LIMITS.linkTtlMs).toBe(10 * 60 * 1000);
+    expect(DEFAULT_LIMITS.linkLeaseMs).toBe(60 * 1000);
+    expect(DEFAULT_LIMITS.linkAttemptsPerMinute).toBe(10);
+    // 12 KiB decoded, so its base64 form stays inside the existing 16 KiB envelope bound.
+    expect(DEFAULT_LIMITS.maxSyncBodyBytes * 4 / 3).toBeLessThanOrEqual(16 * KIB);
+    expect(DEFAULT_LIMITS.maxSyncParts).toBe(8);
+    expect(DEFAULT_LIMITS.maxSyncAssemblies).toBe(4);
   });
 
   it("ignores malformed overrides", () => {

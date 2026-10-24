@@ -128,6 +128,20 @@ contract is in [PROTOCOL.md](PROTOCOL.md#linked-devices-per-device-cursors-v11-w
   test/devices-budget.test.ts --reporter=verbose` prints a `WP04-ROWS` line): see
   [linux-port/evidence/WP04.md](../../linux-port/evidence/WP04.md).
 
+- **Link slot and sync channel (WP05 part B).** The phone parks a sealed ≤128 KiB bundle (keys, contacts,
+  groups, settings — no history) under `PUT /v1/link/<sha256 of a one-time code>`; the desktop proves the
+  code in `x-relay-link-proof` on the unauthenticated `GET`, then `DELETE`s the slot to complete. GET marks
+  a 60 s lease and does not consume, so a lost response is retried; the slot expires after 10 minutes, one
+  live slot per identity (`409 link_busy`), and guesses are limited per slot and per client (in memory).
+  `POST /v1/sync` assembles bounded SENT/KEYS envelopes from at most 8 parts (12 KiB decoded, SHA-256
+  verified, unique id/revision, 4 concurrent assemblies), and `GET /v1/sync` serves them in cursor order
+  per device. Contract and error table: [PROTOCOL.md](PROTOCOL.md#link-slot-v13-wp05-part-b). Rows measured
+  by `test/link-sync-budget.test.ts` (`WP05-ROWS`): link PUT 1 read/3 written, GET 2/1, completion 2/1;
+  sync first part 4/2, completing part 9/8, list 3/1, single 2/1, ack 2/2. Evidence:
+  [linux-port/evidence/WP05-link-slot.md](../../linux-port/evidence/WP05-link-slot.md).
+- **Not deployed.** These routes exist in this branch only; `wrangler dev --local` and the vitest workerd
+  pool are the only environments they have run in.
+
 ## Free-plan budget
 
 Workers Free per day (Cloudflare pricing page, checked 2026-10-18): 100,000 Durable Object requests,

@@ -3,9 +3,12 @@ import { PROTOCOL_VERSION, errorResponse, json, limitsFrom } from "./protocol";
 export { Mailbox } from "./mailbox";
 export { MediaBlob } from "./media";
 
-const MAILBOX_ROUTES = new Set(["/v1/send", "/v1/inbox", "/v1/ack", "/v1/ws", "/v1/invite", "/v1/pair", "/v1/push-token", "/v1/devices", "/v1/devices/admin"]);
+const MAILBOX_ROUTES = new Set(["/v1/send", "/v1/inbox", "/v1/ack", "/v1/ws", "/v1/invite", "/v1/pair", "/v1/push-token", "/v1/devices", "/v1/devices/admin", "/v1/sync", "/v1/sync/ack"]);
 const DEVICE_ROUTE = /^\/v1\/devices\/[0-9a-f]{32}$|^\/v1\/devices\/primary$/;
 const MEDIA_ROUTE = /^\/v1\/media\/([0-9a-f]{64})$/;
+/** The only unauthenticated data path: GET/DELETE prove the one-time code with a header instead. */
+const LINK_ROUTE = /^\/v1\/link\/[0-9a-f]{64}$/;
+const SYNC_ID_ROUTE = /^\/v1\/sync\/[0-9a-f]{8,64}$/;
 
 /**
  * Edge router. It only does cheap checks so junk never costs a Durable Object request; signature
@@ -18,14 +21,21 @@ export default {
       return request.method === "GET" ? json({ ok: true, v: PROTOCOL_VERSION }) : errorResponse(405, "method_not_allowed");
     }
     const media = MEDIA_ROUTE.exec(pathname);
-    if (!media && !MAILBOX_ROUTES.has(pathname) && !DEVICE_ROUTE.test(pathname)) return errorResponse(404, "not_found");
+    const link = LINK_ROUTE.test(pathname);
+    if (!media && !link && !MAILBOX_ROUTES.has(pathname) && !DEVICE_ROUTE.test(pathname) && !SYNC_ID_ROUTE.test(pathname)) {
+      return errorResponse(404, "not_found");
+    }
 
-    const authorization = request.headers.get("Authorization");
-    if (!authorization) return errorResponse(401, "auth_missing");
-    if (!authorization.startsWith("Nostr ")) return errorResponse(401, "auth_invalid");
+    if (!link) {
+      const authorization = request.headers.get("Authorization");
+      if (!authorization) return errorResponse(401, "auth_missing");
+      if (!authorization.startsWith("Nostr ")) return errorResponse(401, "auth_invalid");
+    }
     const limits = limitsFrom(env as unknown as Record<string, unknown>);
     const length = Number(request.headers.get("Content-Length") ?? "0");
-    if (!Number.isFinite(length) || length > (media ? limits.maxMediaBytes : limits.maxRequestBytes)) {
+    // One byte of slack on the link path so the mailbox returns the precise error code for the boundary.
+    const cap = media ? limits.maxMediaBytes : link ? limits.maxLinkBytes + 1 : limits.maxRequestBytes;
+    if (!Number.isFinite(length) || length > cap) {
       return errorResponse(413, "request_too_large");
     }
 

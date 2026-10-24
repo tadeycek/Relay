@@ -288,6 +288,103 @@ messages to contacts directly. Full cryptographic revocation requires a new iden
 (LP-D02 consequence, 09 R3). Cursor removal alone was never revocation; this contract is server-side
 access revocation only.
 
+### Link slot (v1.3, WP05 part B)
+
+The phone seals **identity keys, contacts, groups and settings** — never messages or media (LP-D06) — into
+an opaque bundle of at most 128 KiB and parks it under a one-time code. The desktop proves the code and
+fetches the bundle. This is the only unauthenticated data path on the server.
+
+**What the slot is.** The client generates a 32-byte random code and sends the QR containing the code hex.
+`<slot>` is `sha256(lowercase hex of the code)` as UTF-8, 64 lowercase hex characters. The server stores
+only `<slot>`, so it never learns the code and cannot compute it back. The proof header carries the same
+code hex; the server hashes it and compares the digests in constant time.
+
+| Request | Auth | Effect |
+|---|---|---|
+| `PUT /v1/link/<slot>` body = sealed bundle | NIP-98, admin key (or the shared identity key before migration), primary only | Stores the bundle for **10 minutes**. One live slot per identity: a second PUT is refused with `409 link_busy` and never replaces the first. An expired slot is discarded first, so it never blocks a new link. Reply `{"v":1,"slot":…,"size":…,"expiresAt":…}`. |
+| `GET /v1/link/<slot>`, header `x-relay-link-proof: <code hex>` | the code | Returns the bundle bytes (`application/octet-stream`) and marks a **60 s retrieval lease** in `x-relay-link-lease`; `x-relay-link-expires` carries the slot TTL. A repeated GET returns the bundle again. |
+| `DELETE /v1/link/<slot>`, same header | the code | **Completion**: erases the bundle. Reply `{"v":1,"consumed":true}`. A later GET or DELETE is `404`. |
+
+**Why a header, not `?proof=`.** URLs are written to access logs, proxy logs, browser history and crash
+reports. A code in the query string leaks the one secret that protects the bundle. The proof is a request
+header, which those logs do not record (Cloudflare access logs record the path and query, not arbitrary
+headers). The mailbox refuses any query string on this route with `400`, so a client cannot silently fall
+back to the leaking form. Nothing about the code is ever logged by the server.
+
+**Why a lease and an explicit completion.** A single GET that deletes would destroy the bundle if the
+response were lost after the server committed — the desktop would hold no keys and the phone would have to
+re-seal. Instead GET only stamps `lease_until = now + 60 s` and keeps the bundle; the desktop stores it
+durably and then calls DELETE. If the response is lost, the desktop simply GETs again (the lease is
+informational, not exclusive). If the desktop dies before completing, the bundle stays until the 10-minute
+TTL. The lease is what makes an unfinished retrieval visible; it never *removes* availability.
+
+**Guessing.** Every read attempt counts against two in-memory buckets, `slot` and `CF-Connecting-IP`
+(`unknown` when the header is absent), at most **10 per minute each** (`LINK_ATTEMPTS_PER_MINUTE`). Over
+the limit is `429 rate_limited`, retryable. Both an existing and a nonexistent slot are counted the same
+way, so `429` is not an existence oracle. A wrong proof and an unknown or expired slot both return
+`404 not_found` with the same body; a *missing* proof is `401 auth_missing` and a proof that is not 64 hex
+is `401 auth_invalid` (neither depends on the slot existing). Rate-limit state is best effort: it
+lives in the object's memory and a restart forgets it. The real defence is the 256-bit code: guessing it is
+infeasible, and the limiter only bounds the cost of the attempt.
+
+**Bounds.** The body cap is checked at the edge and again in the object (`413 envelope_too_large`). Slots
+are one row per identity, so the table is bounded by the member count; expired rows are removed on the
+owner's next PUT or on a read of that slot.
+
+### Sync channel (v1.3, WP05 part B)
+
+`TYPE:SYNC` bodies (05 §3) keep travelling as ordinary end-to-end messages to one's own pubkey. The sync
+channel is the bounded transport for the ones that are too large or too stateful for a 16 KiB envelope:
+SENT copies and KEYS rotations. It is authenticated with the same device authorization as every other
+route, so only this identity's own keys can read or write it.
+
+**Envelope.** A versioned part carries a unique sync id, a revision, the part index and count, the total
+decoded size, the SHA-256 of the assembled body and an expiry:
+
+```json
+{"v":1,"id":"<8-64 hex>","rev":1,"part":0,"parts":2,"total":8000,
+ "hash":"<sha256 of the assembled body>","expires":1760000000000,"data":"<base64 part>"}
+```
+
+| Request | Effect |
+|---|---|
+| `POST /v1/sync` | Stores one part. When every index `0..parts-1` is present, the body is assembled, its size and SHA-256 are verified, and it becomes an event with a cursor. Reply `{"v":1,"id":…,"rev":…,"part":…,"parts":…,"complete":bool}`, plus `"cursor"` when complete and `"duplicate":true` for an identical re-send. |
+| `GET /v1/sync?after=<cursor>&limit=<n>` | Events this device has not seen, oldest first: `{"v":1,"events":[{"cursor":…,"id":…,"rev":…,"total":…,"hash":…,"data":"<base64>"}],"more":…,"cursor":…}`. Without `after`, the caller's stored cursor is used. |
+| `GET /v1/sync/<id>` | One assembled event, or `404` while it is incomplete, expired or unknown. |
+| `POST /v1/sync/ack {"v":1,"through":<cursor>}` | Advances this **device's** cursor (one row), never backwards and never past the newest event. Reply `{"v":1,"cursor":…}`. |
+
+**Bounds and failure behaviour.**
+
+- Decoded body ≤ **12 KiB**, so its base64 form still fits the existing 16 KiB envelope bound; a larger
+  `total` or part is `413 envelope_too_large`.
+- At most **8 parts** per envelope; `part` must be `< parts`, and every part must agree with the first on
+  `rev`, `parts`, `total` and `hash` (`409 sync_conflict` otherwise).
+- At most **4 unfinished assemblies** per identity (`409 sync_limit`, retryable). A finished event is
+  capped by **64 events / 256 KiB** per identity, likewise `409 sync_limit`.
+- **Duplicates:** the same part with the same bytes is accepted and answered `"duplicate":true` without
+  writing. The same `id` with a different `rev`, or different bytes for an existing part, is
+  `409 sync_conflict`; the original assembly is untouched.
+- **Bad hash or impossible size:** the assembly is dropped (`400 bad_request`); no event exists and no
+  part remains. Nothing partial is ever served.
+- **Malformed / unknown version:** `400 bad_request`, and no cursor or assembly is touched.
+- **Expiry:** an event expires after the client's `expires`, clamped to at most 24 hours
+  (`SYNC_TTL_MS`). An expired event, or its remaining parts, answers `404` and `sync_parts` rows are
+  deleted on that identity's next request.
+
+The cursor is per `(identity, device)`, like the mailbox cursors, and is independent of `acked`. Events
+stay until their expiry: an ack frees the device, not the server row, which is bounded by the caps above.
+
+### Error codes added by the link slot and sync channel
+
+| Code | Status | Meaning | Retryable |
+|---|---|---|---|
+| `link_busy` | 409 | this identity already has a live link slot, or that slot value is in use | no |
+| `sync_conflict` | 409 | same sync id with a different revision, or different bytes for a part | no |
+| `sync_limit` | 409 | too many unfinished assemblies, or the event/byte cap is reached | yes |
+
+Every other failure uses the codes above (`bad_request`, `not_found`, `auth_missing`, `auth_invalid`,
+`auth_replayed`, `not_allowed`, `not_primary`, `rate_limited`, `envelope_too_large`, `storage_error`).
+
 ### Compatibility (legacy clients)
 
 - No `device` parameter: identical requests and replies. An identity that has not migrated behaves as WP04,
@@ -303,6 +400,9 @@ access revocation only.
   up to 72 hours longer than before; `409 device_limit`, `403 unknown_device`, `403 not_primary`, close code
   `4009` and the `gap`/`oldest` fields are new.
 - Route `/v1/devices` and `/v1/devices/<id>` are new; an old server answers them `404`.
+- Routes `/v1/link/<slot>` and `/v1/sync…` are new and are only used by clients that opt in. A client that
+  never links writes no `link_slots`, `sync_parts`, `sync_events` or `sync_cursors` rows, and the bytes of
+  its send/inbox/ack/socket/media replies are unchanged (`test/legacy-link-sync-compat.test.ts`).
 
 ### Known limitations (read before relying on this)
 
@@ -341,5 +441,15 @@ access revocation only.
 | Deliveries per request | 16 | `too_many_deliveries` |
 | Linked devices besides the primary | 3 | `409 device_limit`, not retryable |
 | Dormancy | 72 h without contact | the device stops holding the queue and media |
+| Link bundle | 128 KiB | `413 envelope_too_large`, not retryable |
+| Link slot TTL | 10 min | `404` on read and completion |
+| Link retrieval lease | 60 s | not a hard limit: the bundle stays readable until the TTL |
+| Link proof guesses | 10 per minute per slot and per client | `429 rate_limited`, retryable |
+| Link slots per identity | 1 live | `409 link_busy`, not retryable |
+| Sync body | 12 KiB decoded (≤16 KiB base64) | `413 envelope_too_large` |
+| Sync parts per envelope | 8 | `400 bad_request` |
+| Unfinished sync assemblies per identity | 4 | `409 sync_limit`, retryable |
+| Sync events per identity | 64 events / 256 KiB | `409 sync_limit`, retryable |
+| Sync retention | 24 h maximum | `404` after expiry |
 
 Caps refuse new messages. Nothing already accepted is ever evicted to make room.

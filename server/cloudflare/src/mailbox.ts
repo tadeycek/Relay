@@ -4,12 +4,16 @@ import { PushSender, serviceAccountFrom } from "./push";
 import {
   DELIVERY_ID,
   DEVICE_SEEN_REFRESH_MS,
+  LINK_PROOF_HEADER,
+  LINK_SLOT,
   LINKED_DEVICE_ID,
   MAX_ADMIN_OPS_PER_MINUTE,
   MAX_DEVICE_LABEL_CHARS,
+  MAX_SYNC_REQUEST_BYTES,
   PRIMARY_DEVICE,
   PROTOCOL_VERSION,
   PUBKEY,
+  SYNC_ID,
   allowlistFrom,
   deviceParam,
   errorResponse,
@@ -72,6 +76,54 @@ interface DeviceRow extends Record<string, SqlStorageValue> {
   protocol_version: number;
   /** 0 while active; ms timestamp once revoked. Revoked rows keep the cursor for audit and are ignored by the queue. */
   revoked_at: number;
+}
+
+/** The sealed bundle is opaque bytes; only its size and lifetime are interpreted. */
+interface LinkSlotRow extends Record<string, SqlStorageValue> {
+  slot: string;
+  pubkey: string;
+  bundle: ArrayBuffer;
+  size: number;
+  created_at: number;
+  expires_at: number;
+  lease_until: number;
+}
+
+/** One uploaded part of a versioned sync envelope (WP05/G3). */
+interface SyncPartRow extends Record<string, SqlStorageValue> {
+  pubkey: string;
+  id: string;
+  rev: number;
+  part: number;
+  parts: number;
+  total: number;
+  hash: string;
+  expires_at: number;
+  data: ArrayBuffer;
+}
+
+interface SyncEventRow extends Record<string, SqlStorageValue> {
+  seq: number;
+  pubkey: string;
+  id: string;
+  rev: number;
+  total: number;
+  hash: string;
+  body: ArrayBuffer;
+  created_at: number;
+  expires_at: number;
+}
+
+/** A parsed, validated sync part. Never trusted beyond these bounds. */
+interface SyncPart {
+  id: string;
+  rev: number;
+  part: number;
+  parts: number;
+  total: number;
+  hash: string;
+  expiresAt: number;
+  data: Uint8Array;
 }
 
 /** A request that passed device authorization: the shared identity, the device acting, and whether it is the admin key. */
@@ -152,6 +204,11 @@ export class Mailbox extends DurableObject<Env> {
   private readonly migrated = new Set<string>();
   /** Best-effort admin-operation rate limiter: identity -> timestamps within the last minute. */
   private readonly adminOps = new Map<string, number[]>();
+  /**
+   * Best-effort link-proof limiter, keyed `s:<slot>` and `i:<client>`. In memory: a restart forgets it,
+   * and the cost of a wrong guess to the server is one indexed read. Exposed for tests.
+   */
+  private readonly linkAttempts = new Map<string, number[]>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -179,6 +236,16 @@ export class Mailbox extends DurableObject<Env> {
     try {
       if (url.pathname === "/v1/devices" || url.pathname.startsWith("/v1/devices/")) {
         response = await this.handleDevices(request, url);
+        if (response.status !== 101) response.headers.set("x-relay-instance", this.instance);
+        return response;
+      }
+      if (url.pathname.startsWith("/v1/link/") || url.pathname === "/v1/link") {
+        response = await this.handleLink(request, url);
+        if (response.status !== 101) response.headers.set("x-relay-instance", this.instance);
+        return response;
+      }
+      if (url.pathname === "/v1/sync" || url.pathname.startsWith("/v1/sync/")) {
+        response = await this.handleSync(request, url);
         if (response.status !== 101) response.headers.set("x-relay-instance", this.instance);
         return response;
       }
@@ -721,6 +788,320 @@ export class Mailbox extends DurableObject<Env> {
     });
   }
 
+  // ---- Link slot (WP05 part B) ----------------------------------------------------------------
+  //
+  // The phone seals identity keys, contacts, groups and settings (no history, LP-D06) and parks the
+  // bytes under sha256(one-time code). The server stores only that hash, so it never learns the code.
+  // The desktop proves the code with a header, GETs the bundle and then explicitly completes the read.
+  // A GET does not consume: a lost response is retried, and only DELETE removes the bundle.
+
+  private async handleLink(request: Request, url: URL): Promise<Response> {
+    const slot = url.pathname.slice("/v1/link/".length);
+    if (!LINK_SLOT.test(slot)) return errorResponse(400, "bad_request");
+    // The one-time code must never travel in the URL; a query string here is a client bug, not a variant.
+    if (url.search !== "") return errorResponse(400, "bad_request");
+    if (request.method === "PUT") return this.putLink(request, url, slot);
+    if (request.method !== "GET" && request.method !== "DELETE") return errorResponse(405, "method_not_allowed");
+    return this.readLink(request, slot, request.method === "DELETE");
+  }
+
+  /** `PUT /v1/link/<slot>`: one live slot per identity, 10-minute TTL, refused while one is live. */
+  private async putLink(request: Request, url: URL, slot: string): Promise<Response> {
+    const body = await request.arrayBuffer();
+    if (body.byteLength === 0) return errorResponse(400, "bad_request");
+    if (body.byteLength > this.limits.maxLinkBytes) return errorResponse(413, "envelope_too_large");
+    const authorized = await this.authorize(request, body, url);
+    if (authorized instanceof Response) return authorized;
+    // Primary only: the admin key (post-migration) or the shared identity key (before migration).
+    // A linked device's own key cannot publish a bundle for the identity.
+    if (authorized.device !== PRIMARY_DEVICE || (!authorized.admin && !authorized.legacy)) {
+      return errorResponse(403, "not_primary");
+    }
+    return this.metered(() => {
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+      const now = Date.now();
+      return this.ctx.storage.transactionSync((): Response => {
+        // Expired slots are dropped before the one-live-slot check, so an old link never blocks a new one.
+        this.q("DELETE FROM link_slots WHERE pubkey = ? AND expires_at <= ?", authorized.identity, now);
+        if (this.q("SELECT 1 FROM link_slots WHERE pubkey = ?", authorized.identity).length > 0 ||
+            this.q("SELECT 1 FROM link_slots WHERE slot = ?", slot).length > 0) {
+          return errorResponse(409, "link_busy");
+        }
+        const expiresAt = now + this.limits.linkTtlMs;
+        this.q(
+          "INSERT INTO link_slots (slot, pubkey, bundle, size, created_at, expires_at, lease_until) VALUES (?, ?, ?, ?, ?, ?, 0)",
+          slot, authorized.identity, body, body.byteLength, now, expiresAt,
+        );
+        return json({ v: PROTOCOL_VERSION, slot, size: body.byteLength, expiresAt });
+      });
+    });
+  }
+
+  /**
+   * `GET`/`DELETE /v1/link/<slot>` with `x-relay-link-proof: <code hex>`. A wrong code and an absent
+   * slot both answer 404, so a guess cannot tell whether a slot exists. GET refreshes a 60 s lease and
+   * keeps the bundle; DELETE is the explicit completion and frees it.
+   */
+  private async readLink(request: Request, slot: string, consume: boolean): Promise<Response> {
+    const proof = request.headers.get(LINK_PROOF_HEADER);
+    if (proof === null) return errorResponse(401, "auth_missing");
+    if (!LINK_SLOT.test(proof)) return errorResponse(401, "auth_invalid");
+    if (!this.linkAttemptAllowed(slot, request)) return errorResponse(429, "rate_limited");
+    const digest = await sha256Hex(proof);
+    return this.metered(() => {
+      const now = Date.now();
+      const row = this.q<LinkSlotRow>("SELECT * FROM link_slots WHERE slot = ?", slot)[0];
+      if (!row) return errorResponse(404, "not_found");
+      if (row.expires_at <= now) {
+        this.q("DELETE FROM link_slots WHERE slot = ? AND pubkey = ?", slot, row.pubkey);
+        return errorResponse(404, "not_found");
+      }
+      // The slot IS the hash of the code, so a matching digest proves the code without storing it.
+      if (!sameHex(digest, row.slot)) return errorResponse(404, "not_found");
+      if (consume) {
+        this.q("DELETE FROM link_slots WHERE slot = ? AND pubkey = ?", slot, row.pubkey);
+        return json({ v: PROTOCOL_VERSION, consumed: true });
+      }
+      const leaseUntil = now + this.limits.linkLeaseMs;
+      this.q("UPDATE link_slots SET lease_until = ? WHERE slot = ? AND pubkey = ?", leaseUntil, slot, row.pubkey);
+      return new Response(row.bundle, {
+        status: 200,
+        headers: {
+          "content-type": "application/octet-stream",
+          "cache-control": "no-store",
+          "content-length": String(row.size),
+          "x-relay-link-expires": String(row.expires_at),
+          "x-relay-link-lease": String(leaseUntil),
+        },
+      });
+    });
+  }
+
+  /** True while this slot and this client bucket may still guess. In-memory, best effort (G1). */
+  private linkAttemptAllowed(slot: string, request: Request): boolean {
+    const now = Date.now();
+    const bucket = request.headers.get("CF-Connecting-IP") ?? "unknown";
+    const windowStart = now - 60_000;
+    for (const key of [`s:${slot}`, `i:${bucket}`]) {
+      const recent = (this.linkAttempts.get(key) ?? []).filter((t) => t >= windowStart);
+      if (recent.length >= this.limits.linkAttemptsPerMinute) {
+        this.linkAttempts.set(key, recent);
+        return false;
+      }
+      recent.push(now);
+      this.linkAttempts.set(key, recent);
+    }
+    if (this.linkAttempts.size > 1024) {
+      for (const [key, times] of this.linkAttempts) {
+        if (times.every((t) => t < windowStart)) this.linkAttempts.delete(key);
+      }
+    }
+    return true;
+  }
+
+  // ---- Sync channel (WP05 part B, G3) ---------------------------------------------------------
+  //
+  // A bounded, versioned envelope for SENT copies and KEYS rotations: unique id, revision, part
+  // index/count, total decoded bytes, SHA-256 of the assembled body and an expiry. Parts assemble
+  // only when every index is present and the hash matches; nothing partial is ever served. The
+  // decoded body is capped at 12 KiB so its base64 form fits the 16 KiB envelope bound.
+
+  private async handleSync(request: Request, url: URL): Promise<Response> {
+    if (url.pathname === "/v1/sync/ack") {
+      if (request.method !== "POST") return errorResponse(405, "method_not_allowed");
+      return this.ackSync(request, url);
+    }
+    if (url.pathname === "/v1/sync") {
+      if (request.method === "POST") return this.uploadSync(request, url);
+      if (request.method === "GET") return this.listSync(request, url);
+      return errorResponse(405, "method_not_allowed");
+    }
+    if (request.method !== "GET") return errorResponse(405, "method_not_allowed");
+    const id = url.pathname.slice("/v1/sync/".length);
+    if (!SYNC_ID.test(id)) return errorResponse(400, "bad_request");
+    return this.readSync(request, url, id);
+  }
+
+  /** `POST /v1/sync`: one part. Duplicate parts are idempotent; a different revision or bytes conflict. */
+  private async uploadSync(request: Request, url: URL): Promise<Response> {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > MAX_SYNC_REQUEST_BYTES) return errorResponse(413, "request_too_large");
+    const authorized = await this.authorize(request, body, url);
+    if (authorized instanceof Response) return authorized;
+    const parsed = parseSyncPart(body, this.limits);
+    if ("code" in parsed) return errorResponse(parsed.status, parsed.code);
+    return this.measured(() => this.storeSyncPart(authorized, parsed, Date.now()));
+  }
+
+  private async storeSyncPart(authorized: Authorized, parsed: SyncPart, now: number): Promise<Response> {
+    if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+    const identity = authorized.identity;
+    const done = (row: SyncEventRow) => json({
+      v: PROTOCOL_VERSION, id: row.id, rev: row.rev, complete: true, duplicate: true, cursor: row.seq,
+    });
+
+    const existing = this.q<SyncEventRow>("SELECT * FROM sync_events WHERE pubkey = ? AND id = ?", identity, parsed.id)[0];
+    if (existing) return existing.rev === parsed.rev ? done(existing) : errorResponse(409, "sync_conflict");
+
+    const outcome = this.ctx.storage.transactionSync((): Response | { complete: false } | { complete: true; bytes: Uint8Array } => {
+      this.q("DELETE FROM sync_parts WHERE pubkey = ? AND expires_at <= ?", identity, now);
+      const owner = this.q<SyncPartRow>("SELECT * FROM sync_parts WHERE pubkey = ? AND id = ? LIMIT 1", identity, parsed.id)[0];
+      if (owner && (owner.rev !== parsed.rev || owner.parts !== parsed.parts || owner.total !== parsed.total || owner.hash !== parsed.hash)) {
+        return errorResponse(409, "sync_conflict");
+      }
+      if (!owner) {
+        const open = this.q<{ n: number }>("SELECT COUNT(DISTINCT id) AS n FROM sync_parts WHERE pubkey = ?", identity)[0].n;
+        if (open >= this.limits.maxSyncAssemblies) return errorResponse(409, "sync_limit", true);
+      }
+      const prior = this.q<{ data: ArrayBuffer }>(
+        "SELECT data FROM sync_parts WHERE pubkey = ? AND id = ? AND part = ?", identity, parsed.id, parsed.part,
+      )[0];
+      if (prior) {
+        return sameBytes(new Uint8Array(prior.data), parsed.data) ? { complete: false } : errorResponse(409, "sync_conflict");
+      }
+      this.q(
+        "INSERT INTO sync_parts (pubkey, id, rev, part, parts, total, hash, expires_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        identity, parsed.id, parsed.rev, parsed.part, parsed.parts, parsed.total, parsed.hash, parsed.expiresAt,
+        parsed.data.slice().buffer,
+      );
+      const held = this.q<{ part: number; data: ArrayBuffer }>(
+        "SELECT part, data FROM sync_parts WHERE pubkey = ? AND id = ? ORDER BY part", identity, parsed.id,
+      );
+      if (held.length < parsed.parts) return { complete: false };
+      let length = 0;
+      for (const row of held) length += row.data.byteLength;
+      // A declared total that the parts cannot fill is malformed: drop the assembly, do not keep it.
+      if (length !== parsed.total) {
+        this.q("DELETE FROM sync_parts WHERE pubkey = ? AND id = ?", identity, parsed.id);
+        return errorResponse(400, "bad_request") as unknown as { complete: false };
+      }
+      const bytes = new Uint8Array(length);
+      let offset = 0;
+      for (const row of held) {
+        bytes.set(new Uint8Array(row.data), offset);
+        offset += row.data.byteLength;
+      }
+      return { complete: true, bytes };
+    });
+    if (outcome instanceof Response) return outcome;
+    if (!outcome.complete) {
+      const prior = this.q<{ data: ArrayBuffer }>(
+        "SELECT data FROM sync_parts WHERE pubkey = ? AND id = ? AND part = ?", identity, parsed.id, parsed.part,
+      )[0];
+      const duplicate = !!prior && sameBytes(new Uint8Array(prior.data), parsed.data);
+      return json({
+        v: PROTOCOL_VERSION, id: parsed.id, rev: parsed.rev, part: parsed.part, parts: parsed.parts,
+        complete: false, ...(duplicate ? { duplicate: true } : {}),
+      });
+    }
+
+    // Hash and size are checked outside the insert transaction: the only await is the digest itself.
+    const digest = await sha256Hex(outcome.bytes);
+    if (digest !== parsed.hash) {
+      this.ctx.storage.transactionSync(() => this.q("DELETE FROM sync_parts WHERE pubkey = ? AND id = ?", identity, parsed.id));
+      return errorResponse(400, "bad_request");
+    }
+    return this.ctx.storage.transactionSync((): Response => {
+      const raced = this.q<SyncEventRow>("SELECT * FROM sync_events WHERE pubkey = ? AND id = ?", identity, parsed.id)[0];
+      if (raced) return raced.rev === parsed.rev ? done(raced) : errorResponse(409, "sync_conflict");
+      const usage = this.q<{ n: number; bytes: number }>(
+        "SELECT COUNT(*) AS n, COALESCE(SUM(total), 0) AS bytes FROM sync_events WHERE pubkey = ?", identity,
+      )[0];
+      if (usage.n >= this.limits.maxSyncEvents || usage.bytes + parsed.total > this.limits.maxSyncEventBytes) {
+        return errorResponse(409, "sync_limit", true);
+      }
+      const seq = this.q<{ seq: number }>(
+        "INSERT INTO sync_events (pubkey, id, rev, total, hash, body, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq",
+        identity, parsed.id, parsed.rev, parsed.total, parsed.hash, outcome.bytes.slice().buffer, now, parsed.expiresAt,
+      )[0].seq;
+      this.q("DELETE FROM sync_parts WHERE pubkey = ? AND id = ?", identity, parsed.id);
+      return json({
+        v: PROTOCOL_VERSION, id: parsed.id, rev: parsed.rev, parts: parsed.parts, complete: true, cursor: seq,
+      });
+    });
+  }
+
+  /** `GET /v1/sync?after=&limit=`: what this device missed, in cursor order, bounded by count and bytes. */
+  private async listSync(request: Request, url: URL): Promise<Response> {
+    const query = parseSyncQuery(url, this.limits);
+    if (!query) return errorResponse(400, "bad_request");
+    const authorized = await this.authorize(request, null, url);
+    if (authorized instanceof Response) return authorized;
+    return this.metered(() => {
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+      const now = Date.now();
+      this.q("DELETE FROM sync_events WHERE pubkey = ? AND expires_at <= ?", authorized.identity, now);
+      const stored = this.q<{ cursor: number }>(
+        "SELECT cursor FROM sync_cursors WHERE pubkey = ? AND device = ?", authorized.identity, authorized.device,
+      )[0]?.cursor ?? 0;
+      const after = query.after ?? stored;
+      const rows = this.q<SyncEventRow>(
+        "SELECT * FROM sync_events WHERE pubkey = ? AND seq > ? ORDER BY seq LIMIT ?",
+        authorized.identity, after, query.limit + 1,
+      );
+      const events: Array<Record<string, unknown>> = [];
+      let bytes = 0;
+      let more = rows.length > query.limit;
+      for (const row of rows.slice(0, query.limit)) {
+        if (events.length > 0 && bytes + row.total > this.limits.maxSyncPageBytes) {
+          more = true;
+          break;
+        }
+        if (bytes + row.total > this.limits.maxSyncPageBytes) break;
+        bytes += row.total;
+        events.push({ cursor: row.seq, id: row.id, rev: row.rev, total: row.total, hash: row.hash, data: base64(new Uint8Array(row.body)) });
+      }
+      return json({
+        v: PROTOCOL_VERSION, events, more, cursor: events.length > 0 ? events.at(-1)!.cursor : after,
+      });
+    });
+  }
+
+  private async readSync(request: Request, url: URL, id: string): Promise<Response> {
+    if ([...url.searchParams.keys()].some((k) => k !== "device")) return errorResponse(400, "bad_request");
+    const authorized = await this.authorize(request, null, url);
+    if (authorized instanceof Response) return authorized;
+    return this.metered(() => {
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+      const now = Date.now();
+      const row = this.q<SyncEventRow>("SELECT * FROM sync_events WHERE pubkey = ? AND id = ?", authorized.identity, id)[0];
+      if (!row) return errorResponse(404, "not_found");
+      if (row.expires_at <= now) {
+        this.q("DELETE FROM sync_events WHERE pubkey = ? AND id = ?", authorized.identity, id);
+        return errorResponse(404, "not_found");
+      }
+      return json({
+        v: PROTOCOL_VERSION, id: row.id, rev: row.rev, total: row.total, hash: row.hash,
+        data: base64(new Uint8Array(row.body)), cursor: row.seq, expiresAt: row.expires_at,
+      });
+    });
+  }
+
+  /** `POST /v1/sync/ack`: advances this device's cursor. It never moves back and never past the head. */
+  private async ackSync(request: Request, url: URL): Promise<Response> {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > MAX_ACK_BODY_BYTES) return errorResponse(413, "request_too_large");
+    const authorized = await this.authorize(request, body, url);
+    if (authorized instanceof Response) return authorized;
+    const through = parseAck(body);
+    if (through === null) return errorResponse(400, "bad_request");
+    return this.metered(() => {
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+      return this.ctx.storage.transactionSync((): Response => {
+        const head = this.q<{ seq: number }>("SELECT seq FROM sqlite_sequence WHERE name = 'sync_events'")[0]?.seq ?? 0;
+        const stored = this.q<{ cursor: number }>(
+          "SELECT cursor FROM sync_cursors WHERE pubkey = ? AND device = ?", authorized.identity, authorized.device,
+        )[0]?.cursor ?? 0;
+        const cursor = Math.max(stored, Math.min(through, head));
+        this.q(
+          "INSERT INTO sync_cursors (pubkey, device, cursor) VALUES (?, ?, ?) ON CONFLICT(pubkey, device) DO UPDATE SET cursor = excluded.cursor WHERE excluded.cursor > sync_cursors.cursor",
+          authorized.identity, authorized.device, cursor,
+        );
+        return json({ v: PROTOCOL_VERSION, cursor });
+      });
+    });
+  }
+
   // ---- Media support (RPC from MediaBlob) ----------------------------------------------------
 
   /**
@@ -1138,6 +1519,23 @@ export class Mailbox extends DurableObject<Env> {
       console.error("storage section failed", { error: (e as Error)?.name });
       response = errorResponse(503, "storage_error", true);
     }
+    return this.withMetrics(response, start);
+  }
+
+  /** Like [metered], for a section with an await in the middle (the sync body digest). */
+  private async measured(work: () => Promise<Response>): Promise<Response> {
+    const start = { ...this.rows };
+    let response: Response;
+    try {
+      response = await work();
+    } catch (e) {
+      console.error("storage section failed", { error: (e as Error)?.name });
+      response = errorResponse(503, "storage_error", true);
+    }
+    return this.withMetrics(response, start);
+  }
+
+  private withMetrics(response: Response, start: { read: number; written: number }): Response {
     if (this.exposeMetrics) {
       response.headers.set("x-relay-sql-rows", `read=${this.rows.read - start.read};written=${this.rows.written - start.written}`);
     }
@@ -1152,6 +1550,7 @@ export class Mailbox extends DurableObject<Env> {
       () => this.schemaV6(), () => this.schemaV7(),
     ];
     this.migrateDevices();
+    this.migrateLink();
     for (let version = current + 1; version <= SCHEMA_VERSION; version++) {
       this.ctx.storage.transactionSync(() => {
         steps[version - 1]();
@@ -1208,6 +1607,62 @@ export class Mailbox extends DurableObject<Env> {
         this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS devices_auth_pubkey ON devices (auth_pubkey) WHERE auth_pubkey <> ''");
       }
       this.sql.exec("INSERT INTO meta (key, value) VALUES ('devices_schema', '3') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    });
+  }
+
+  /**
+   * WP05 part B tables, additive and tracked by their own meta key so the numbered `schema` stays 7.
+   * Legacy identities never read or write them. `link_slots` holds one row per identity at most;
+   * `sync_parts` only holds an assembly until it completes or expires; `sync_events` is capped per
+   * identity; `sync_cursors` is one small row per device.
+   */
+  private migrateLink(): void {
+    const version = Number(this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'link_schema'")[0]?.value ?? 0);
+    if (version >= 1) return;
+    this.ctx.storage.transactionSync(() => {
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS link_slots (
+        slot TEXT PRIMARY KEY,
+        pubkey TEXT NOT NULL,
+        bundle BLOB NOT NULL,
+        size INTEGER NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        lease_until INTEGER NOT NULL DEFAULT 0
+      ) WITHOUT ROWID`);
+      // One live slot per identity; the unique index makes a race between two PUTs impossible.
+      this.sql.exec("CREATE UNIQUE INDEX IF NOT EXISTS link_slots_pubkey ON link_slots (pubkey)");
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS sync_parts (
+        pubkey TEXT NOT NULL,
+        id TEXT NOT NULL,
+        rev INTEGER NOT NULL,
+        part INTEGER NOT NULL,
+        parts INTEGER NOT NULL,
+        total INTEGER NOT NULL,
+        hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        data BLOB NOT NULL,
+        PRIMARY KEY (pubkey, id, part)
+      ) WITHOUT ROWID`);
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS sync_events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        pubkey TEXT NOT NULL,
+        id TEXT NOT NULL,
+        rev INTEGER NOT NULL,
+        total INTEGER NOT NULL,
+        hash TEXT NOT NULL,
+        body BLOB NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        UNIQUE (pubkey, id)
+      )`);
+      this.sql.exec("CREATE INDEX IF NOT EXISTS sync_events_fetch ON sync_events (pubkey, seq)");
+      this.sql.exec(`CREATE TABLE IF NOT EXISTS sync_cursors (
+        pubkey TEXT NOT NULL,
+        device TEXT NOT NULL,
+        cursor INTEGER NOT NULL,
+        PRIMARY KEY (pubkey, device)
+      ) WITHOUT ROWID`);
+      this.sql.exec("INSERT INTO meta (key, value) VALUES ('link_schema', '1') ON CONFLICT(key) DO UPDATE SET value = excluded.value");
     });
   }
 
@@ -1344,4 +1799,94 @@ function parseInboxQuery(url: URL, limits: Limits): { after: number; limit: numb
 function parseAck(body: ArrayBuffer): number | null {
   const value = parseJson(body);
   return value?.v === PROTOCOL_VERSION && isSeq(value.through) ? value.through : null;
+}
+
+/** Compares two hex digests without an early exit on the first differing character. */
+function sameHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+/** Base64 for the bounded sync bodies; chunked so a spread never hits the argument limit. */
+function base64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 8192) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  }
+  return btoa(binary);
+}
+
+/** Strict decoder: canonical alphabet and padding only, never a permissive parse of junk. */
+function decodeBase64(text: string): Uint8Array | null {
+  if (text.length > 16 * 1024 || text.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) return null;
+  try {
+    const binary = atob(text);
+    const out = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);
+    return out;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Validates one sync part against the bounds in G3. Everything here is a cheap range check except the
+ * base64 decode, which is capped at the 16 KiB envelope size before it runs.
+ */
+function parseSyncPart(body: ArrayBuffer, limits: Limits): SyncPart | { status: 400 | 413; code: ErrorCode } {
+  const bad: { status: 400 | 413; code: ErrorCode } = { status: 400, code: "bad_request" };
+  const tooLarge: { status: 400 | 413; code: ErrorCode } = { status: 413, code: "envelope_too_large" };
+  const value = parseJson(body);
+  if (value?.v !== PROTOCOL_VERSION) return bad;
+  const { id, rev, part, parts, total, hash, expires, data } = value;
+  if (typeof id !== "string" || !SYNC_ID.test(id)) return bad;
+  if (!Number.isSafeInteger(rev) || (rev as number) < 1 || (rev as number) > 0x7fffffff) return bad;
+  if (!Number.isSafeInteger(parts) || (parts as number) < 1 || (parts as number) > limits.maxSyncParts || limits.maxSyncParts < 1) return bad;
+  if (!Number.isSafeInteger(part) || (part as number) < 0 || (part as number) >= (parts as number)) return bad;
+  if (!Number.isSafeInteger(total) || (total as number) < 0) return bad;
+  if ((total as number) > limits.maxSyncBodyBytes) return tooLarge;
+  if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) return bad;
+  if (!Number.isSafeInteger(expires) || (expires as number) <= 0) return bad;
+  if (typeof data !== "string") return bad;
+  const bytes = decodeBase64(data);
+  if (!bytes) return bad;
+  if (bytes.byteLength > limits.maxSyncBodyBytes) return tooLarge;
+  // A part can never exceed the declared total of the whole envelope.
+  if (bytes.byteLength > (total as number)) return bad;
+  const now = Date.now();
+  if ((expires as number) <= now) return bad;
+  return {
+    id,
+    rev: rev as number,
+    part: part as number,
+    parts: parts as number,
+    total: total as number,
+    hash,
+    // A client cannot extend retention past the server's own ceiling.
+    expiresAt: Math.min(expires as number, now + limits.syncTtlMs),
+    data: bytes,
+  };
+}
+
+/** `after` is optional: without it the caller's stored device cursor is used. */
+function parseSyncQuery(url: URL, limits: Limits): { after: number | null; limit: number } | null {
+  for (const key of url.searchParams.keys()) {
+    if (key !== "after" && key !== "limit" && key !== "device") return null;
+  }
+  if (deviceParam(url) === null) return null;
+  const rawAfter = url.searchParams.get("after");
+  const after = rawAfter === null ? null : /^\d{1,15}$/.test(rawAfter) ? Number(rawAfter) : NaN;
+  if (after !== null && !isSeq(after)) return null;
+  const rawLimit = url.searchParams.get("limit");
+  const limit = rawLimit === null ? limits.maxSyncPageEvents : /^\d{1,6}$/.test(rawLimit) ? Number(rawLimit) : NaN;
+  if (!isLimit(limit)) return null;
+  return { after, limit: Math.min(limit, limits.maxSyncPageEvents) };
 }
