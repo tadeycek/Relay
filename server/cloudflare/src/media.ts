@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { AUTH_WINDOW_S, verifyRequestAuth } from "./auth";
-import { PRIMARY_DEVICE, PROTOCOL_VERSION, PUBKEY, deviceParam, errorResponse, json, limitsFrom, sha256Hex, type Limits } from "./protocol";
+import { DEVICE_ID, PRIMARY_DEVICE, PROTOCOL_VERSION, PUBKEY, deviceParam, errorResponse, json, limitsFrom, sha256Hex, type Limits } from "./protocol";
 
 const SCHEMA_VERSION = 2;
 const nowS = () => Math.floor(Date.now() / 1000);
@@ -73,6 +73,50 @@ export class MediaBlob extends DurableObject<Env> {
       response.headers.set("x-relay-sql-rows", `read=${this.rows.read - start.read};written=${this.rows.written - start.written}`);
     }
     return response;
+  }
+
+  /**
+   * RPC from the Mailbox before it queues a send that attaches this blob (WP04-AC4): true only while the object
+   * exists, was uploaded by [uploader] and has not outlived its lifetime. The answer is the same for "absent",
+   * "someone else's" and "expired", so it is not an oracle.
+   */
+  async attachCheck(uploader: string): Promise<boolean> {
+    return this.ctx.blockConcurrencyWhile(async () => this.attachable(uploader));
+  }
+
+  /**
+   * RPC from the Mailbox after it queued the message (WP04-AC4). [pairs] are the (recipient, device) pairs that
+   * were active when the message was queued. Only pairs whose recipient pubkey is ALREADY a recipient of this
+   * blob (named at PUT, which checked membership) are added, so access never widens to a new identity; a pair
+   * already present keeps its confirmation. Exclusive like every other request on this object, so it cannot
+   * interleave with a settle, a confirm, a repeat PUT or the alarm.
+   */
+  async grant(uploader: string, pairs: Array<[string, string]>): Promise<{ status: "attached" | "gone"; added: number; rows: { read: number; written: number } }> {
+    return this.ctx.blockConcurrencyWhile(async () => {
+      const start = { ...this.rows };
+      const done = (status: "attached" | "gone", added: number) =>
+        ({ status, added, rows: { read: this.rows.read - start.read, written: this.rows.written - start.written } });
+      if (!this.attachable(uploader)) return done("gone", 0);
+      const known = new Set(this.run<{ pubkey: string }>("SELECT DISTINCT pubkey FROM recipients").map((r) => r.pubkey));
+      const wanted = pairs.filter(([p, d]) => PUBKEY.test(p) && DEVICE_ID.test(d) && known.has(p));
+      let linkedAdded = false;
+      let added = 0;
+      this.ctx.storage.transactionSync(() => {
+        for (const [pubkey, device] of wanted) {
+          const inserted = this.run("INSERT INTO recipients (pubkey, device) VALUES (?, ?) ON CONFLICT(pubkey, device) DO NOTHING RETURNING pubkey", pubkey, device).length;
+          added += inserted;
+          if (inserted && device !== PRIMARY_DEVICE) linkedAdded = true;
+        }
+      });
+      // A new linked device may turn dormant before the lifetime alarm: let settle re-arm it, exactly as after a confirm.
+      if (linkedAdded) await this.settle();
+      return done("attached", added);
+    });
+  }
+
+  private attachable(uploader: string): boolean {
+    const info = this.run<{ stored_at: number; uploader: string }>("SELECT stored_at, uploader FROM info")[0];
+    return !!info && info.uploader === uploader && Date.now() < info.stored_at + this.limits.mediaLifetimeMs;
   }
 
   async alarm(): Promise<void> {

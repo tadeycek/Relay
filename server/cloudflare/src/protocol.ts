@@ -21,6 +21,8 @@ export type ErrorCode =
   | "not_allowed"
   | "request_too_large"
   | "too_many_deliveries"
+  | "too_many_media"
+  | "media_unavailable"
   | "envelope_too_large"
   | "unknown_recipient"
   | "id_conflict"
@@ -53,6 +55,8 @@ export interface Limits {
   signalsPerMinute: number;
   maxMediaBytes: number;
   maxMediaRecipients: number;
+  /** Blob digests one send request may attach (WP04-AC4): a 100 MiB file is at most 4 parts. */
+  maxMediaRefs: number;
   mediaLifetimeMs: number;
   mediaChunkBytes: number;
   /** Pilot safety net: at most this many people, founders included, can be admitted by pairing. */
@@ -107,6 +111,7 @@ export const DEFAULT_LIMITS: Limits = {
   maxMediaBytes: 25 * MIB + 64,
   // A group has at most sixteen members besides the sender.
   maxMediaRecipients: 16,
+  maxMediaRefs: 8,
   mediaLifetimeMs: 8 * DAY,
   // Well under the 2 MB a single SQLite value may hold in a Durable Object.
   mediaChunkBytes: 1 * MIB,
@@ -156,6 +161,7 @@ export function limitsFrom(env: Partial<Record<string, unknown>>): Limits {
     signalsPerMinute: pick("SIGNALS_PER_MINUTE", DEFAULT_LIMITS.signalsPerMinute),
     maxMediaBytes: pick("MAX_MEDIA_BYTES", DEFAULT_LIMITS.maxMediaBytes),
     maxMediaRecipients: pick("MAX_MEDIA_RECIPIENTS", DEFAULT_LIMITS.maxMediaRecipients),
+    maxMediaRefs: pick("MAX_MEDIA_REFS", DEFAULT_LIMITS.maxMediaRefs),
     mediaLifetimeMs: pick("MEDIA_LIFETIME_MS", DEFAULT_LIMITS.mediaLifetimeMs),
     mediaChunkBytes: pick("MEDIA_CHUNK_BYTES", DEFAULT_LIMITS.mediaChunkBytes),
     maxMembers: pick("MAX_MEMBERS", DEFAULT_LIMITS.maxMembers),
@@ -185,6 +191,8 @@ export function allowlistFrom(raw: unknown): Set<string> {
 }
 
 export const PUBKEY = /^[0-9a-f]{64}$/;
+/** A media blob address: the lowercase hex SHA-256 of the encrypted file. */
+export const MEDIA_DIGEST = /^[0-9a-f]{64}$/;
 /** Client delivery ids: the app's payload ids are UUIDs; allow any short url-safe token. */
 export const DELIVERY_ID = /^[A-Za-z0-9_-]{1,64}$/;
 

@@ -7,6 +7,7 @@ import {
   LINK_PROOF_HEADER,
   LINK_SLOT,
   LINKED_DEVICE_ID,
+  MEDIA_DIGEST,
   MAX_ADMIN_OPS_PER_MINUTE,
   MAX_DEVICE_LABEL_CHARS,
   MAX_SYNC_REQUEST_BYTES,
@@ -33,6 +34,8 @@ import {
  * statement touches counts. v2 cut the per-delivery and per-receipt write cost; see migrate().
  */
 const SCHEMA_VERSION = 7;
+/** A grant that could not reach its blob is retried this often (only while one is outstanding). */
+const MEDIA_GRANT_RETRY_MS = 60 * 1000;
 /** At most one wake-up push per recipient this often; several messages in a row need only one. */
 const WAKE_INTERVAL_MS = 20_000;
 /** WebSocket frames stay well under the platform's per-message limit even when HTTP pages are larger. */
@@ -142,6 +145,8 @@ type DeviceAccess = { ok: true; linked: false } | { ok: true; linked: true; row:
 
 type AuthOk = Extract<AuthOutcome, { ok: true }>;
 type SizedDelivery = Delivery & { size: number };
+/** A send whose messages were queued together with their media grants (WP04-AC4). */
+type Queued = { results: DeliveryResult[]; grantIds: Map<string, number> };
 
 const nowS = () => Math.floor(Date.now() / 1000);
 const deviceTag = (pubkey: string, device: string) => `d:${pubkey}:${device}`;
@@ -198,6 +203,8 @@ export class Mailbox extends DurableObject<Env> {
    * with no extra reads or writes.
    */
   private readonly linked = new Set<string>();
+  /** `media_grants` is created on the first send that attaches media, so legacy storage is untouched. */
+  private grantTableReady = false;
   /** Admin key -> shared identity. Only the phone holds the admin key (G1). */
   private readonly adminByKey = new Map<string, string>();
   /** Identities that have migrated to per-device keys. Their shared identity key is disabled for device operations. */
@@ -276,9 +283,82 @@ export class Mailbox extends DurableObject<Env> {
     if (authorized instanceof Response) return authorized;
     const parsed = parseSend(body, this.limits);
     if ("code" in parsed) return errorResponse(parsed.status, parsed.code);
-    const hashes = await Promise.all(parsed.map((d) => sha256Hex(d.envelope)));
+    const hashes = await Promise.all(parsed.deliveries.map((d) => sha256Hex(d.envelope)));
 
-    return this.metered(() => this.sendStored(authorized, parsed, hashes, Date.now()));
+    // No `media` field (every client today): the original path, with no extra read, write or RPC.
+    if (parsed.media.length === 0) return this.metered(() => this.sendStored(authorized, parsed.deliveries, hashes, Date.now(), [] as []));
+    return this.measured(() => this.sendWithMedia(authorized, parsed.deliveries, hashes, parsed.media));
+  }
+
+  /**
+   * `POST /v1/send` with an authenticated `media` list (WP04-AC4). In order:
+   *  1. every digest must be a live blob uploaded by this sender (RPC, no mailbox storage touched); otherwise
+   *     409 media_unavailable and NOTHING is queued;
+   *  2. one synchronous transaction queues the messages and writes one outbox row per digest holding the
+   *     (recipient, device) pairs active at that instant, for the recipients whose copy was newly stored;
+   *  3. the outbox is drained: each blob adds those pairs (idempotent). A failure leaves the row for a retry
+   *     (next media send, or the alarm); the message is already queued and the reply says `pending`.
+   */
+  private async sendWithMedia(authorized: Authorized, parsed: SizedDelivery[], hashes: string[], media: string[]): Promise<Response> {
+    const uploader = authorized.identity;
+    const usable = await Promise.all(media.map((h) => this.blob(h).attachCheck(uploader)));
+    if (!usable.every(Boolean)) return errorResponse(409, "media_unavailable");
+
+    const queued = this.sendStored(authorized, parsed, hashes, Date.now(), media);
+    if (queued instanceof Response) return queued;
+    const { results, grantIds } = queued;
+    const outcome = await this.drainGrants();
+    const entries = media.map((hash) => {
+      const id = grantIds.get(hash);
+      return { hash, status: id === undefined ? "unchanged" : (outcome.statuses.get(id) ?? "pending") };
+    });
+    const response = json({ v: PROTOCOL_VERSION, results, media: entries });
+    if (this.exposeMetrics) response.headers.set("x-relay-media-rows", `read=${outcome.blobRows.read};written=${outcome.blobRows.written}`);
+    return response;
+  }
+
+  private blob(hash: string) {
+    return this.env.MEDIA.get(this.env.MEDIA.idFromName(hash), { locationHint: "weur" });
+  }
+
+  private ensureGrantTable(): void {
+    if (this.grantTableReady) return;
+    this.sql.exec("CREATE TABLE IF NOT EXISTS media_grants (id INTEGER PRIMARY KEY AUTOINCREMENT, digest TEXT NOT NULL, uploader TEXT NOT NULL, pairs TEXT NOT NULL, created_at INTEGER NOT NULL)");
+    this.grantTableReady = true;
+  }
+
+  /** Applies queued grants to their blobs. Every blob call is idempotent, so concurrent drains are harmless. */
+  private async drainGrants(): Promise<{ statuses: Map<number, "attached" | "gone" | "pending">; blobRows: { read: number; written: number } }> {
+    this.ensureGrantTable();
+    const statuses = new Map<number, "attached" | "gone" | "pending">();
+    const blobRows = { read: 0, written: 0 };
+    const now = Date.now();
+    const rows = this.q<{ id: number; digest: string; uploader: string; pairs: string; created_at: number }>(
+      "SELECT id, digest, uploader, pairs, created_at FROM media_grants ORDER BY id LIMIT 64");
+    await Promise.all(rows.map(async (row) => {
+      if (now - row.created_at > this.limits.mediaLifetimeMs) {
+        this.q("DELETE FROM media_grants WHERE id = ?", row.id);
+        statuses.set(row.id, "gone");
+        return;
+      }
+      try {
+        const r = await this.blob(row.digest).grant(row.uploader, JSON.parse(row.pairs) as Array<[string, string]>);
+        blobRows.read += r.rows.read;
+        blobRows.written += r.rows.written;
+        this.q("DELETE FROM media_grants WHERE id = ?", row.id);
+        statuses.set(row.id, r.status);
+      } catch (e) {
+        console.error("media grant failed", { error: (e as Error)?.name });
+        statuses.set(row.id, "pending");
+      }
+    }));
+    if (this.q("SELECT 1 FROM media_grants LIMIT 1").length > 0) await this.ctx.storage.setAlarm(Date.now() + MEDIA_GRANT_RETRY_MS);
+    return { statuses, blobRows };
+  }
+
+  /** Retries grants whose blob could not be reached when the message was queued. */
+  async alarm(): Promise<void> {
+    await this.drainGrants();
   }
 
   /**
@@ -286,12 +366,23 @@ export class Mailbox extends DurableObject<Env> {
    * a revocation or a migration can land in between, so the binding is re-read here, in the same
    * synchronous section as the inserts. Without this a send authorized a moment before a DELETE would
    * still be stored.
+   *
+   * With [media] the messages and the grant outbox rows are one transaction (no await inside), so either both
+   * exist or neither does. Without it the section is exactly the original one and returns a plain Response.
    */
-  private sendStored(authorized: Authorized, parsed: SizedDelivery[], hashes: string[], now: number): Response {
-    if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
-    if (!this.sendBindingActive(authorized)) return errorResponse(401, "auth_revoked");
-    const results = parsed.map((d, i) => this.store(authorized.identity, d, hashes[i], now));
-    this.prune(now);
+  private sendStored(authorized: Authorized, parsed: SizedDelivery[], hashes: string[], now: number, media?: []): Response;
+  private sendStored(authorized: Authorized, parsed: SizedDelivery[], hashes: string[], now: number, media: string[]): Response | Queued;
+  private sendStored(authorized: Authorized, parsed: SizedDelivery[], hashes: string[], now: number, media: string[] = []): Response | Queued {
+    const section = (): Response | Queued => {
+      if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
+      if (!this.sendBindingActive(authorized)) return errorResponse(401, "auth_revoked");
+      const results = parsed.map((d, i) => this.store(authorized.identity, d, hashes[i], now));
+      this.prune(now);
+      return { results, grantIds: media.length > 0 ? this.enqueueGrants(authorized.identity, parsed, results, media, now) : new Map() };
+    };
+    const done = media.length > 0 ? this.ctx.storage.transactionSync(section) : section();
+    if (done instanceof Response) return done;
+    const { results } = done;
     const woken = new Set<string>();
     results.forEach((result, i) => {
       if (result.status === "stored") {
@@ -302,7 +393,34 @@ export class Mailbox extends DurableObject<Env> {
         }
       }
     });
-    return json({ v: PROTOCOL_VERSION, results });
+    return media.length > 0 ? done : json({ v: PROTOCOL_VERSION, results });
+  }
+
+  /**
+   * Outbox rows for a send that attached blobs: for every digest, the devices of each recipient whose copy was
+   * newly STORED (duplicates and rejections get nothing) that are active right now, i.e. exactly the devices
+   * that will see this message. A device enrolled later, a revoked or a dormant device is not in the set.
+   */
+  private enqueueGrants(sender: string, parsed: SizedDelivery[], results: DeliveryResult[], media: string[], now: number): Map<string, number> {
+    const ids = new Map<string, number>();
+    const recipients = [...new Set(results.flatMap((r, i) => (r.status === "stored" ? [parsed[i].to] : [])))];
+    if (recipients.length === 0) return ids;
+    this.ensureGrantTable();
+    const pairs = recipients.flatMap((pubkey) => this.activeDevices(pubkey, now).map((device): [string, string] => [pubkey, device]));
+    const text = JSON.stringify(pairs);
+    for (const hash of media) {
+      ids.set(hash, this.q<{ id: number }>("INSERT INTO media_grants (digest, uploader, pairs, created_at) VALUES (?, ?, ?, ?) RETURNING id", hash, sender, text, now)[0].id);
+    }
+    return ids;
+  }
+
+  /** Device ids that receive messages now: not revoked, and the primary or seen within the dormancy window. Identities without devices: primary. */
+  private activeDevices(pubkey: string, now: number): string[] {
+    if (!this.linked.has(pubkey)) return [PRIMARY_DEVICE];
+    return this.q<{ device: string }>(
+      "SELECT device FROM devices WHERE pubkey = ? AND revoked_at = 0 AND (device = 'primary' OR last_seen >= ?)",
+      pubkey, now - this.limits.dormantAfterMs,
+    ).map((r) => r.device);
   }
 
   /** Whether the caller's key may still act at this instant: not migrated away, not revoked. */
@@ -1762,7 +1880,7 @@ function parseJson(body: ArrayBuffer): Record<string, unknown> | null {
   }
 }
 
-function parseSend(body: ArrayBuffer, limits: Limits): SizedDelivery[] | { status: number; code: ErrorCode } {
+function parseSend(body: ArrayBuffer, limits: Limits): { deliveries: SizedDelivery[]; media: string[] } | { status: number; code: ErrorCode } {
   const bad = { status: 400, code: "bad_request" as const };
   const value = parseJson(body);
   if (value?.v !== PROTOCOL_VERSION || !Array.isArray(value.deliveries) || value.deliveries.length === 0) return bad;
@@ -1779,7 +1897,26 @@ function parseSend(body: ArrayBuffer, limits: Limits): SizedDelivery[] | { statu
     keys.add(key);
     out.push({ to, id, envelope, size: utf8.encode(envelope).byteLength });
   }
-  return out;
+  const media = parseMediaRefs(value.media, limits);
+  if (media === null) return bad;
+  if (media === "too_many") return { status: 400, code: "too_many_media" };
+  return { deliveries: out, media };
+}
+
+/**
+ * The optional `media` field: absent or [] means none (legacy). Otherwise an array of at most [maxMediaRefs]
+ * distinct lowercase 64-hex SHA-256 digests; anything else (wrong type, uppercase, duplicate, non-string) is bad.
+ */
+function parseMediaRefs(raw: unknown, limits: Limits): string[] | "too_many" | null {
+  if (raw === undefined) return [];
+  if (!Array.isArray(raw)) return null;
+  if (raw.length > limits.maxMediaRefs) return "too_many";
+  const seen = new Set<string>();
+  for (const h of raw) {
+    if (typeof h !== "string" || !MEDIA_DIGEST.test(h) || seen.has(h)) return null;
+    seen.add(h);
+  }
+  return [...seen];
 }
 
 function parseInboxQuery(url: URL, limits: Limits): { after: number; limit: number; device: string } | null {

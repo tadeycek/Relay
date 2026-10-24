@@ -17,7 +17,7 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 |---|---|
 | `src/index.ts` | Edge router: health, routing, refuses anonymous or oversized requests before they cost a Durable Object request |
 | `src/mailbox.ts` | The mailbox Durable Object: auth replay check, transactional store, catch-up, receipts, live signals, hibernating sockets, schema migrations, device cursors and G1 device authorization (WP04/WP05) |
-| `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after every recipient device confirms (dormant/unlinked devices waived) or 8 days |
+| `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after every recipient device confirms (dormant/unlinked devices waived) or 8 days; `attachCheck`/`grant` RPCs for send-time media references (WP04-AC4) |
 | `src/auth.ts` | NIP-98 request auth |
 | `src/push.ts` | Content-free Firebase wake-ups, service-account JWT signing and OAuth token caching |
 | `src/protocol.ts` | Limits, error codes, shared types |
@@ -139,6 +139,14 @@ contract is in [PROTOCOL.md](PROTOCOL.md#linked-devices-per-device-cursors-v11-w
   by `test/link-sync-budget.test.ts` (`WP05-ROWS`): link PUT 1 read/3 written, GET 2/1, completion 2/1;
   sync first part 4/2, completing part 9/8, list 3/1, single 2/1, ack 2/2. Evidence:
   [linux-port/evidence/WP05-link-slot.md](../../linux-port/evidence/WP05-link-slot.md).
+- **Media race (WP04-AC4).** `POST /v1/send` accepts an optional `media` array of up to 8 blob digests
+  (`MAX_MEDIA_REFS`). The sender names the blobs it attaches; the server checks that it uploaded them, then in
+  the same transaction that queues the messages records the devices active at that instant, and the blobs add
+  those devices (only for recipients already on the blob). This closes the upload → enrol → send gap server-side
+  **for clients that send the digests; the core, app and desktop clients do not yet.** Errors `media_unavailable`
+  (409) and `too_many_media` (400); `media_grants` is created lazily on the first such send. Contract:
+  [PROTOCOL.md](PROTOCOL.md#attaching-media-to-a-send-wp04-ac4); tests `test/media-race.test.ts` (prints a
+  `WP04-MEDIA-RACE-ROWS` line); evidence [linux-port/evidence/WP04-media-race.md](../../linux-port/evidence/WP04-media-race.md).
 - **Not deployed.** These routes exist in this branch only; `wrangler dev --local` and the vitest workerd
   pool are the only environments they have run in.
 

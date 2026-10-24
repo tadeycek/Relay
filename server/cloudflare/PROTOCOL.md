@@ -52,8 +52,12 @@ Every body is JSON with `"v": 1`. Errors are `{"v":1,"error":{"code":…,"retrya
 ### `POST /v1/send`
 
 ```json
-{ "v": 1, "deliveries": [ { "to": "<recipient pubkey hex>", "id": "<client delivery id>", "envelope": "<gift wrap JSON>" } ] }
+{ "v": 1, "deliveries": [ { "to": "<recipient pubkey hex>", "id": "<client delivery id>", "envelope": "<gift wrap JSON>" } ],
+  "media": [ "<sha256 hex of an uploaded blob>", ... ] }
 ```
+
+`media` is optional and is **new (WP04-AC4)**; see [Attaching media to a send](#attaching-media-to-a-send-wp04-ac4).
+A request without it, or with `"media": []`, is handled and answered exactly as before.
 
 Up to 16 deliveries per request, one per recipient copy, so a group message to 9 members is one request.
 Each delivery is stored atomically on its own and gets its own result, in request order:
@@ -68,6 +72,43 @@ Each delivery is stored atomically on its own and gets its own result, in reques
 the same pair until the result is `stored` or `duplicate`. A new gift wrap for each retry is not deduplicated.
 The server only remembers a message while it waits. A retry that arrives after the recipient's receipt is stored
 again and delivered a second time; the recipient drops it by payload id, which the app already does.
+
+### Attaching media to a send (WP04-AC4)
+
+A device can be enrolled after a file is uploaded and before the message that refers to it is delivered. The
+upload snapshot does not contain that device, so it would receive the message and get `404` for the file. The
+server cannot see which blob an encrypted envelope refers to, so the sender says so, next to the envelopes:
+
+```json
+{ "v": 1, "deliveries": [ ... ], "media": [ "0f…64 lowercase hex…", "…" ] }
+```
+
+- **Wire shape.** `media` is a JSON array of **distinct, lowercase, 64-character hex SHA-256 digests** (the
+  address used in `PUT /v1/media/<sha256>`). At most **8** (`MAX_MEDIA_REFS`; a 100 MiB file is at most 4
+  parts). It sits in the signed request body, outside the envelopes, so the sender's signature covers it. It
+  applies to every delivery in the request. The server learns only digests it already holds from the upload.
+- **Parsing.** Absent or `[]`: legacy, nothing changes. Wrong type, a non-string, uppercase, wrong length,
+  non-hex or a duplicate: `400 bad_request`. More than 8: `400 too_many_media`. Nothing is queued in either case.
+- **Check before queuing.** Every digest must be a blob that exists, was **uploaded by this sender's identity**
+  (the first uploader; a later identical PUT by someone else does not make them an owner) and has not outlived
+  its lifetime. Otherwise `409 media_unavailable` (not retryable: re-upload, then send). A missing, foreign and
+  expired blob give the same answer, so it is no existence oracle. Nothing is queued.
+- **Grant, atomically with the queue.** In the same synchronous transaction that stores the messages the server
+  records, for each digest, the `(recipient, device)` pairs of the recipients whose copy was **newly stored**
+  (not `duplicate`, not `rejected`) that are **active at that instant** (not revoked, primary or seen within 72 h;
+  an identity without devices is `primary`). Those are exactly the devices that will see this message. A device
+  enrolled later, a revoked device and a dormant device are not in the set.
+- **Apply.** The blob then adds those pairs (idempotent, exclusive with confirm, settle, repeat PUT and the
+  alarm). A pair is added **only if its recipient pubkey is already a recipient of that blob** (named at PUT,
+  which checked membership), so access never extends to a new identity, only to more devices of an existing
+  one; a pair already present keeps its confirmation. The lifetime alarm is untouched, and a newly added linked
+  device re-arms the dormancy alarm exactly as after a confirm.
+- **Reply.** The usual `{ "v":1, "results":[…] }` plus `"media": [ { "hash", "status" } ]` in request order:
+  `attached` (applied), `unchanged` (no copy was newly stored, nothing to grant), `gone` (the blob was erased or
+  expired between the check and the apply: the message is queued, but this blob is not reachable by the late
+  devices; re-upload and resend), `pending` (the blob could not be reached; the grant is stored and retried
+  every minute by an alarm and by the next media send; the message is queued).
+- **Retry.** Resend the same `(id, envelope, media)`. A retry whose messages are `duplicate` grants nothing new.
 
 ### `GET /v1/inbox?after=<seq>&limit=<n>[&device=<id>]`
 
@@ -244,7 +285,8 @@ a socket that somehow outlives its device answers its next frame with `unknown_d
 - `PUT` snapshots, from the Mailbox object in the same call that checks membership, the **active** devices of
   every recipient pubkey. A recipient is then a `(pubkey, device)` pair; an identity without devices is the
   single pair `(pubkey, primary)`, exactly as before. A repeated upload only adds pairs.
-- `GET` and `DELETE` (confirm) work for a snapshotted pair. A device that joined after the upload gets `404`; an
+- `GET` and `DELETE` (confirm) work for a snapshotted pair. A device that joined after the upload gets `404`
+  unless the message was sent with that digest in `media` while the device was active (WP04-AC4, above); an
   unlinked id gets `403 unknown_device`. A `DELETE` from the primary only confirms the primary's share.
 - The object is erased when every pair has confirmed. At each confirm the server also **waives** pairs whose
   device was unlinked or has been dormant for more than 72 hours (same policy as the queue), and arms the alarm
@@ -381,6 +423,8 @@ stay until their expiry: an ack frees the device, not the server row, which is b
 | `link_busy` | 409 | this identity already has a live link slot, or that slot value is in use | no |
 | `sync_conflict` | 409 | same sync id with a different revision, or different bytes for a part | no |
 | `sync_limit` | 409 | too many unfinished assemblies, or the event/byte cap is reached | yes |
+| `media_unavailable` | 409 | `POST /v1/send` `media` names a blob that does not exist, was not uploaded by the sender, or has expired; nothing was queued | no |
+| `too_many_media` | 400 | `POST /v1/send` `media` has more than 8 digests; nothing was queued | no |
 
 Every other failure uses the codes above (`bad_request`, `not_found`, `auth_missing`, `auth_invalid`,
 `auth_replayed`, `not_allowed`, `not_primary`, `rate_limited`, `envelope_too_large`, `storage_error`).
@@ -399,6 +443,9 @@ Every other failure uses the codes above (`bad_request`, `not_found`, `auth_miss
 - Differences that exist only once an identity has linked devices: messages (and media) can stay on the server
   up to 72 hours longer than before; `409 device_limit`, `403 unknown_device`, `403 not_primary`, close code
   `4009` and the `gap`/`oldest` fields are new.
+- `media` on `POST /v1/send` is new and optional. A client that sends none (every client today) gets a
+  byte-identical reply, no `media_grants` table, no extra RPC and no extra rows (`test/media-race.test.ts`).
+  Until a client sends the digests, the upload, enrol, send race stays open for it.
 - Route `/v1/devices` and `/v1/devices/<id>` are new; an old server answers them `404`.
 - Routes `/v1/link/<slot>` and `/v1/sync…` are new and are only used by clients that opt in. A client that
   never links writes no `link_slots`, `sync_parts`, `sync_events` or `sync_cursors` rows, and the bytes of
@@ -439,6 +486,7 @@ Every other failure uses the codes above (`bad_request`, `not_found`, `auth_miss
 | Pending per recipient | 32 MiB | `recipient_full`, retryable |
 | Pending in total | 256 MiB | `mailbox_full`, retryable |
 | Deliveries per request | 16 | `too_many_deliveries` |
+| Media digests per send (`media`) | 8 | `400 too_many_media` |
 | Linked devices besides the primary | 3 | `409 device_limit`, not retryable |
 | Dormancy | 72 h without contact | the device stops holding the queue and media |
 | Link bundle | 128 KiB | `413 envelope_too_large`, not retryable |
