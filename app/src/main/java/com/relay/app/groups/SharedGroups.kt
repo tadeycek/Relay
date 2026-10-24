@@ -184,6 +184,7 @@ object SharedGroups {
         val accepted = transaction(context) {
             fanOut(context, db, stored, packet, own)
             store(context, db, stored.localId, stored.state, packet, own, mediaPath)
+            com.relay.app.sync.SentSync.stageGroup(context, stored.state, packet)
             GroupMessageRepository(db).getByEventSync(id, event, own)
         }
         notify(context, id)

@@ -147,6 +147,8 @@ object MessagingRuntime {
                     try {
                         worker.drain()
                         groupPreparation.request()
+                        // Sent-copy sync: returns at once unless a computer is linked; rate-limited inside.
+                        launchIo { com.relay.app.sync.SentSync.tick(appContext) }
                     } catch (e: Exception) {
                         Log.e(TAG, "outbox drain failed", e)
                     }

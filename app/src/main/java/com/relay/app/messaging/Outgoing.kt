@@ -18,7 +18,11 @@ object Outgoing {
      */
     fun enqueue(context: Context, contact: Contact, plainBody: String, seal: Boolean = true, payloadId: String = PayloadCodec.newId()): String? {
         val recipient = contact.nostrPubkey ?: return null
-        return enqueueTo(context, recipient, if (seal) contact.publicKey else null, emptyList(), contact.id, plainBody, payloadId)
+        val entry = prepareTo(recipient, if (seal) contact.publicKey else null, emptyList(), contact.id, plainBody, payloadId)
+        val queued = enqueuePrepared(context, entry)
+        // Sent-copy sync (WP05-AC2): a no-op unless a computer is linked; staged in the caller's transaction.
+        if (queued != null) com.relay.app.sync.SentSync.stageDirect(context, recipient, entry.payloadId, entry.createdAt, plainBody)
+        return queued
     }
 
     /**

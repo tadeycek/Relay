@@ -44,7 +44,7 @@ data class DesktopMessage(
 class DesktopMessageStore(
     private val databaseFile: Path,
     secretStore: SecretStore,
-) : AutoCloseable, RawPacketStore {
+) : AutoCloseable, RawPacketStore, SyncStore {
 
     private val lock = Any()
     private val key: String = Base64.getEncoder().encodeToString(secretStore.getOrCreateKey(DATABASE_KEY_ID))
@@ -65,6 +65,7 @@ class DesktopMessageStore(
         }
         connection = DriverManager.getConnection("jdbc:sqlite:${databaseFile.toAbsolutePath()}", config.toProperties())
         migrate()
+        createSyncTables()
         secureFiles()
     }
 
@@ -205,6 +206,128 @@ class DesktopMessageStore(
             ps.setLong(1, seq)
             ps.executeUpdate() == 1
         }
+    }
+
+    // ---- sent-copy sync (WP05-AC2): outbox, cursor, atomic apply ------------------------------
+
+    /**
+     * The outbox is created with `IF NOT EXISTS` rather than a `user_version` bump, so databases
+     * written by earlier builds open unchanged and the schema stays at version 2. The table and the
+     * sync cursor (`meta` row `sync.cursor`) live in the same encrypted database as the messages.
+     */
+    private fun createSyncTables() {
+        synchronized(lock) {
+            connection.createStatement().use { st ->
+                st.execute(
+                    "CREATE TABLE IF NOT EXISTS sync_outbox(" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT, wire TEXT NOT NULL, " +
+                        "created_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0)",
+                )
+            }
+        }
+    }
+
+    override fun enqueueSent(message: DesktopMessage, wires: List<String>, now: Long): Boolean = synchronized(lock) {
+        ensureConversation(message.conversationId)
+        connection.autoCommit = false
+        try {
+            val inserted = insertMessageRow(message)
+            // A duplicate of an existing row must not queue a second copy for the other devices.
+            if (inserted) {
+                connection.prepareStatement("INSERT INTO sync_outbox(wire, created_at) VALUES(?, ?)").use { ps ->
+                    for (wire in wires) {
+                        ps.setString(1, wire)
+                        ps.setLong(2, now)
+                        ps.executeUpdate()
+                    }
+                }
+            }
+            connection.commit()
+            secureFiles()
+            inserted
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    override fun outbox(limit: Int): List<OutboxEntry> = synchronized(lock) {
+        connection.prepareStatement("SELECT id, wire, created_at, attempts FROM sync_outbox ORDER BY id ASC LIMIT ?").use { ps ->
+            ps.setInt(1, limit)
+            ps.executeQuery().use { rs ->
+                buildList { while (rs.next()) add(OutboxEntry(rs.getLong(1), rs.getString(2), rs.getLong(3), rs.getInt(4))) }
+            }
+        }
+    }
+
+    override fun outboxDone(id: Long) {
+        synchronized(lock) {
+            connection.prepareStatement("DELETE FROM sync_outbox WHERE id = ?").use { ps ->
+                ps.setLong(1, id)
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    override fun outboxAttempt(id: Long) {
+        synchronized(lock) {
+            connection.prepareStatement("UPDATE sync_outbox SET attempts = attempts + 1 WHERE id = ?").use { ps ->
+                ps.setLong(1, id)
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    override fun syncCursor(): Long = synchronized(lock) { meta(SYNC_CURSOR)?.toLongOrNull() ?: 0L }
+
+    /**
+     * Inserts [message] (if any) and moves the sync cursor to [cursor] in ONE transaction, so the
+     * cursor can never be ahead of a message that was not committed. The cursor never moves back.
+     * An existing row with the same payload id (received or sent) is kept: the result is
+     * [SyncCommit.MERGED] and no second row appears.
+     */
+    override fun commitSync(message: DesktopMessage?, cursor: Long): SyncCommit = synchronized(lock) {
+        if (message != null) ensureConversation(message.conversationId)
+        connection.autoCommit = false
+        try {
+            var result = SyncCommit.NONE
+            if (message != null) {
+                result = if (insertMessageRow(message)) SyncCommit.INSERTED else SyncCommit.MERGED
+            }
+            if (cursor > syncCursor()) setMeta(SYNC_CURSOR, cursor.toString())
+            connection.commit()
+            secureFiles()
+            result
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    private fun insertMessageRow(message: DesktopMessage): Boolean {
+        val inserted = connection.prepareStatement(
+            "INSERT OR IGNORE INTO messages(id, conversation_id, sender, body, ts, outgoing) VALUES(?, ?, ?, ?, ?, ?)",
+        ).use { ps ->
+            ps.setString(1, message.id)
+            ps.setString(2, message.conversationId)
+            ps.setString(3, message.sender)
+            ps.setString(4, message.body)
+            ps.setLong(5, message.ts)
+            ps.setInt(6, if (message.outgoing) 1 else 0)
+            ps.executeUpdate() == 1
+        }
+        if (inserted) {
+            connection.prepareStatement("UPDATE conversations SET updated_at = ? WHERE id = ?").use { ps ->
+                ps.setLong(1, message.ts)
+                ps.setString(2, message.conversationId)
+                ps.executeUpdate()
+            }
+        }
+        return inserted
     }
 
     // ---- link bundle import (WP05 part B) ------------------------------------------------------
@@ -555,6 +678,7 @@ class DesktopMessageStore(
 
     companion object {
         private const val DATABASE_KEY_ID = "database"
+        private const val SYNC_CURSOR = "sync.cursor"
         private const val LINK_SETTINGS = "link.settings"
         private const val LINK_SETTINGS_AT = "link.settings.updatedAt"
         private const val CONTACT_COLUMNS =

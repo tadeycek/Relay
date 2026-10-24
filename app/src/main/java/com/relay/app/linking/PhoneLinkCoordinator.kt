@@ -31,16 +31,19 @@ object PhoneLinkCoordinator {
                     "relay directly doesn't support linked computers.",
                 retryable = false,
             )
-        PhoneLinkFlow(transport, AndroidLinkHpke).link(scannedText) {
+        val result = PhoneLinkFlow(transport, AndroidLinkHpke).link(scannedText) {
             PhoneLinkBundleSource.build(context)
         }
+        // Sent-copy sync only runs on installs that have linked a computer.
+        if (result is PhoneLinkResult.Linked) com.relay.app.sync.SentSync.noteLinkedCount(context, 1)
+        result
     }
 
     /** The computers this identity has linked, newest first is the server's order. */
     suspend fun devices(context: Context): Result<List<LinkedDevice>> = withContext(Dispatchers.IO) {
         val transport = linkTransport(context)
             ?: return@withContext Result.failure(IllegalStateException("no delivery server"))
-        transport.listDevices()
+        transport.listDevices().also { listed -> listed.getOrNull()?.let { com.relay.app.sync.SentSync.noteLinkedCount(context, it.size) } }
     }
 
     /**

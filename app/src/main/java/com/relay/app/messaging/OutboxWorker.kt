@@ -74,6 +74,7 @@ class OutboxWorker(
                 outbox.markSentSync(entry.id)
                 messages.setDeliveryStateSync(entry.payloadId, DeliveryState.SENT)
                 com.relay.app.groups.GroupDelivery.update(appContext, entry.payloadId, DeliveryState.SENT)
+                com.relay.app.sync.SentSync.confirmed(appContext, entry.payloadId)
                 broadcast(entry.contactId)
                 true
             }
@@ -94,6 +95,7 @@ class OutboxWorker(
         outbox.markFailedSync(entryId)
         messages.setDeliveryStateSync(payloadId, DeliveryState.FAILED)
         com.relay.app.groups.GroupDelivery.update(appContext, payloadId, DeliveryState.FAILED)
+        com.relay.app.sync.SentSync.failed(appContext, payloadId)
         broadcast(contactId)
     }
 

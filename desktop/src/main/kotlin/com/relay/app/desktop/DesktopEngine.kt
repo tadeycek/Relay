@@ -36,6 +36,10 @@ class DesktopEngine(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     /** Link key material and link state; null only in tests that never link. */
     val linkKeys: DesktopLinkKeys? = null,
+    /** Sent-copy sync (WP05-AC2). Both null before a link or without a mailbox; then nothing is published or applied. */
+    private val syncPublisher: SentSyncPublisher? = null,
+    private val syncApplier: SentSyncApplier? = null,
+    syncIntervalMs: Long = 15_000,
 ) : AutoCloseable {
 
     private val _revision = MutableStateFlow(0L)
@@ -45,6 +49,16 @@ class DesktopEngine(
     val status: StateFlow<TransportStatus> get() = transport.status
 
     private var collector: Job? = null
+
+    private val sync: DesktopSyncService? =
+        if (syncPublisher != null && syncApplier != null) {
+            DesktopSyncService(syncPublisher, syncApplier, onApplied = { _revision.value++ }, intervalMs = syncIntervalMs, scope = scope)
+        } else {
+            null
+        }
+
+    /** The background sync, exposed for status and tests. */
+    fun syncService(): DesktopSyncService? = sync
 
     /** Non-null once this computer completed a phone link. */
     fun linkedDevice(): LinkedDevice? = linkKeys?.linkedDevice()
@@ -60,6 +74,7 @@ class DesktopEngine(
                     .onFailure { /* keep the connection: a poison packet must not stop delivery */ }
             }
         }
+        sync?.start()
     }
 
     suspend fun sendText(peerHex: String, text: String): SendResult {
@@ -68,16 +83,24 @@ class DesktopEngine(
         val payload = RelayPayload(PayloadCodec.newId(), System.currentTimeMillis(), body)
         val result = transport.send(peerHex, payload)
         if (result is SendResult.Sent) {
-            store.insertMessage(
-                DesktopMessage(
-                    id = payload.id,
-                    conversationId = peerHex,
-                    sender = identity.publicKeyHex(),
-                    body = text,
-                    ts = payload.ts,
-                    outgoing = true,
-                ),
+            val row = DesktopMessage(
+                id = payload.id,
+                conversationId = peerHex,
+                sender = identity.publicKeyHex(),
+                body = text,
+                ts = payload.ts,
+                outgoing = true,
             )
+            if (syncPublisher != null) {
+                // The row and its sync copy commit together. The copy carries the plain body, sealed to
+                // OUR OWN key by the publisher, not the contact-encrypted TYPE:ENC one the other device
+                // cannot open.
+                // A failed contact send never reaches this branch, so it never produces a copy.
+                syncPublisher.recordSent(row, peerHex, RelayPayload(payload.id, payload.ts, text))
+                sync?.kick()
+            } else {
+                store.insertMessage(row)
+            }
             _revision.value++
         }
         return result
@@ -143,6 +166,7 @@ class DesktopEngine(
     }
 
     suspend fun stop() {
+        sync?.stop()
         collector?.cancel()
         collector = null
         transport.stop()
@@ -192,7 +216,28 @@ class DesktopEngine(
                     device = linkKeys.deviceAuth(),
                 )
             }
-            return DesktopEngine(identity, keyMaterial, store, transport, peerInnerKeys, linkKeys = linkKeys)
+            val device = linkKeys.deviceAuth()
+            var publisher: SentSyncPublisher? = null
+            var applier: SentSyncApplier? = null
+            if (device != null && mailboxUrl.isNotBlank()) {
+                val http = DesktopSyncHttp(mailboxUrl, device.signer, device.deviceId)
+                publisher = SentSyncPublisher(
+                    device.deviceId, store, http,
+                    sealToSelf = { InnerEnvelope.seal(keyMaterial, keyMaterial.publicKeyBase64(), it) },
+                )
+                applier = SentSyncApplier(
+                    ownDeviceId = device.deviceId,
+                    ownPubkeyHex = identity.publicKeyHex(),
+                    http = http,
+                    store = store,
+                    openBody = { InnerEnvelope.open(keyMaterial, it) },
+                    knownConversation = { store.conversation(it) != null },
+                )
+            }
+            return DesktopEngine(
+                identity, keyMaterial, store, transport, peerInnerKeys,
+                linkKeys = linkKeys, syncPublisher = publisher, syncApplier = applier,
+            )
         }
     }
 }
