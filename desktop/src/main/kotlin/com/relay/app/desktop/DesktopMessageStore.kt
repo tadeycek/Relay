@@ -1,0 +1,307 @@
+package com.relay.app.desktop
+
+import com.relay.app.transport.mailbox.MailboxMessage
+import org.json.JSONObject
+import java.nio.file.Path
+import java.sql.Connection
+import java.sql.DriverManager
+import java.util.Base64
+
+/**
+ * One conversation row in the local encrypted database.
+ */
+data class DesktopConversation(
+    val id: String,
+    val peer: String,
+    val title: String,
+    val updatedAt: Long,
+)
+
+/**
+ * One decrypted text message. [id] is the RelayPayload id, so redelivery of the same envelope is
+ * inserted once. [outgoing] distinguishes this install's messages from the peer's.
+ */
+data class DesktopMessage(
+    val id: String,
+    val conversationId: String,
+    val sender: String,
+    val body: String,
+    val ts: Long,
+    val outgoing: Boolean,
+)
+
+/**
+ * Local encrypted message store for the desktop client.
+ *
+ * Uses the Willena sqlite-jdbc fork, which bundles SQLite3 Multiple Ciphers and supports
+ * SQLCipher-compatible modes. The database key is a 256-bit master key from [SecretStore], passed
+ * as a passphrase (base64 text). WAL is enabled; SQLCipher encrypts the main database, the WAL and
+ * the rollback journal. The schema is versioned through `PRAGMA user_version`.
+ *
+ * Thread-safety: one connection guarded by [lock]. Adequate for the single-window desktop MVP;
+ * a later WP can move to a connection pool if background work grows.
+ */
+class DesktopMessageStore(
+    private val databaseFile: Path,
+    secretStore: SecretStore,
+) : AutoCloseable, RawPacketStore {
+
+    private val lock = Any()
+    private val key: String = Base64.getEncoder().encodeToString(secretStore.getOrCreateKey(DATABASE_KEY_ID))
+    private val connection: Connection
+
+    init {
+        DesktopPaths.secureDirectory(databaseFile.parent)
+        // The driver opens the database and checks sqlite_master during connection setup. An
+        // encrypted database must therefore receive its key and cipher through SQLiteConfig,
+        // before that check; manual PRAGMAs afterwards are too late and fail with SQLITE_NOTADB.
+        val config = org.sqlite.SQLiteConfig().apply {
+            setPragma(org.sqlite.SQLiteConfig.Pragma.CIPHER, "sqlcipher")
+            setPragma(org.sqlite.SQLiteConfig.Pragma.KEY, key)
+            setPragma(org.sqlite.SQLiteConfig.Pragma.BUSY_TIMEOUT, "5000")
+            setPragma(org.sqlite.SQLiteConfig.Pragma.JOURNAL_MODE, "WAL")
+            setPragma(org.sqlite.SQLiteConfig.Pragma.SYNCHRONOUS, "FULL")
+            setPragma(org.sqlite.SQLiteConfig.Pragma.FOREIGN_KEYS, "ON")
+        }
+        connection = DriverManager.getConnection("jdbc:sqlite:${databaseFile.toAbsolutePath()}", config.toProperties())
+        migrate()
+        secureFiles()
+    }
+
+    fun schemaVersion(): Int = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("PRAGMA user_version").use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+        }
+    }
+
+    fun ensureConversation(peer: String, title: String = peer): DesktopConversation = synchronized(lock) {
+        val now = System.currentTimeMillis()
+        connection.prepareStatement(
+            "INSERT INTO conversations(id, peer, title, updated_at) VALUES(?, ?, ?, ?) " +
+                "ON CONFLICT(id) DO UPDATE SET title = excluded.title",
+        ).use { ps ->
+            ps.setString(1, peer)
+            ps.setString(2, peer)
+            ps.setString(3, title)
+            ps.setLong(4, now)
+            ps.executeUpdate()
+        }
+        conversation(peer) ?: error("conversation row disappeared")
+    }
+
+    fun conversation(peer: String): DesktopConversation? = synchronized(lock) {
+        connection.prepareStatement("SELECT id, peer, title, updated_at FROM conversations WHERE id = ?").use { ps ->
+            ps.setString(1, peer)
+            ps.executeQuery().use { rs ->
+                if (rs.next()) DesktopConversation(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4))
+                else null
+            }
+        }
+    }
+
+    fun conversations(): List<DesktopConversation> = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT id, peer, title, updated_at FROM conversations ORDER BY updated_at DESC").use { rs ->
+                buildList {
+                    while (rs.next()) add(DesktopConversation(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4)))
+                }
+            }
+        }
+    }
+
+    /** Inserts [message] once by payload id. Returns true when this call inserted it. */
+    fun insertMessage(message: DesktopMessage): Boolean = synchronized(lock) {
+        ensureConversation(message.conversationId)
+        connection.autoCommit = false
+        try {
+            val inserted = connection.prepareStatement(
+                "INSERT OR IGNORE INTO messages(id, conversation_id, sender, body, ts, outgoing) VALUES(?, ?, ?, ?, ?, ?)",
+            ).use { ps ->
+                ps.setString(1, message.id)
+                ps.setString(2, message.conversationId)
+                ps.setString(3, message.sender)
+                ps.setString(4, message.body)
+                ps.setLong(5, message.ts)
+                ps.setInt(6, if (message.outgoing) 1 else 0)
+                ps.executeUpdate() == 1
+            }
+            connection.prepareStatement("UPDATE conversations SET updated_at = ? WHERE id = ?").use { ps ->
+                ps.setLong(1, message.ts)
+                ps.setString(2, message.conversationId)
+                ps.executeUpdate()
+            }
+            connection.commit()
+            secureFiles()
+            inserted
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    fun messages(conversationId: String, limit: Int = 200): List<DesktopMessage> = synchronized(lock) {
+        connection.prepareStatement(
+            "SELECT id, conversation_id, sender, body, ts, outgoing FROM messages " +
+                "WHERE conversation_id = ? ORDER BY ts ASC LIMIT ?",
+        ).use { ps ->
+            ps.setString(1, conversationId)
+            ps.setInt(2, limit)
+            ps.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(DesktopMessage(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getLong(5), rs.getInt(6) == 1))
+                    }
+                }
+            }
+        }
+    }
+
+    fun countMessages(): Long = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT count(*) FROM messages").use { rs -> if (rs.next()) rs.getLong(1) else 0 }
+        }
+    }
+
+    // ---- raw mailbox packets: stored before ack, deleted only after the message is committed ----
+
+    /** Inserts raw envelopes and returns the seqs newly stored (duplicates ignored). */
+    override fun store(messages: List<MailboxMessage>): List<Long> = synchronized(lock) {
+        if (messages.isEmpty()) return emptyList()
+        connection.autoCommit = false
+        try {
+            val fresh = mutableListOf<Long>()
+            connection.prepareStatement("INSERT OR IGNORE INTO mailbox_raw(seq, envelope) VALUES(?, ?)").use { ps ->
+                for (m in messages) {
+                    ps.setLong(1, m.seq)
+                    ps.setString(2, m.envelope)
+                    if (ps.executeUpdate() == 1) fresh += m.seq
+                }
+            }
+            connection.commit()
+            secureFiles()
+            fresh
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    override fun pending(): List<MailboxMessage> = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT seq, envelope FROM mailbox_raw ORDER BY seq ASC").use { rs ->
+                buildList {
+                    while (rs.next()) add(MailboxMessage(rs.getLong(1), rs.getString(2)))
+                }
+            }
+        }
+    }
+
+    override fun delete(seq: Long): Boolean = synchronized(lock) {
+        connection.prepareStatement("DELETE FROM mailbox_raw WHERE seq = ?").use { ps ->
+            ps.setLong(1, seq)
+            ps.executeUpdate() == 1
+        }
+    }
+
+    fun setMeta(name: String, value: String) = synchronized(lock) {
+        connection.prepareStatement("INSERT INTO meta(name, value) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value").use { ps ->
+            ps.setString(1, name)
+            ps.setString(2, value)
+            ps.executeUpdate()
+        }
+    }
+
+    fun meta(name: String): String? = synchronized(lock) {
+        connection.prepareStatement("SELECT value FROM meta WHERE name = ?").use { ps ->
+            ps.setString(1, name)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+        }
+    }
+
+    /** 7-day desktop retention (LP-D08): deletes decrypted messages older than [cutoff]. */
+    fun purgeOlderThan(cutoff: Long): Int = synchronized(lock) {
+        connection.prepareStatement("DELETE FROM messages WHERE ts < ?").use { ps ->
+            ps.setLong(1, cutoff)
+            ps.executeUpdate()
+        }.also { secureFiles() }
+    }
+
+    /**
+     * The SQLite driver creates the database and its WAL/SHM sidecars with the process umask
+     * (usually 0644). The containing directory is already 0700, but WP06 requires owner-only file
+     * modes too, so enforce 0600 after the connection opens and after every write that can create
+     * or replace a sidecar.
+     */
+    private fun secureFiles() {
+        DesktopPaths.setPrivate(databaseFile)
+        for (suffix in listOf("-wal", "-shm")) {
+            val sidecar = databaseFile.resolveSibling(databaseFile.fileName.toString() + suffix)
+            if (java.nio.file.Files.exists(sidecar)) DesktopPaths.setPrivate(sidecar)
+        }
+    }
+
+    override fun close() {
+        synchronized(lock) { runCatching { connection.close() } }
+    }
+
+    private fun migrate() {
+        synchronized(lock) {
+            val version = schemaVersion()
+            if (version < 1) {
+                connection.autoCommit = false
+                try {
+                    connection.createStatement().use { st ->
+                        st.execute(
+                            """
+                            CREATE TABLE IF NOT EXISTS conversations(
+                                id TEXT PRIMARY KEY,
+                                peer TEXT NOT NULL,
+                                title TEXT NOT NULL,
+                                updated_at INTEGER NOT NULL
+                            )
+                            """.trimIndent(),
+                        )
+                        st.execute(
+                            """
+                            CREATE TABLE IF NOT EXISTS messages(
+                                id TEXT PRIMARY KEY,
+                                conversation_id TEXT NOT NULL,
+                                sender TEXT NOT NULL,
+                                body TEXT NOT NULL,
+                                ts INTEGER NOT NULL,
+                                outgoing INTEGER NOT NULL,
+                                FOREIGN KEY(conversation_id) REFERENCES conversations(id)
+                            )
+                            """.trimIndent(),
+                        )
+                        st.execute("CREATE INDEX IF NOT EXISTS messages_by_conversation ON messages(conversation_id, ts)")
+                        st.execute(
+                            """
+                            CREATE TABLE IF NOT EXISTS mailbox_raw(
+                                seq INTEGER PRIMARY KEY,
+                                envelope TEXT NOT NULL
+                            )
+                            """.trimIndent(),
+                        )
+                        st.execute("CREATE TABLE IF NOT EXISTS meta(name TEXT PRIMARY KEY, value TEXT NOT NULL)")
+                        st.execute("PRAGMA user_version = 1")
+                    }
+                    connection.commit()
+                } catch (e: Exception) {
+                    runCatching { connection.rollback() }
+                    throw e
+                } finally {
+                    connection.autoCommit = true
+                }
+            }
+        }
+    }
+
+    companion object {
+        private const val DATABASE_KEY_ID = "database"
+    }
+}

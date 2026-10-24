@@ -2,7 +2,7 @@
 id: WP06
 title: "Desktop shell: storage, secrets, linking, text messaging"
 phase: L2
-lane: planned
+lane: doing
 depends_on: [WP03, WP05]
 specs: ["04 §3–5", "LP-D04, LP-D05, LP-D08"]
 owned_files:

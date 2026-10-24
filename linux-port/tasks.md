@@ -10,7 +10,7 @@ the log together.
 | [WP03](wps/WP03-core-module-extraction.md) | L1 | Extract the shared `:core` JVM module | WP01 | doing |
 | [WP04](wps/WP04-server-device-cursors.md) | L1 | Server: per-device cursors, dormancy, per-device media confirmation | — | doing |
 | [WP05](wps/WP05-phone-linking-and-sync.md) | L1 | Phone: link a computer, link slot, sync channel, sent-copies | WP03, WP04 | planned |
-| [WP06](wps/WP06-desktop-shell-link-text.md) | L2 | Desktop shell: storage, secrets, linking, text messaging | WP03, WP05 | planned |
+| [WP06](wps/WP06-desktop-shell-link-text.md) | L2 | Desktop shell: storage, secrets, linking, text messaging | WP03, WP05 | doing |
 | [WP07](wps/WP07-desktop-groups-and-ui.md) | L2 | Desktop: groups, profiles, Discord-style UI completion | WP06 | planned |
 | [WP08](wps/WP08-desktop-media.md) | L2 | Desktop: photos and videos | WP06 | planned |
 | [WP09](wps/WP09-files-both-platforms.md) | L2 | Files on phone and desktop (`TYPE:FILE`, up to 100 MiB) | WP03, WP04, WP06 | planned |
@@ -27,6 +27,8 @@ the log together.
 Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17), 14 risks, 6 open questions.
 
 ## Current evidence
+
+- [WP06](evidence/WP06.md): Compose Desktop module builds, 17 tests pass, SQLCipher-encrypted store proven (wrong key refused, no plaintext on disk), encrypted text sent/received against a local Worker and stored, packaged distributable launches. Phone linking not implemented.
 
 - [WP04](evidence/WP04.md): per-device cursors, dormancy/gap and per-device media confirmation implemented with 159 local tests; AC4 blocked by the upload→enrol→send race, G1 primary spoofing is a WP05 gate, deploy/pilot not run.
 
