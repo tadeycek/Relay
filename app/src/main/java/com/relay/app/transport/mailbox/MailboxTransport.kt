@@ -36,6 +36,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONObject
 import rust.nostr.sdk.Event
 import rust.nostr.sdk.EventBuilder
 import rust.nostr.sdk.Keys
@@ -363,9 +364,56 @@ class MailboxTransport(
         inbox.send(IncomingEnvelope(sender, payload, System.currentTimeMillis(), onHandled = { runCatching { store.delete(seq) } }))
     }
 
+    /**
+     * One NIP-98-signed request on this transport's mailbox, for the few protocol calls that are not
+     * messages (device enrolment, the link slot, sync). [path] is appended to the mailbox base URL and
+     * must already carry any query string, because NIP-98 binds the exact URL.
+     *
+     * Signing stays here — the same [MailboxAuth] + [AndroidNostrSigner] pair as every other request —
+     * but [keys] lets a caller sign as the phone-only admin key (device operations) while the rest of
+     * the transport keeps using the identity key. `status == 0` means the request never got an answer.
+     */
+    suspend fun signedRequest(
+        method: String,
+        path: String,
+        body: ByteArray? = null,
+        headers: Map<String, String> = emptyMap(),
+        keys: Keys = identity(),
+    ): SignedResponse = withContext(Dispatchers.IO) {
+        val url = base + path
+        val verb = method.uppercase()
+        val payload = if (verb == "GET" || verb == "HEAD") null else body
+        val builder = Request.Builder()
+            .url(url)
+            .header("Authorization", MailboxAuth.header(AndroidNostrSigner { keys }, verb, url, payload))
+        headers.forEach { (name, value) -> builder.header(name, value) }
+        if (payload == null) builder.get() else builder.method(verb, payload.toRequestBody(BYTES))
+        try {
+            http.newCall(builder.build()).execute().use { response ->
+                SignedResponse(response.code, runCatching { response.body?.string().orEmpty() }.getOrDefault(""))
+            }
+        } catch (e: IOException) {
+            SignedResponse(0, "")
+        } catch (e: Exception) {
+            SignedResponse(0, "")
+        }
+    }
+
+    /** Answer to one [signedRequest]. [errorCode] is the server's `error.code`, when it sent one. */
+    data class SignedResponse(val status: Int, val body: String) {
+        val ok: Boolean get() = status in 200..299
+        val errorCode: String?
+            get() = try {
+                JSONObject(body).optJSONObject("error")?.optString("code")?.takeIf { it.isNotEmpty() }
+            } catch (_: Exception) {
+                null
+            }
+    }
+
     companion object {
         private const val TAG = "MailboxTransport"
         private val JSON = "application/json".toMediaType()
+        private val BYTES = "application/octet-stream".toMediaType()
         private val GIFT_WRAP_KIND: UShort = 1059u
         private val CHAT_MESSAGE_KIND: UShort = 14u
         private const val NOT_ALLOWED_RETRY_MS = 5L * 60 * 1000

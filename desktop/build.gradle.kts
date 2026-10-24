@@ -53,6 +53,11 @@ dependencies {
     // LP-D05: OS secret store (Linux Secret Service / macOS Keychain) via java-keyring.
     implementation("com.github.javakeyring:java-keyring:1.0.4")
 
+    // QR rendering for the "Link this computer" screen (WP05 part B). ZXing core is plain Java,
+    // Apache-2.0, no native code; it only produces a BitMatrix that Compose draws as rectangles,
+    // so no image pipeline or AWT surface is involved. 3.5.4 was already in the Gradle cache.
+    implementation("com.google.zxing:core:3.5.4")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")

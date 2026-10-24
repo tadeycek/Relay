@@ -30,11 +30,12 @@ class DesktopIdentity(
     private val paths: DesktopPaths,
     private val secrets: SecretStore,
     /**
-     * Optional pre-generated keys. Tests and the future WP05 link-bundle import inject an identity
-     * here instead of letting this class generate one. Production passes null and the identity is
-     * generated locally (phone linking is a deliberate WP06 seam).
+     * Optional pre-generated keys. Tests inject an identity here instead of persisting one; the
+     * phone-link import ([DesktopStoreLinkImporter]) installs the phone's keys with [adopt].
      */
     private val injectedKeys: Keys? = null,
+    /** When supplied, [isLocalOnly] reflects whether this computer completed a phone link. */
+    private val linkKeys: DesktopLinkKeys? = null,
 ) {
     private val lock = Any()
 
@@ -61,8 +62,20 @@ class DesktopIdentity(
 
     fun publicKeyHex(): String = keys().publicKey().toHex()
 
-    /** True when this install has a locally generated identity (i.e. not phone-linked yet). */
-    fun isLocalOnly(): Boolean = true
+    /**
+     * Installs the identity the phone exported in a link bundle: the same Nostr secret, sealed in
+     * this install's [SecretStore] and written 0600. Idempotent — adopting the same secret twice is
+     * a rewrite of the same value; adopting a different one replaces this install's identity, which
+     * is what "link this computer" means.
+     */
+    fun adopt(secretHex: String) = synchronized(lock) {
+        val adopted = Keys.parse(secretHex)
+        persist(adopted)
+        keys = adopted
+    }
+
+    /** True when this install has never been linked to a phone (its identity was generated here). */
+    fun isLocalOnly(): Boolean = linkKeys?.linkedDevice() == null
 
     fun signer(): NostrSigner = DesktopNostrSigner(keys())
 

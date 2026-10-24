@@ -20,6 +20,8 @@ class DesktopPaths(
 
     val keyFile: Path get() = configDir.resolve("keymaterial.json")
     val identityFile: Path get() = configDir.resolve("identity.json")
+    /** Desktop link key material (ephemeral HPKE key, device auth key, device id), sealed and 0600. */
+    val linkFile: Path get() = configDir.resolve("link.json")
     val databaseFile: Path get() = configDir.resolve("relay.db")
     val secretFile: Path get() = configDir.resolve("secret.key")
 

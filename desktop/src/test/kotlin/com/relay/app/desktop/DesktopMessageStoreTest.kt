@@ -28,7 +28,8 @@ class DesktopMessageStoreTest {
         val paths = paths()
         val secrets = FileSecretStore(paths.secretFile)
         DesktopMessageStore(paths.databaseFile, secrets).use { store ->
-            assertEquals(1, store.schemaVersion())
+            // Schema 2 adds the link-import tables (contacts, link_groups); schema 1 is migrated in place.
+            assertEquals(2, store.schemaVersion())
             store.insertMessage(DesktopMessage("m1", "peer-a", "peer-a", "hello", 1_000L, outgoing = false))
             store.insertMessage(DesktopMessage("m2", "peer-a", "me", "hi back", 2_000L, outgoing = true))
             assertEquals(2, store.messages("peer-a").size)

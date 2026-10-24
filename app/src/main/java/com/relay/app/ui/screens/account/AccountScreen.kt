@@ -74,6 +74,12 @@ fun AccountScreen(navController: NavController) {
         ScreenHeader(title = "Account")
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Profile(status = vm.connectionStatus, onShowCode = { navController.navigate(Screen.QrMyCode.route) })
+            RowDivider()
+            LinkRow(
+                headline = "Linked computers",
+                supporting = "Computers that can send and receive as you",
+                onClick = { navController.navigate(Screen.LinkedComputers.route) },
+            )
             AccountPage.entries.forEach { page ->
                 RowDivider()
                 LinkRow(

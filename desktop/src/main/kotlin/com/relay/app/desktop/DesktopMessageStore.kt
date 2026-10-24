@@ -207,6 +207,206 @@ class DesktopMessageStore(
         }
     }
 
+    // ---- link bundle import (WP05 part B) ------------------------------------------------------
+
+    /**
+     * Imports a phone's link bundle: contacts, groups and settings. Identity keys are written by
+     * [DesktopStoreLinkImporter] through [DesktopIdentity]/[DesktopKeyMaterial], not here.
+     *
+     * Idempotent by construction: rows are keyed by Nostr pubkey (or a hash of name+phone for a
+     * contact without one) and a bundle never overwrites a row that is newer than [appliedAt].
+     * Re-importing the same bundle at the same timestamp changes nothing and reports zero inserts,
+     * zero updates and `settingsApplied = false`.
+     */
+    fun importLinkBundle(bundle: com.relay.app.linking.LinkBundle, appliedAt: Long): LinkImportCounts = synchronized(lock) {
+        connection.autoCommit = false
+        try {
+            var inserted = 0
+            var updated = 0
+            var unchanged = 0
+
+            val byKey = LinkedHashMap<String, com.relay.app.linking.LinkContact>()
+            for (contact in bundle.contacts) byKey.putIfAbsent(contactKey(contact), contact)
+
+            connection.prepareStatement(
+                "INSERT INTO contacts(key, nostr_pubkey, name, phone, has_relay, trust_level, public_key, " +
+                    "pending_public_key, signing_public_key, relay_hints, qr_verified, deleted_at, original_name, updated_at) " +
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+                    "ON CONFLICT(key) DO UPDATE SET nostr_pubkey = excluded.nostr_pubkey, " +
+                    "name = excluded.name, phone = excluded.phone, has_relay = excluded.has_relay, " +
+                    "trust_level = excluded.trust_level, public_key = excluded.public_key, " +
+                    "pending_public_key = excluded.pending_public_key, signing_public_key = excluded.signing_public_key, " +
+                    "relay_hints = excluded.relay_hints, qr_verified = excluded.qr_verified, " +
+                    "deleted_at = excluded.deleted_at, original_name = excluded.original_name, " +
+                    "updated_at = excluded.updated_at",
+            ).use { ps ->
+                for ((key, contact) in byKey) {
+                    val existing = contactUpdatedAt(key)
+                    if (existing != null && existing >= appliedAt) {
+                        unchanged++
+                        continue
+                    }
+                    ps.setString(1, key)
+                    ps.setString(2, contact.nostrPubkey)
+                    ps.setString(3, contact.name)
+                    ps.setString(4, contact.phone)
+                    ps.setInt(5, if (contact.hasRelay) 1 else 0)
+                    ps.setString(6, contact.trustLevel)
+                    ps.setString(7, contact.publicKey)
+                    ps.setString(8, contact.pendingPublicKey)
+                    ps.setString(9, contact.signingPublicKey)
+                    ps.setString(10, org.json.JSONArray(contact.relayHints).toString())
+                    ps.setInt(11, if (contact.qrVerified) 1 else 0)
+                    contact.deletedAt?.let { ps.setLong(12, it) } ?: ps.setNull(12, java.sql.Types.INTEGER)
+                    ps.setString(13, contact.originalName)
+                    ps.setLong(14, appliedAt)
+                    ps.executeUpdate()
+                    if (existing == null) inserted++ else updated++
+                }
+            }
+
+            var groups = 0
+            connection.prepareStatement(
+                "INSERT INTO link_groups(id, name, shared_owner, members, updated_at) VALUES(?, ?, ?, ?, ?) " +
+                    "ON CONFLICT(id) DO UPDATE SET name = excluded.name, shared_owner = excluded.shared_owner, " +
+                    "members = excluded.members, updated_at = excluded.updated_at",
+            ).use { ps ->
+                for (group in bundle.groups) {
+                    val existing = groupUpdatedAt(group.id)
+                    if (existing != null && existing >= appliedAt) continue
+                    ps.setString(1, group.id)
+                    ps.setString(2, group.name)
+                    ps.setString(3, group.sharedOwner)
+                    ps.setString(4, org.json.JSONArray(group.members).toString())
+                    ps.setLong(5, appliedAt)
+                    ps.executeUpdate()
+                    groups++
+                }
+            }
+
+            val settingsAt = meta(LINK_SETTINGS_AT)?.toLongOrNull() ?: 0
+            val settingsApplied = settingsAt < appliedAt
+            if (settingsApplied) {
+                setMeta(LINK_SETTINGS, encodeSettings(bundle.settings).toString())
+                setMeta(LINK_SETTINGS_AT, appliedAt.toString())
+            }
+
+            connection.commit()
+            secureFiles()
+            LinkImportCounts(inserted, updated, unchanged, groups, settingsApplied)
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    fun contacts(): List<DesktopContact> = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT $CONTACT_COLUMNS FROM contacts ORDER BY name").use { rs ->
+                buildList { while (rs.next()) add(readContact(rs)) }
+            }
+        }
+    }
+
+    fun groups(): List<DesktopGroup> = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT id, name, shared_owner, members, updated_at FROM link_groups ORDER BY name").use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        add(
+                            DesktopGroup(
+                                id = rs.getString(1),
+                                name = rs.getString(2),
+                                sharedOwner = rs.getString(3),
+                                members = stringList(rs.getString(4)),
+                                updatedAt = rs.getLong(5),
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /** Settings mirrored from the phone, or null before the first link. */
+    fun linkSettings(): com.relay.app.linking.LinkSettings? = synchronized(lock) {
+        val raw = meta(LINK_SETTINGS) ?: return null
+        runCatching {
+            val json = org.json.JSONObject(raw)
+            com.relay.app.linking.LinkSettings(
+                typingIndicators = json.optBoolean("typingIndicators", true),
+                notificationPreview = json.optBoolean("notificationPreview", true),
+                retentionDays = json.optInt("retentionDays", 7),
+                readReceipts = json.optBoolean("readReceipts", true),
+                mediaAutoDownload = json.optBoolean("mediaAutoDownload", true),
+                theme = json.optString("theme"),
+                locale = json.optString("locale"),
+            )
+        }.getOrNull()
+    }
+
+    fun linkSettingsUpdatedAt(): Long = synchronized(lock) { meta(LINK_SETTINGS_AT)?.toLongOrNull() ?: 0 }
+
+    fun contactCount(): Long = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT count(*) FROM contacts").use { rs -> if (rs.next()) rs.getLong(1) else 0 }
+        }
+    }
+
+    private fun contactKey(contact: com.relay.app.linking.LinkContact): String =
+        contact.nostrPubkey ?: "local-" + sha256Hex(contact.name + "\u0000" + contact.phone)
+
+    private fun contactUpdatedAt(key: String): Long? =
+        connection.prepareStatement("SELECT updated_at FROM contacts WHERE key = ?").use { ps ->
+            ps.setString(1, key)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else null }
+        }
+
+    private fun groupUpdatedAt(id: String): Long? =
+        connection.prepareStatement("SELECT updated_at FROM link_groups WHERE id = ?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else null }
+        }
+
+    private fun readContact(rs: java.sql.ResultSet) = DesktopContact(
+        key = rs.getString(1),
+        nostrPubkey = rs.getString(2),
+        name = rs.getString(3),
+        phone = rs.getString(4),
+        hasRelay = rs.getInt(5) == 1,
+        trustLevel = rs.getString(6),
+        publicKey = rs.getString(7),
+        pendingPublicKey = rs.getString(8),
+        signingPublicKey = rs.getString(9),
+        relayHints = stringList(rs.getString(10)),
+        qrVerified = rs.getInt(11) == 1,
+        deletedAt = rs.getLong(12).takeIf { !rs.wasNull() },
+        originalName = rs.getString(13),
+        updatedAt = rs.getLong(14),
+    )
+
+    private fun stringList(raw: String?): List<String> = runCatching {
+        val array = org.json.JSONArray(raw ?: "[]")
+        (0 until array.length()).map { array.getString(it) }
+    }.getOrDefault(emptyList())
+
+    private fun encodeSettings(settings: com.relay.app.linking.LinkSettings): org.json.JSONObject =
+        org.json.JSONObject()
+            .put("typingIndicators", settings.typingIndicators)
+            .put("notificationPreview", settings.notificationPreview)
+            .put("retentionDays", settings.retentionDays)
+            .put("readReceipts", settings.readReceipts)
+            .put("mediaAutoDownload", settings.mediaAutoDownload)
+            .put("theme", settings.theme)
+            .put("locale", settings.locale)
+
+    private fun sha256Hex(value: String): String =
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
     fun setMeta(name: String, value: String) = synchronized(lock) {
         connection.prepareStatement("INSERT INTO meta(name, value) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value").use { ps ->
             ps.setString(1, name)
@@ -297,11 +497,104 @@ class DesktopMessageStore(
                 } finally {
                     connection.autoCommit = true
                 }
+                migrationDone(2)
+                return
             }
+            if (version < 2) {
+                migrationDone(2)
+            }
+        }
+    }
+
+    /** Applies the schema-2 tables (link import) in one transaction and bumps `user_version`. */
+    private fun migrationDone(target: Int) {
+        connection.autoCommit = false
+        try {
+            connection.createStatement().use { st ->
+                st.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS contacts(
+                        key TEXT PRIMARY KEY,
+                        nostr_pubkey TEXT,
+                        name TEXT NOT NULL,
+                        phone TEXT NOT NULL,
+                        has_relay INTEGER NOT NULL,
+                        trust_level TEXT NOT NULL,
+                        public_key TEXT,
+                        pending_public_key TEXT,
+                        signing_public_key TEXT,
+                        relay_hints TEXT NOT NULL,
+                        qr_verified INTEGER NOT NULL,
+                        deleted_at INTEGER,
+                        original_name TEXT,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                st.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS link_groups(
+                        id TEXT PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        shared_owner TEXT,
+                        members TEXT NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                st.execute("PRAGMA user_version = $target")
+            }
+            connection.commit()
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
         }
     }
 
     companion object {
         private const val DATABASE_KEY_ID = "database"
+        private const val LINK_SETTINGS = "link.settings"
+        private const val LINK_SETTINGS_AT = "link.settings.updatedAt"
+        private const val CONTACT_COLUMNS =
+            "key, nostr_pubkey, name, phone, has_relay, trust_level, public_key, pending_public_key, " +
+                "signing_public_key, relay_hints, qr_verified, deleted_at, original_name, updated_at"
     }
 }
+
+/** One imported contact row (a mirror of the phone's contact, not a local edit target yet). */
+data class DesktopContact(
+    val key: String,
+    val nostrPubkey: String?,
+    val name: String,
+    val phone: String,
+    val hasRelay: Boolean,
+    val trustLevel: String,
+    val publicKey: String?,
+    val pendingPublicKey: String?,
+    val signingPublicKey: String?,
+    val relayHints: List<String>,
+    val qrVerified: Boolean,
+    val deletedAt: Long?,
+    val originalName: String?,
+    val updatedAt: Long,
+)
+
+/** One imported group roster entry, keyed by the protocol UUID (not a local row id). */
+data class DesktopGroup(
+    val id: String,
+    val name: String,
+    val sharedOwner: String?,
+    val members: List<String>,
+    val updatedAt: Long,
+)
+
+/** What [DesktopMessageStore.importLinkBundle] changed, for the importer report and tests. */
+data class LinkImportCounts(
+    val inserted: Int,
+    val updated: Int,
+    val unchanged: Int,
+    val groups: Int,
+    val settingsApplied: Boolean,
+)

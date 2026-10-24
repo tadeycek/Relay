@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import rust.nostr.sdk.Keys
 
 /**
@@ -24,9 +23,9 @@ import rust.nostr.sdk.Keys
  * the Nostr identity and a [Transport]. The UI only calls this class, so all message behaviour is
  * unit-testable without a display.
  *
- * Phone linking is deliberately absent. [peerInnerKeys] is the seam where WP05 part B will supply
- * contact HPKE keys learned from the link bundle; until then the UI sends NIP-17-only messages
- * (still end-to-end encrypted) and can exercise HPKE by supplying a key explicitly.
+ * After a phone link ([DesktopLinkFlow] → [DesktopStoreLinkImporter]) the identity and HPKE keyset
+ * are the phone's, and the transport signs with the enrolled device-auth key. Until then this
+ * install is local-only: its own identity, no `device` parameter.
  */
 class DesktopEngine(
     val identity: DesktopIdentity,
@@ -35,6 +34,8 @@ class DesktopEngine(
     private val transport: Transport,
     private val peerInnerKeys: Map<String, String> = emptyMap(),
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    /** Link key material and link state; null only in tests that never link. */
+    val linkKeys: DesktopLinkKeys? = null,
 ) : AutoCloseable {
 
     private val _revision = MutableStateFlow(0L)
@@ -44,6 +45,11 @@ class DesktopEngine(
     val status: StateFlow<TransportStatus> get() = transport.status
 
     private var collector: Job? = null
+
+    /** Non-null once this computer completed a phone link. */
+    fun linkedDevice(): LinkedDevice? = linkKeys?.linkedDevice()
+
+    fun isLinked(): Boolean = linkedDevice() != null
 
     fun start() {
         if (collector?.isActive == true) return
@@ -80,6 +86,34 @@ class DesktopEngine(
     fun messages(peerHex: String): List<DesktopMessage> = store.messages(peerHex)
 
     fun conversations(): List<DesktopConversation> = store.conversations()
+
+    fun contacts(): List<DesktopContact> = store.contacts()
+
+    fun groups(): List<DesktopGroup> = store.groups()
+
+    /**
+     * Builds the link flow for [mailboxUrl]. The flow is pure; the caller drives
+     * `begin()`/`step()` (or `await()`) and renders the states.
+     */
+    fun createLinkFlow(
+        mailboxUrl: String,
+        linkHttp: LinkHttp = DesktopLinkHttp(mailboxUrl),
+        clock: LinkClock = SystemLinkClock,
+        codeSource: () -> String = { com.relay.app.linking.LinkCode.generate() },
+    ): DesktopLinkFlow {
+        val links = linkKeys ?: error("This engine was built without link key material")
+        return DesktopLinkFlow(
+            http = linkHttp,
+            hpke = DesktopLinkHpke { links.loadOrCreate().ephemeralPrivateKeysetJson },
+            keys = object : LinkKeyProvider {
+                override fun loadOrCreate(deviceLabel: String?): DesktopLinkSession =
+                    links.loadOrCreate(deviceLabel ?: DesktopLinkKeys.defaultDeviceLabel())
+            },
+            importer = DesktopStoreLinkImporter(identity, keyMaterial, store, links, clock),
+            clock = clock,
+            codeSource = codeSource,
+        )
+    }
 
     /** Decrypts one incoming payload and stores it. [IncomingEnvelope.onHandled] fires only after commit. */
     private suspend fun handle(envelope: IncomingEnvelope) {
@@ -120,8 +154,8 @@ class DesktopEngine(
 
     /** A transport for offline/local-only launches: no socket, no sends. */
     class OfflineTransport : Transport {
-        private val stopped = kotlinx.coroutines.flow.MutableStateFlow(TransportStatus.STOPPED)
-        override val status: kotlinx.coroutines.flow.StateFlow<TransportStatus> = stopped
+        private val stopped = MutableStateFlow(TransportStatus.STOPPED)
+        override val status: StateFlow<TransportStatus> = stopped.asStateFlow()
         override val incoming: kotlinx.coroutines.flow.Flow<IncomingEnvelope> = kotlinx.coroutines.flow.emptyFlow()
         override suspend fun start() {}
         override suspend fun stop() {}
@@ -131,22 +165,53 @@ class DesktopEngine(
     }
 
     companion object {
-        /** Builds the production desktop stack for [mailboxUrl] with the given XDG paths. */
+        /**
+         * Builds the production desktop stack for [mailboxUrl] with the given XDG paths.
+         *
+         * If this computer already completed a link, the transport signs with the enrolled device
+         * key and sends `?device=<id>`; the identity is the one the phone exported.
+         */
         fun create(
             paths: DesktopPaths,
             mailboxUrl: String,
             peerInnerKeys: Map<String, String> = emptyMap(),
         ): DesktopEngine {
             val secrets = SecretStores.open(paths)
-            val identity = DesktopIdentity(paths, secrets)
+            val linkKeys = DesktopLinkKeys(paths, secrets)
+            val identity = DesktopIdentity(paths, secrets, linkKeys = linkKeys)
             val keyMaterial = DesktopKeyMaterial(paths, secrets)
             val store = DesktopMessageStore(paths.databaseFile, secrets)
             val transport: Transport = if (mailboxUrl.isBlank()) {
                 OfflineTransport()
             } else {
-                DesktopMailboxTransport(mailboxUrl, identity.keys(), identity.signer(), store)
+                DesktopMailboxTransport(
+                    baseUrl = mailboxUrl,
+                    keys = identity.keys(),
+                    signer = identity.signer(),
+                    rawStore = store,
+                    device = linkKeys.deviceAuth(),
+                )
             }
-            return DesktopEngine(identity, keyMaterial, store, transport, peerInnerKeys)
+            return DesktopEngine(identity, keyMaterial, store, transport, peerInnerKeys, linkKeys = linkKeys)
         }
     }
+}
+
+/**
+ * The enrolled device key a linked desktop signs with. [signer] is over the device-auth key, not the
+ * identity key: after migration the server refuses the shared identity key for device operations.
+ */
+data class DesktopDeviceAuth(
+    val deviceId: String,
+    val signer: com.relay.app.transport.mailbox.NostrSigner,
+)
+
+/** The enrolled device, or null before a link. */
+fun DesktopLinkKeys.deviceAuth(): DesktopDeviceAuth? {
+    val file = load() ?: return null
+    if (file.identityPubkey == null) return null
+    return runCatching {
+        val keys = Keys.parse(file.session.deviceAuthSecretHex)
+        DesktopDeviceAuth(file.session.deviceId, DesktopNostrSigner(keys))
+    }.getOrNull()
 }

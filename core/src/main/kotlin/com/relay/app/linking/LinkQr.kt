@@ -15,7 +15,8 @@ package com.relay.app.linking
  * ```
  *
  * - `code`      64 lowercase hex ([LinkCode]).
- * - `deviceId`  16 lowercase hex (`[0-9a-f]{16}`), the id the phone enrols.
+ * - `deviceId`  32 lowercase hex (`[0-9a-f]{32}`), the id the phone enrols. The server's linked-device id
+ *   pattern is exactly this; 16 hex was rejected with 400 against the real Worker.
  * - `ephemeralPub` / `deviceAuthPub` are unpadded base64url public keys (Tink keyset bytes),
  *   bounded to [MAX_PUBLIC_KEY_CHARS] each.
  *
@@ -34,9 +35,9 @@ object LinkQr {
 
     /** Unpadded base64url of a public key; Tink keyset bytes are ~120 B, so this is generous. */
     const val MAX_PUBLIC_KEY_CHARS = 256
-    const val DEVICE_ID_CHARS = 16
+    const val DEVICE_ID_CHARS = 32
 
-    private val DEVICE_ID = Regex("[0-9a-f]{16}")
+    private val DEVICE_ID = Regex("[0-9a-f]{32}")
     private val B64URL = Regex("[A-Za-z0-9_-]{16,${MAX_PUBLIC_KEY_CHARS}}")
 
     /**
@@ -57,7 +58,7 @@ object LinkQr {
     /** Builds the QR text a desktop displays. Throws only on a programming error. */
     fun encode(code: String, deviceId: String, ephemeralPublicKey: String, deviceAuthPublicKey: String): String {
         val canonical = LinkCode.canonical(code) ?: throw IllegalArgumentException("not a link code")
-        require(DEVICE_ID.matches(deviceId)) { "device id must be 16 lowercase hex" }
+        require(DEVICE_ID.matches(deviceId)) { "device id must be 32 lowercase hex" }
         require(B64URL.matches(ephemeralPublicKey)) { "ephemeral key is not base64url" }
         require(B64URL.matches(deviceAuthPublicKey)) { "device auth key is not base64url" }
         require(ephemeralPublicKey != deviceAuthPublicKey) { "the two desktop keys must differ" }

@@ -107,6 +107,29 @@ class DesktopKeyMaterial(
         }
     }
 
+    /**
+     * Replaces this install's HPKE keys with the identity keyset the phone exported in a link
+     * bundle. [currentKeysetBase64] is base64 of the cleartext Tink **private** keyset JSON (the
+     * bundle is itself HPKE-sealed, so the keysets inside it are not additionally wrapped); this
+     * method re-seals it with the local [SecretStore] master key and writes the 0600 key file.
+     *
+     * After this call this computer can decrypt messages the phone's contacts send to the identity.
+     */
+    fun adoptKeyset(currentKeysetBase64: String, previousKeysetBase64: String?, previousExpiresAt: Long) =
+        synchronized(lock) {
+            val current = importKeyset(decodeKeysetText(currentKeysetBase64))
+            val previous = previousKeysetBase64?.let { importKeyset(decodeKeysetText(it)) }
+            val next = State(current, previous, if (previous != null) previousExpiresAt else 0)
+            persist(next)
+            loaded = next
+        }
+
+    /** Accepts base64 of Tink JSON, and tolerates a producer that already sent the JSON itself. */
+    private fun decodeKeysetText(value: String): String {
+        val decoded = runCatching { java.util.Base64.getDecoder().decode(value) }.getOrNull()
+        return decoded?.toString(Charsets.UTF_8)?.takeIf { it.trimStart().startsWith("{") } ?: value
+    }
+
     private fun load(): State {
         loaded?.let { return it }
         synchronized(lock) {

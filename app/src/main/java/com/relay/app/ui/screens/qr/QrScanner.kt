@@ -57,24 +57,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
-// CameraX's ImageProxy.image is an experimental API; the analyzer below opts in explicitly. Lint does not
-// recognise Kotlin's @OptIn for this marker inside the AndroidView factory lambda, so it is suppressed here.
-@android.annotation.SuppressLint("UnsafeOptInUsageError")
-@androidx.annotation.OptIn(ExperimentalGetImage::class)
+/** Meeting in person by scanning: the contact-specific logic on top of the shared [RawQrScanView]. */
 @Composable
 internal fun ScanTab(onConnected: (Long) -> Unit) {
     val context = LocalContext.current
-    val lifecycleOwner = LocalLifecycleOwner.current
     val coroutineScope = rememberCoroutineScope()
-    var hasCameraPermission by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
-                android.content.pm.PackageManager.PERMISSION_GRANTED
-        )
-    }
-    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) { granted -> hasCameraPermission = granted }
 
     var scanned by remember { mutableStateOf(false) }
     var connecting by remember { mutableStateOf(false) }
@@ -161,109 +148,16 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
         }
     }
 
-    val pickerSession = com.relay.app.media.LocalPickerSession.current
-    val imagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-    ) { uri ->
-        pickerSession.returned()
-        if (uri != null) coroutineScope.launch {
-            val raw = withContext(Dispatchers.IO) { com.relay.app.util.QrImages.decode(context, uri) }
-            if (raw == null) errorMsg = "No readable Relay QR code in that image. Try the original image."
-            else onNfcText(raw)
-        }
-    }
     androidx.compose.foundation.layout.Column(Modifier.fillMaxSize()) {
-        SecondaryButton("Import QR image", { pickerSession.launch(); imagePicker.launch("image/*") },
-            Modifier.padding(RelaySpacing.md))
-        Box(Modifier.weight(1f)) {
-            if (!hasCameraPermission) {
-                EmptyState(title = "Scan with camera or import an image",
-                    message = "Image import works without camera permission. Camera scanning records and uploads nothing.",
-                    actionLabel = "Allow camera", onAction = { permissionLauncher.launch(Manifest.permission.CAMERA) },
-                    modifier = Modifier.fillMaxSize())
+        RawQrScanView(
+            onText = ::onNfcText,
+            modifier = Modifier.weight(1f),
+            hint = if (nfc == NfcPairing.Availability.ON) {
+                "Or hold the back of your phone against theirs"
             } else {
-    // Held so the async camera-provider callback can be told to abort if the tab is disposed before
-    // it fires (otherwise it binds the camera *after* onDispose ran unbindAll, leaving it running),
-    // and so the ML Kit scanner (a Closeable native resource) gets released.
-    val disposed = remember { AtomicBoolean(false) }
-    val scannerRef = remember {
-        BarcodeScanning.getClient(BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build())
-    }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        val onDecodedState = rememberUpdatedState<(String) -> Unit> { raw ->
-            if (!scanned) {
-                val decoded = QrContactCode.decode(raw)
-                if (decoded != null) onDecoded(decoded) else errorMsg = "That is not a Relay code."
-            }
-        }
-
-        AndroidView(
-            modifier = Modifier.fillMaxSize(),
-            factory = { ctx ->
-                val previewView = PreviewView(ctx)
-                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
-
-                cameraProviderFuture.addListener({
-                    if (disposed.get()) return@addListener
-                    val cameraProvider = try {
-                        cameraProviderFuture.get()
-                    } catch (e: Exception) {
-                        // No usable camera (none fitted, or another app holds it). This used to crash the
-                        // app; the preview just stays empty and "Import QR image" still works.
-                        android.util.Log.w("QrScanner", "camera unavailable: ${e.message}")
-                        return@addListener
-                    }
-                    val preview = Preview.Builder().build().also {
-                        it.setSurfaceProvider(previewView.surfaceProvider)
-                    }
-                    val analysis = ImageAnalysis.Builder()
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build()
-                    analysis.setAnalyzer(
-                        ContextCompat.getMainExecutor(ctx),
-                        QrAnalyzer(scannerRef) { value -> onDecodedState.value(value) },
-                    )
-                    try {
-                        cameraProvider.unbindAll()
-                        cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
-                    } catch (e: Exception) {
-                        // Camera bind can fail if the screen is torn down mid-init; nothing to
-                        // recover here, the user can just navigate back and retry.
-                    }
-                }, ContextCompat.getMainExecutor(ctx))
-
-                previewView
+                null
             },
         )
-
-        if (nfc == NfcPairing.Availability.ON) {
-            Text(
-                "Or hold the back of your phone against theirs",
-                style = MaterialTheme.typography.labelLarge,
-                color = Color.White,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .padding(RelaySpacing.lg)
-                    // Over the camera preview: dark whatever the theme.
-                    .clip(RelayShapeTokens.control)
-                    .background(Color.Black.copy(alpha = 0.55f))
-                    .padding(horizontal = RelaySpacing.lg, vertical = RelaySpacing.sm),
-            )
-        }
-
-        DisposableEffect(Unit) {
-            onDispose {
-                disposed.set(true)
-                runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() }
-                runCatching { scannerRef.close() }
-            }
-        }
-
-    }
-
-            }
-        }
     }
     val waiting by PairingCoordinator.outgoing.collectAsState()
     waiting?.let { pending -> WaitingForThem(pending) { PairingCoordinator.cancelOutgoing(context); scanned = false } }
@@ -289,6 +183,144 @@ internal fun ScanTab(onConnected: (Long) -> Unit) {
             onConfirm = { confirmAdd(scan) },
             onDismiss = { pendingScan = null; scanned = false },
         )
+    }
+}
+
+/**
+ * Camera and image-import scanning, shared by contact pairing and "Link a computer". It hands the
+ * raw QR text to [onText] and decides nothing about what the text means; [hint] is shown over the
+ * preview (the NFC hint for pairing, nothing while linking).
+ */
+@Composable
+internal fun RawQrScanView(
+    onText: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    hint: String? = null,
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var hasCameraPermission by remember {
+        mutableStateOf(
+            ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED
+        )
+    }
+    val permissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted -> hasCameraPermission = granted }
+
+    val pickerSession = com.relay.app.media.LocalPickerSession.current
+    val imagePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri ->
+        pickerSession.returned()
+        if (uri != null) coroutineScope.launch {
+            val raw = withContext(Dispatchers.IO) { com.relay.app.util.QrImages.decode(context, uri) }
+            if (raw == null) {
+                android.widget.Toast.makeText(
+                    context, "No readable QR code in that image. Try the original image.", android.widget.Toast.LENGTH_LONG,
+                ).show()
+            } else {
+                onText(raw)
+            }
+        }
+    }
+
+    androidx.compose.foundation.layout.Column(modifier.fillMaxSize()) {
+        SecondaryButton("Import QR image", { pickerSession.launch(); imagePicker.launch("image/*") },
+            Modifier.padding(RelaySpacing.md))
+        Box(Modifier.weight(1f)) {
+            if (!hasCameraPermission) {
+                EmptyState(title = "Scan with camera or import an image",
+                    message = "Image import works without camera permission. Camera scanning records and uploads nothing.",
+                    actionLabel = "Allow camera", onAction = { permissionLauncher.launch(Manifest.permission.CAMERA) },
+                    modifier = Modifier.fillMaxSize())
+            } else {
+                CameraQrPreview(onText = onText, hint = hint)
+            }
+        }
+    }
+}
+
+// CameraX's ImageProxy.image is an experimental API; the analyzer opts in explicitly. Lint does not
+// recognise Kotlin's @OptIn for this marker inside the AndroidView factory lambda, so it is suppressed here.
+@android.annotation.SuppressLint("UnsafeOptInUsageError")
+@androidx.annotation.OptIn(ExperimentalGetImage::class)
+@Composable
+private fun CameraQrPreview(onText: (String) -> Unit, hint: String?) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    // Held so the async camera-provider callback can be told to abort if the view is disposed before
+    // it fires (otherwise it binds the camera *after* onDispose ran unbindAll, leaving it running),
+    // and so the ML Kit scanner (a Closeable native resource) gets released.
+    val disposed = remember { AtomicBoolean(false) }
+    val scannerRef = remember {
+        BarcodeScanning.getClient(BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build())
+    }
+    val onTextState = rememberUpdatedState(onText)
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                val previewView = PreviewView(ctx)
+                val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
+
+                cameraProviderFuture.addListener({
+                    if (disposed.get()) return@addListener
+                    val cameraProvider = try {
+                        cameraProviderFuture.get()
+                    } catch (e: Exception) {
+                        // No usable camera (none fitted, or another app holds it). This used to crash the
+                        // app; the preview just stays empty and "Import QR image" still works.
+                        android.util.Log.w("QrScanner", "camera unavailable: ${e.message}")
+                        return@addListener
+                    }
+                    val preview = Preview.Builder().build().also {
+                        it.setSurfaceProvider(previewView.surfaceProvider)
+                    }
+                    val analysis = ImageAnalysis.Builder()
+                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                        .build()
+                    analysis.setAnalyzer(
+                        ContextCompat.getMainExecutor(ctx),
+                        QrAnalyzer(scannerRef) { value -> onTextState.value(value) },
+                    )
+                    try {
+                        cameraProvider.unbindAll()
+                        cameraProvider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+                    } catch (e: Exception) {
+                        // Camera bind can fail if the screen is torn down mid-init; nothing to
+                        // recover here, the user can just navigate back and retry.
+                    }
+                }, ContextCompat.getMainExecutor(ctx))
+
+                previewView
+            },
+        )
+
+        if (hint != null) {
+            Text(
+                hint,
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .padding(RelaySpacing.lg)
+                    // Over the camera preview: dark whatever the theme.
+                    .clip(RelayShapeTokens.control)
+                    .background(Color.Black.copy(alpha = 0.55f))
+                    .padding(horizontal = RelaySpacing.lg, vertical = RelaySpacing.sm),
+            )
+        }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                disposed.set(true)
+                runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() }
+                runCatching { scannerRef.close() }
+            }
+        }
     }
 }
 

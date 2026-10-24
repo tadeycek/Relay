@@ -161,6 +161,35 @@ object RelayCrypto {
         null
     }
 
+    /**
+     * The identity (HPKE) keyset **including its private key**, as base64 Tink binary.
+     *
+     * A linked computer has to decrypt messages addressed to this identity, which the public keyset
+     * cannot do, so WP05 part B needs the private half. This is the only export of it in the app and
+     * the caller must seal it into a link bundle (HPKE to the computer's ephemeral key) before it
+     * leaves the device; nothing here writes it to disk or a log. Null if the keyset is unavailable.
+     */
+    fun exportKeysetBase64ForLink(context: Context): String? = try {
+        privateKeysetBase64(currentIdentityHandle(context))
+    } catch (e: Exception) {
+        null
+    }
+
+    /** The retired identity keyset during its rotation grace period, same form as [exportKeysetBase64ForLink]. */
+    fun exportPreviousKeysetBase64ForLink(context: Context): String? = try {
+        previousIdentityHandle(context)?.let { privateKeysetBase64(it) }
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun privateKeysetBase64(handle: KeysetHandle): String {
+        val out = ByteArrayOutputStream()
+        // A null master key writes the keyset unencrypted: this material is ASYMMETRIC_PRIVATE (not
+        // SECRET), and the caller seals the result with HPKE before it leaves the device.
+        handle.write(BinaryKeysetWriter.withOutputStream(out), null)
+        return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
+
     /** Encrypts [plaintext] to a contact's public key. Returns null on any failure (falls back to plaintext send). */
     fun encryptTo(recipientPublicKeyBase64: String, plaintext: ByteArray, contextInfo: ByteArray = ByteArray(0)): ByteArray? = try {
         ensureConfig()

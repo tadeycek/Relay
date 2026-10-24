@@ -51,18 +51,28 @@ interface RawPacketStore {
  * protocol and receipt rules as the phone (:core MailboxProtocol / MailboxSession), so the server
  * cannot tell the two clients apart.
  *
- * Deliberately plain: one connection at a time, bounded reconnect backoff, and no phone-linking or
- * device-enrolment logic. That is the WP05 part B seam.
+ * Two modes, decided by [device]:
+ *  - **local-only** (device = null): requests are signed with this install's own identity key and
+ *    carry no `device` parameter, exactly like a 1.15 phone.
+ *  - **linked** ([DesktopDeviceAuth]): every request is signed with the enrolled device-auth key and
+ *    carries `?device=<id>`, so after migration the server binds this client to its own device
+ *    cursor instead of the phone's. Gift-wrap encryption still uses the shared identity keys
+ *    ([keys]); only the HTTP/WS signature changes.
  */
 class DesktopMailboxTransport(
     baseUrl: String,
     private val keys: Keys,
     private val signer: NostrSigner,
     private val rawStore: RawPacketStore,
+    private val device: DesktopDeviceAuth? = null,
 ) : Transport {
 
     private val base = baseUrl.trim().trimEnd('/')
-    private val socketUrl = base.replaceFirst(Regex("^http"), "ws") + "/v1/ws"
+    private val deviceQuery = device?.let { "?device=${it.deviceId}" }.orEmpty()
+    private val socketUrl = base.replaceFirst(Regex("^http"), "ws") + "/v1/ws" + deviceQuery
+
+    /** The key that signs HTTP/WS requests: the enrolled device key once linked, else the identity. */
+    private val requestSigner: NostrSigner get() = device?.signer ?: signer
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val http = OkHttpClient.Builder()
@@ -129,11 +139,11 @@ class DesktopMailboxTransport(
             if (!MailboxProtocol.isDeliveryId(payload.id)) return@withContext SendResult.Failed("Invalid message id", retryable = false)
             try {
                 val envelope = DesktopGiftWrap.wrap(keys, recipientPubkeyHex, payload)
-                val url = "$base/v1/send"
+                val url = "$base/v1/send$deviceQuery"
                 val bytes = MailboxProtocol.sendBody(recipientPubkeyHex, payload.id, envelope).toByteArray(Charsets.UTF_8)
                 val request = Request.Builder()
                     .url(url)
-                    .header("Authorization", MailboxAuth.header(signer, "POST", url, bytes))
+                    .header("Authorization", MailboxAuth.header(requestSigner, "POST", url, bytes))
                     .post(bytes.toRequestBody(JSON))
                     .build()
                 http.newCall(request).execute().use { response ->
@@ -162,7 +172,7 @@ class DesktopMailboxTransport(
             val ws = try {
                 val request = Request.Builder()
                     .url(socketUrl)
-                    .header("Authorization", MailboxAuth.header(signer, "GET", socketUrl))
+                    .header("Authorization", MailboxAuth.header(requestSigner, "GET", socketUrl))
                     .build()
                 http.newWebSocket(request, Listener(gen, ended) { failures = 0 })
             } catch (e: Exception) {

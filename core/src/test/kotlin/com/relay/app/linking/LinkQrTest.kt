@@ -10,7 +10,7 @@ import java.util.Random
 class LinkQrTest {
 
     private val code = LinkCode.generate(Random(7))
-    private val deviceId = "0123456789abcdef"
+    private val deviceId = "0123456789abcdef0123456789abcdef"
     private val ephemeral = "AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH"
     private val auth = "IIIIJJJJKKKKLLLLMMMMNNNNOOOOPPPP"
 
@@ -65,7 +65,7 @@ class LinkQrTest {
     fun rejectsMalformedFields() {
         for (bad in listOf(
             LinkQr.encode(code, deviceId, ephemeral, auth).replace(deviceId, deviceId.uppercase()),
-            LinkQr.encode(code, deviceId, ephemeral, auth).replace(deviceId, "0123456789abcde"),
+            LinkQr.encode(code, deviceId, ephemeral, auth).replace(deviceId, "0123456789abcdef0123456789abcde"),
             LinkQr.encode(code, deviceId, ephemeral, auth).replace(ephemeral, "short"),
             LinkQr.encode(code, deviceId, ephemeral, auth).replace(ephemeral, "!" .repeat(24)),
             LinkQr.encode(code, deviceId, ephemeral, auth).replace(auth, ephemeral),

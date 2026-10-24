@@ -15,6 +15,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.navArgument
 import com.relay.app.ui.screens.account.AccountPageScreen
 import com.relay.app.ui.screens.account.AccountScreen
+import com.relay.app.linking.LinkedComputersScreen
 import com.relay.app.ui.screens.chat.ChatScreen
 import com.relay.app.ui.screens.chat.GroupChatScreen
 import com.relay.app.ui.screens.contacts.ContactsScreen
@@ -29,6 +30,7 @@ sealed class Screen(val route: String) {
     object Account : Screen("account")
 
     // Detail screens (bottom bar hidden)
+    object LinkedComputers : Screen("linked_computers")
     object AccountPage : Screen("account_page/{page}") {
         const val ROUTE = "account_page/{page}"
         fun routeFor(page: com.relay.app.ui.screens.settings.AccountPage) = "account_page/${page.route}"
@@ -80,6 +82,7 @@ fun RelayNavGraph(navController: NavHostController, unreadMessages: Int = 0) {
             composable(Screen.People.route) { ContactsScreen(navController = navController) }
             composable(Screen.Messages.route) { MessagesScreen(navController = navController) }
             composable(Screen.Account.route) { AccountScreen(navController = navController) }
+            composable(Screen.LinkedComputers.route) { LinkedComputersScreen(navController = navController) }
             composable(Screen.AccountPage.ROUTE, arguments = listOf(navArgument("page") { type = NavType.StringType })) { entry ->
                 AccountPageScreen(com.relay.app.ui.screens.settings.AccountPage.fromRoute(entry.arguments?.getString("page")), navController)
             }
