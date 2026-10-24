@@ -66,10 +66,20 @@ object MailboxProtocol {
     fun signalFrame(recipient: String, envelope: String, ref: String): String =
         JSONObject().put("type", "signal").put("to", recipient).put("envelope", envelope).put("ref", ref).toString()
 
-    fun sendBody(recipient: String, id: String, envelope: String): String = JSONObject()
-        .put("v", VERSION)
-        .put("deliveries", JSONArray().put(JSONObject().put("to", recipient).put("id", id).put("envelope", envelope)))
-        .toString()
+    fun sendBody(recipient: String, id: String, envelope: String): String =
+        sendBody(recipient, id, envelope, emptyList())
+
+    /** Digest references are outside the encrypted envelope, inside the NIP-98 signed body. */
+    fun sendBody(recipient: String, id: String, envelope: String, media: List<String>): String {
+        require(media.size <= 8 && media.distinct().size == media.size && media.all(PUBKEY::matches)) {
+            "Expected at most 8 distinct lowercase SHA-256 media digests"
+        }
+        return JSONObject()
+            .put("v", VERSION)
+            .put("deliveries", JSONArray().put(JSONObject().put("to", recipient).put("id", id).put("envelope", envelope)))
+            .also { if (media.isNotEmpty()) it.put("media", JSONArray(media)) }
+            .toString()
+    }
 
     /** What happened to one message handed to the mailbox. */
     sealed interface Outcome {

@@ -38,6 +38,18 @@ interface Transport {
         relayHints: List<String> = emptyList(),
         ephemeral: Boolean = false,
     ): SendResult
+
+    /** Durable send with uploaded ciphertext references. Mailbox implementations must persist and
+     * retry the SAME digests with the same delivery id/envelope, passing them to sendBody's media
+     * overload before signing the full HTTP body. Legacy implementations fail closed for nonempty
+     * references rather than silently losing per-device grants. Empty references preserve send(). */
+    suspend fun sendWithMedia(
+        recipientPubkeyHex: String,
+        payload: RelayPayload,
+        mediaDigests: List<String>,
+        relayHints: List<String> = emptyList(),
+    ): SendResult = if (mediaDigests.isEmpty()) send(recipientPubkeyHex, payload, relayHints, ephemeral = false)
+        else SendResult.Failed("This transport does not support media references", retryable = false)
 }
 
 enum class TransportStatus {

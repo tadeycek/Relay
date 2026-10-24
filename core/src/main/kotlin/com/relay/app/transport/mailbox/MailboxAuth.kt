@@ -16,10 +16,17 @@ object MailboxAuth {
     private val random = SecureRandom()
 
     fun header(signer: NostrSigner, method: String, url: String, body: ByteArray? = null): String {
+        return headerWithDigest(signer, method, url,
+            body?.takeIf { it.isNotEmpty() }?.let { hex(MessageDigest.getInstance("SHA-256").digest(it)) })
+    }
+
+    /** Signs an already computed ciphertext digest; never reads or retains the request body. */
+    fun headerWithDigest(signer: NostrSigner, method: String, url: String, sha256Hex: String?): String {
+        require(sha256Hex == null || Regex("^[0-9a-f]{64}$").matches(sha256Hex)) { "Invalid SHA-256 digest" }
         val tags = buildList {
             add(listOf("u", url))
             add(listOf("method", method))
-            if (body != null && body.isNotEmpty()) add(listOf("payload", hex(MessageDigest.getInstance("SHA-256").digest(body))))
+            if (sha256Hex != null) add(listOf("payload", sha256Hex))
             add(listOf("nonce", hex(ByteArray(16).also(random::nextBytes))))
         }
         val eventJson = signer.signEventJson(KIND, "", tags)

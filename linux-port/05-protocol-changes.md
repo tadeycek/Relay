@@ -70,13 +70,17 @@ marks `(pubkey, device)` as confirmed. The object is erased only when every reci
 all of its devices that were **active when the object was uploaded**. The `PUT` snapshots the device list per
 recipient through one read from the Mailbox DO. The 8-day expiry is unchanged.
 
-**Size.** `maxMediaBytes` stays at 25 MiB + 64 per object. Files over 25 MiB are split across up to 4 objects
-(LP-D07).
+**Size.** `maxMediaBytes` stays at 26,214,464 bytes per stored object. New file parts are raw, not JPEG:
+`RLYF` (4 ASCII bytes) + version `01` (one byte) + random IV (12 bytes) + AES-256-GCM ciphertext + tag (16 bytes).
+Stored size is `plaintext + 33`. Full plaintext part length remains **26,212,814** (stable planning), stored
+**26,212,847**; at most **5** parts, at most **104,857,600** plaintext bytes. Legacy photo containers are unchanged.
+Upload content type is `application/octet-stream`; the current server does not restrict PUT content type or inspect
+ciphertext framing. Unknown raw versions, bad magic and truncated/excess bytes are rejected by the receiver.
 
 **`TYPE:FILE` body** (it travels inside `TYPE:ENC` like every other body, and must be ≤16 KiB):
 
 ```
-TYPE:FILE|V:1|NAME64:<base64 utf-8 file name>|MIME:<type/subtype>|SIZE:<plain bytes>|KEY:<b64 32B>
+TYPE:FILE|V:1|NAME64:<base64 utf-8 file name>|MIME:<type/subtype>|SIZE:<plain bytes>|SHA256:<full plaintext sha256 hex>|ID64:<b64 utf-8 RelayPayload.id>|KEY:<b64 32B>
          |PARTS:<n>|P1:<sha256 hex>,<blob bytes>|P2:…|…|URLBASE:<https://…/v1/media/>[|CAP64:<b64 caption/reply>]
 ```
 
@@ -87,8 +91,24 @@ TYPE:FILE|V:1|NAME64:<base64 utf-8 file name>|MIME:<type/subtype>|SIZE:<plain by
   `application/octet-stream`. MIME is only a hint: the receiver never auto-opens and never executes, and desktop
   "Open" goes through the OS handler with a warning for executables (`.desktop`, `.sh`, `.AppImage`, `.app`,
   `.command`, ELF/Mach-O magic).
-- **Size and parts**: `1 ≤ SIZE ≤ 100 MiB` and `1 ≤ PARTS ≤ 4`. Every part except the last decrypts to exactly
-  25 MiB. The sum of the plaintext sizes must equal `SIZE`.
+- **Size and parts**: `0 ≤ SIZE ≤ 100 MiB` and `1 ≤ PARTS ≤ 5`. Every part except the last decrypts to exactly
+  26,212,814 bytes (`PART_PLAIN_BYTES`), and each `<blob bytes>` must equal the stored size for that part's plaintext
+  length and be ≤ 25 MiB + 64. The sum of the plaintext sizes must equal `SIZE`. A zero-byte file has exactly
+  one zero-plaintext GCM part (33 stored bytes) and SHA256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`.
+- **Digest and binding**: SHA256 is mandatory lowercase 64-hex over the complete ordered plaintext, not the stored
+  ciphertext. ID64 is canonical padded base64 of the original authenticated `RelayPayload.id` (1–64 characters).
+  `FileManifest.fromAuthenticatedPayload` checks equality before any assembly; never bind an arbitrary parsed body
+  to a different payload. Authenticated version, size, part count, ordered hashes/lengths and file id satisfy G3's
+  manifest alternative to extra AEAD AAD. Retry/resume state must retain this id plus the exact authenticated body
+  (reject a changed manifest under the same saved task). SENT carries the **original payload**, not its sync event id.
+- **Publication and retry**: a new key per file, fresh random IV per part (never index-derived); persist completed
+  ciphertext and reuse those bytes/hash/IV on retry. Every part's stored hash and GCM tag must pass before it leaves
+  private staging. Whole-file assembly is private until size and full digest pass. Cleanup failures prevent final
+  publication and are surfaced, not swallowed. Platform final sinks still need atomic private-stage-to-final rename,
+  safe collision/symlink handling, account quotas and cancellation. Confirm only after durable final storage;
+  sending the manifest/SENT is not download confirmation. The self-sync recipient grant race when a sender device
+  enrolls between PUT and SENT is **open server integration follow-up**, not solved by the core binding.
+  API/wire and measured limitations: [WP09 core fixes](evidence/WP09-core-fixes.md).
 - **URLBASE** must be this build's mailbox media URL (as `MailboxMedia.isOurs` checks today), and nothing else is
   fetched.
 
