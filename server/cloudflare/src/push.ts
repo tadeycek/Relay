@@ -18,6 +18,9 @@ export interface ServiceAccount {
 export type WakeResult = "sent" | "unregistered" | "failed";
 type Fetch = (request: Request) => Promise<Response>;
 
+/** An invite rings for 45 s (06 §3), so FCM may hold an urgent wake for at most that long. */
+export const URGENT_WAKE_TTL_S = 45;
+
 const SCOPE = "https://www.googleapis.com/auth/firebase.messaging";
 
 export function serviceAccountFrom(raw: unknown): ServiceAccount | null {
@@ -51,8 +54,18 @@ export class PushSender {
     this.fetcher = fetcher;
   }
 
-  /** Sends one content-free wake-up to [deviceToken]. "unregistered" means the token is dead: forget it. */
-  async wake(deviceToken: string): Promise<WakeResult> {
+  /**
+   * Sends one content-free wake-up to [deviceToken]. "unregistered" means the token is dead: forget it.
+   * [urgent] is a call invite: `urgent=1`, high priority, NO collapse key (a ring must not replace or be
+   * replaced by an ordinary wake) and a [URGENT_WAKE_TTL_S] lifetime, so a ring that could not be delivered in
+   * time is dropped by FCM instead of ringing late. Without it the message is byte-identical to before.
+   */
+  async wake(deviceToken: string, options: { urgent?: boolean } = {}): Promise<WakeResult> {
+    const data = options.urgent ? { type: "wake", urgent: "1" } : { type: "wake" };
+    // High priority so Android lets the app run briefly; ordinary wakes collapse so only the latest is kept.
+    const android = options.urgent
+      ? { priority: "high", ttl: `${URGENT_WAKE_TTL_S}s` }
+      : { priority: "high", ttl: "86400s", collapse_key: "relay-wake" };
     try {
       const response = await this.fetcher(new Request(`https://fcm.googleapis.com/v1/projects/${this.account.project_id}/messages:send`, {
         method: "POST",
@@ -60,9 +73,8 @@ export class PushSender {
         body: JSON.stringify({
           message: {
             token: deviceToken,
-            data: { type: "wake" },
-            // High priority so Android lets the app run briefly; collapsing keeps only the latest wake.
-            android: { priority: "high", ttl: "86400s", collapse_key: "relay-wake" },
+            data,
+            android,
           },
         }),
       }));

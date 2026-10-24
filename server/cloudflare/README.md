@@ -20,6 +20,7 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 | `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after every recipient device confirms (dormant/unlinked devices waived) or 8 days; `attachCheck`/`grant` RPCs for send-time media references (WP04-AC4) |
 | `src/auth.ts` | NIP-98 request auth |
 | `src/push.ts` | Content-free Firebase wake-ups, service-account JWT signing and OAuth token caching |
+| `src/call.ts` | Call support (WP11): mints short-lived Cloudflare TURN credentials for `GET /v1/call/ice` from the `TURN_KEY_ID` / `TURN_API_TOKEN` secrets; bounded, no redirects, honest User-Agent, response sanitized |
 | `src/protocol.ts` | Limits, error codes, shared types |
 | `client/mailbox-client.ts` | Minimal client used by the tests and tools: signing, NIP-17 wrap and open |
 | `test/` | Vitest suites that run inside the Workers runtime (`@cloudflare/vitest-plugin`) |
@@ -103,6 +104,28 @@ Use `--push-only` to repeat just pairing/token-registration and the controlled c
 Migration v7 supports both original v6 token tables and v6 tables that already contain `last_wake_at`.
 Existing tokens, members and pending messages are preserved; the old table is never recreated.
 
+## Calls (WP11)
+
+Three server pieces for 1:1 voice calls; wire shapes, errors and limits are in
+[PROTOCOL.md](PROTOCOL.md#calls-v14-wp11), measurements in
+[linux-port/evidence/WP11.md](../../linux-port/evidence/WP11.md).
+
+- `GET /v1/call/ice`: 600 s TURN credentials, minted per call by the Worker. Needs two **secrets** (never vars,
+  never committed, never printed). From this directory, after the owner approves using the Cloudflare TURN key:
+
+  ```sh
+  npx wrangler secret put TURN_KEY_ID
+  npx wrangler secret put TURN_API_TOKEN
+  ```
+
+  Without them the endpoint answers `503 not_configured`. Tests use a faked provider fetch and no real key.
+- `"urgent": true` on one stored delivery (the call invite): a high-priority, non-collapsible, 45 s Firebase wake
+  that bypasses the 20 s coalescing, limited to 1 per recipient per 3 s, 6 per sender and 60 server-wide per minute.
+  Needs the existing `FCM_SERVICE_ACCOUNT`; without it nothing is pushed and the invite is still stored.
+- `signal` frames carry the call bodies. `MAX_SIGNAL_BYTES` stays at 16 KiB (WP02 measured the real frames).
+
+Nothing here is deployed yet (the WP's live-Worker criterion is open).
+
 ## Linked devices (WP04)
 
 One queue per identity can now be shared by several devices (a phone plus up to 3 computers), each with its own
@@ -164,7 +187,7 @@ Workers Free per day (Cloudflare pricing page, checked 2026-10-18): 100,000 Dura
 13,000 GB-s duration, 5 M rows read, **100,000 rows written**, 5 GB stored. Going over any of them makes those
 operations fail until 00:00 UTC. Rows written is the binding limit. Measured costs: about 5.3 rows written per
 delivery and about 2 per confirmed message. That's roughly 27,000 a day for an assumed 10 users × 100 messages,
-30% to groups, including the 10-minute uptime probe. Live signals write nothing; a photo costs a handful of
+30% to groups, including the 10-minute uptime probe. Live signals write nothing (a `GET /v1/call/ice` writes 1 row, the replay record; an urgent send writes the same 7 rows as an ordinary send that wakes a phone); a photo costs a handful of
 rows (one per 1 MiB chunk plus one per recipient pair). A linked identity costs more: about 5 rows written for
 the ack that frees a message with two devices (2 for the first device's ack) against 3 for a legacy receipt. Set `EXPOSE_METRICS=1` to get an `x-relay-sql-rows` header
 (row counts only) on every response.

@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 import { AUTH_WINDOW_S, verifyRequestAuth, type AuthOutcome, type Membership } from "./auth";
+import { mintIceServers, turnConfigFrom, type IceServer, type TurnConfig } from "./call";
 import { PushSender, serviceAccountFrom } from "./push";
 import {
   DELIVERY_ID,
@@ -144,7 +145,8 @@ interface Authorized {
 type DeviceAccess = { ok: true; linked: false } | { ok: true; linked: true; row: DeviceRow } | { ok: false; response: Response };
 
 type AuthOk = Extract<AuthOutcome, { ok: true }>;
-type SizedDelivery = Delivery & { size: number };
+/** [urgent] is the WP11 call-invite flag: true only when the client sent `"urgent": true`. */
+type SizedDelivery = Delivery & { size: number; urgent: boolean };
 /** A send whose messages were queued together with their media grants (WP04-AC4). */
 type Queued = { results: DeliveryResult[]; grantIds: Map<string, number> };
 
@@ -216,6 +218,18 @@ export class Mailbox extends DurableObject<Env> {
    * and the cost of a wrong guess to the server is one indexed read. Exposed for tests.
    */
   private readonly linkAttempts = new Map<string, number[]>();
+  /** Replaceable in tests, so no request ever leaves the test runtime. WP11: the TURN provider call. */
+  private turnFetch: (request: Request) => Promise<Response> = (request) => fetch(request);
+  /** The TURN secrets from the Worker env, read per request so a rotated secret takes effect without a restart. */
+  private turnConfig: () => TurnConfig | null = () => turnConfigFrom(this.env as unknown as Record<string, unknown>);
+  /** Best-effort ICE limiter: identity -> timestamps within the last minute. In memory, bounded by the member count. */
+  private readonly iceOps = new Map<string, number[]>();
+  /** One minted answer (or one in flight) per identity, reused for [Limits.callIceCacheMs]. Never holds a failure. */
+  private readonly iceCache = new Map<string, { mintedAt: number; result: Promise<{ iceServers: IceServer[]; expiresAt: number } | null> }>();
+  /** Urgent-wake budgets (WP11/G4), in memory: a restart forgets them, and a restart needs an idle object. */
+  private readonly urgentRecipientAt = new Map<string, number>();
+  private readonly urgentSenderOps = new Map<string, number[]>();
+  private urgentGlobalOps: number[] = [];
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -264,7 +278,13 @@ export class Mailbox extends DurableObject<Env> {
         case "POST /v1/invite": response = await this.handleInvite(request); break;
         case "POST /v1/pair": response = await this.handlePair(request); break;
         case "POST /v1/push-token": response = await this.handlePushToken(request); break;
-        default: response = errorResponse(404, "not_found");
+        case "GET /v1/call/ice": response = await this.handleCallIce(request, url); break;
+        default:
+          if (url.pathname === "/v1/call/ice") {
+            response = errorResponse(405, "method_not_allowed");
+            break;
+          }
+          response = errorResponse(404, "not_found");
       }
     } catch (e) {
       console.error("mailbox request failed", { route: url.pathname, error: (e as Error)?.name });
@@ -281,9 +301,17 @@ export class Mailbox extends DurableObject<Env> {
     if (body.byteLength > this.limits.maxRequestBytes) return errorResponse(413, "request_too_large");
     const authorized = await this.authorize(request, body, new URL(request.url));
     if (authorized instanceof Response) return authorized;
-    const parsed = parseSend(body, this.limits);
+    const parsed = parseSend(body, this.limits, authorized.identity);
     if ("code" in parsed) return errorResponse(parsed.status, parsed.code);
     const hashes = await Promise.all(parsed.deliveries.map((d) => sha256Hex(d.envelope)));
+
+    // WP11: an urgent (call-invite) delivery spends a separate, tighter budget. This early check only
+    // saves work; the authoritative check-and-spend happens in the synchronous stored section, because a
+    // media send awaits an RPC in between and concurrent requests would otherwise all pass this gate.
+    const urgentDelivery = parsed.deliveries.find((d) => d.urgent);
+    if (urgentDelivery && !this.urgentAllowed(authorized.identity, urgentDelivery.to, Date.now())) {
+      return errorResponse(429, "rate_limited", true);
+    }
 
     // No `media` field (every client today): the original path, with no extra read, write or RPC.
     if (parsed.media.length === 0) return this.metered(() => this.sendStored(authorized, parsed.deliveries, hashes, Date.now(), [] as []));
@@ -376,6 +404,14 @@ export class Mailbox extends DurableObject<Env> {
     const section = (): Response | Queued => {
       if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
       if (!this.sendBindingActive(authorized)) return errorResponse(401, "auth_revoked");
+      // WP11: the urgent budget is checked AND spent inside this synchronous section. Checking it earlier
+      // (before the media attachCheck RPC) let concurrent requests all pass the check before any of them
+      // recorded a spend, which is a push-wake flood. noteUrgent below runs after the inserts, still with
+      // no await in between, so the next request cannot enter the same window.
+      const urgent = parsed.find((d) => d.urgent);
+      if (urgent && !this.urgentAllowed(authorized.identity, urgent.to, now)) {
+        return errorResponse(429, "rate_limited", true);
+      }
       const results = parsed.map((d, i) => this.store(authorized.identity, d, hashes[i], now));
       this.prune(now);
       return { results, grantIds: media.length > 0 ? this.enqueueGrants(authorized.identity, parsed, results, media, now) : new Map() };
@@ -383,16 +419,18 @@ export class Mailbox extends DurableObject<Env> {
     const done = media.length > 0 ? this.ctx.storage.transactionSync(section) : section();
     if (done instanceof Response) return done;
     const { results } = done;
-    const woken = new Set<string>();
+    // Recipients with no open socket, in first-seen order; true when one of their stored messages is urgent.
+    const offline = new Map<string, boolean>();
     results.forEach((result, i) => {
       if (result.status === "stored") {
         const d = parsed[i];
-        if (!this.pushLive(d.to, { seq: result.seq, from: authorized.identity, id: d.id, envelope: d.envelope, storedAt: now }) && !woken.has(d.to)) {
-          woken.add(d.to);
-          this.ctx.waitUntil(this.wake(d.to, now));
+        if (d.urgent) this.noteUrgent(authorized.identity, d.to, now);
+        if (!this.pushLive(d.to, { seq: result.seq, from: authorized.identity, id: d.id, envelope: d.envelope, storedAt: now })) {
+          offline.set(d.to, (offline.get(d.to) ?? false) || d.urgent);
         }
       }
     });
+    for (const [recipient, urgent] of offline) this.ctx.waitUntil(this.wake(recipient, now, urgent));
     return media.length > 0 ? done : json({ v: PROTOCOL_VERSION, results });
   }
 
@@ -1527,15 +1565,96 @@ export class Mailbox extends DurableObject<Env> {
     });
   }
 
-  /** Wakes a recipient who has no open socket, at most once per [WAKE_INTERVAL_MS]. */
-  private async wake(recipient: string, now: number): Promise<void> {
+  /**
+   * Wakes a recipient who has no open socket, at most once per [WAKE_INTERVAL_MS]. An [urgent] wake (a call
+   * invite, already admitted by [urgentAllowed]) skips that coalescing and is sent as its own high-priority,
+   * non-collapsible, short-lived message; it still stamps `last_wake_at`, so ordinary messages right after a
+   * ring are folded into it.
+   */
+  private async wake(recipient: string, now: number, urgent = false): Promise<void> {
     if (!this.push) return;
     const registration = this.q<{ token: string; last_wake_at: number }>("SELECT token, last_wake_at FROM push_tokens WHERE pubkey = ?", recipient)[0];
-    if (!registration || now - registration.last_wake_at < WAKE_INTERVAL_MS) return;
+    if (!registration || (!urgent && now - registration.last_wake_at < WAKE_INTERVAL_MS)) return;
     this.q("UPDATE push_tokens SET last_wake_at = ? WHERE pubkey = ?", now, recipient);
-    const result = await this.push.wake(registration.token);
+    const result = await this.push.wake(registration.token, urgent ? { urgent: true } : {});
     if (result === "unregistered") this.q("DELETE FROM push_tokens WHERE pubkey = ? AND token = ?", recipient, registration.token);
     else if (result === "failed") console.error("wake-up push failed");
+  }
+
+  // ---- Calls (WP11) ----------------------------------------------------------------------------
+
+  /**
+   * Whether an urgent wake from [sender] to [recipient] fits the budgets: one per recipient per interval, a
+   * per-sender and a server-wide count per minute. The sealed envelope is opaque, so the server cannot check
+   * that it is really a call invite; these budgets are what stop a member from using the flag as a pager.
+   * Pure check: [noteUrgent] records the spend once the message is stored.
+   */
+  private urgentAllowed(sender: string, recipient: string, now: number): boolean {
+    const last = this.urgentRecipientAt.get(recipient);
+    if (last !== undefined && now - last < this.limits.urgentRecipientIntervalMs) return false;
+    const windowStart = now - 60_000;
+    if ((this.urgentSenderOps.get(sender) ?? []).filter((t) => t >= windowStart).length >= this.limits.urgentPerSenderPerMinute) return false;
+    return this.urgentGlobalOps.filter((t) => t >= windowStart).length < this.limits.urgentGlobalPerMinute;
+  }
+
+  private noteUrgent(sender: string, recipient: string, now: number): void {
+    const windowStart = now - 60_000;
+    this.urgentRecipientAt.set(recipient, now);
+    this.urgentSenderOps.set(sender, [...(this.urgentSenderOps.get(sender) ?? []).filter((t) => t >= windowStart), now]);
+    this.urgentGlobalOps = [...this.urgentGlobalOps.filter((t) => t >= windowStart), now];
+    // Keys are members only (sender and stored recipient), so these maps are bounded by the member count.
+  }
+
+  /** `GET /v1/call/ice`: short-lived TURN credentials for a member or an enrolled, unrevoked device. */
+  private async handleCallIce(request: Request, url: URL): Promise<Response> {
+    for (const key of url.searchParams.keys()) if (key !== "device") return errorResponse(400, "bad_request");
+    const authorized = await this.authorize(request, null, url);
+    if (authorized instanceof Response) return authorized;
+    const start = { ...this.rows };
+    const done = (response: Response): Response => this.withMetrics(response, start);
+
+    // Limit before touching storage, so a flood costs no rows. A refused request is not recorded for replay: it
+    // is refused again on its own merit (rate), and the client must sign a fresh one anyway.
+    if (!this.iceAllowed(authorized.identity, Date.now())) return done(errorResponse(429, "rate_limited", true));
+    const gate = this.metered(() => (this.recordAuth(authorized.auth) ? json(null) : errorResponse(401, "auth_replayed")));
+    if (!gate.ok) return done(gate);
+
+    const config = this.turnConfig();
+    if (!config) return done(errorResponse(503, "not_configured"));
+
+    const now = Date.now();
+    let entry = this.iceCache.get(authorized.identity);
+    if (!entry || now - entry.mintedAt >= this.limits.callIceCacheMs) {
+      const mint = mintIceServers(config, (r) => this.turnFetch(r), now, {
+        ttlS: this.limits.callIceTtlS,
+        timeoutMs: this.limits.callIceTimeoutMs,
+        maxResponseBytes: this.limits.maxCallIceResponseBytes,
+      }).then((outcome) => (outcome.ok ? { iceServers: outcome.iceServers, expiresAt: outcome.expiresAt } : null));
+      entry = { mintedAt: now, result: mint };
+      this.iceCache.set(authorized.identity, entry);
+      // A failure is never cached: drop the entry as soon as it settles empty.
+      const mine = entry;
+      void mint.then((value) => {
+        if (value === null && this.iceCache.get(authorized.identity) === mine) this.iceCache.delete(authorized.identity);
+      });
+    }
+    const minted = await entry.result;
+    if (!minted) return done(errorResponse(502, "upstream_failed", true));
+    // The provider call took time: a device revoked meanwhile gets nothing.
+    if (!this.sendBindingActive(authorized)) return done(errorResponse(401, "auth_revoked"));
+    return done(json({ v: PROTOCOL_VERSION, iceServers: minted.iceServers, expiresAt: minted.expiresAt }));
+  }
+
+  /** Best-effort per-identity limit on credential minting. In memory; replay is persisted separately. */
+  private iceAllowed(identity: string, now: number): boolean {
+    const recent = (this.iceOps.get(identity) ?? []).filter((t) => t >= now - 60_000);
+    if (recent.length >= this.limits.callIcePerMinute) {
+      this.iceOps.set(identity, recent);
+      return false;
+    }
+    recent.push(now);
+    this.iceOps.set(identity, recent);
+    return true;
   }
 
   // ---- Storage -------------------------------------------------------------------------------
@@ -1917,7 +2036,7 @@ function parseJson(body: ArrayBuffer): Record<string, unknown> | null {
   }
 }
 
-function parseSend(body: ArrayBuffer, limits: Limits): { deliveries: SizedDelivery[]; media: string[] } | { status: number; code: ErrorCode } {
+function parseSend(body: ArrayBuffer, limits: Limits, sender: string): { deliveries: SizedDelivery[]; media: string[] } | { status: number; code: ErrorCode } {
   const bad = { status: 400, code: "bad_request" as const };
   const value = parseJson(body);
   if (value?.v !== PROTOCOL_VERSION || !Array.isArray(value.deliveries) || value.deliveries.length === 0) return bad;
@@ -1929,11 +2048,18 @@ function parseSend(body: ArrayBuffer, limits: Limits): { deliveries: SizedDelive
     const { to, id, envelope } = d as Record<string, unknown>;
     if (typeof to !== "string" || !PUBKEY.test(to) || typeof id !== "string" || !DELIVERY_ID.test(id)) return bad;
     if (typeof envelope !== "string" || envelope.length === 0) return bad;
+    // WP11: absent or false is the legacy delivery; only a literal true is urgent, anything else is malformed.
+    const urgent = (d as Record<string, unknown>).urgent;
+    if (urgent !== undefined && typeof urgent !== "boolean") return bad;
     const key = `${to}/${id}`;
     if (keys.has(key)) return bad;
     keys.add(key);
-    out.push({ to, id, envelope, size: utf8.encode(envelope).byteLength });
+    out.push({ to, id, envelope, size: utf8.encode(envelope).byteLength, urgent: urgent === true });
   }
+  // One ring per request, and never to oneself: an urgent wake is for another person's phone.
+  const urgentCount = out.filter((d) => d.urgent).length;
+  if (urgentCount > 1) return bad;
+  if (out.some((d) => d.urgent && d.to === sender)) return bad;
   const media = parseMediaRefs(value.media, limits);
   if (media === null) return bad;
   if (media === "too_many") return { status: 400, code: "too_many_media" };

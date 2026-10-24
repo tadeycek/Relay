@@ -22,6 +22,11 @@
     "ALLOWED_PUBKEYS": "",
     // "1" adds an x-relay-sql-rows header (row counts only) for measuring Free-plan usage.
     "EXPOSE_METRICS": "0"
+    // WP11 call limits (all optional, defaults in src/protocol.ts): CALL_ICE_TTL_S (can only lower the 600 s ceiling),
+    // CALL_ICE_CACHE_MS, CALL_ICE_PER_MINUTE, CALL_ICE_TIMEOUT_MS, MAX_CALL_ICE_RESPONSE_BYTES,
+    // URGENT_RECIPIENT_INTERVAL_MS, URGENT_PER_SENDER_PER_MINUTE, URGENT_GLOBAL_PER_MINUTE, MAX_SIGNAL_BYTES.
+    // The Cloudflare TURN credentials are SECRETS, never vars: `wrangler secret put TURN_KEY_ID` and
+    // `wrangler secret put TURN_API_TOKEN` (and FCM_SERVICE_ACCOUNT for pushes). Do not add them here.
   },
   "observability": { "enabled": true }
 }

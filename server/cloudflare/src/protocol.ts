@@ -36,6 +36,8 @@ export type ErrorCode =
   | "link_busy"
   | "sync_conflict"
   | "sync_limit"
+  | "not_configured"
+  | "upstream_failed"
   | "storage_error";
 
 /** Per-delivery and request limits. Defaults are the pilot budgets from the plan; tests override them. */
@@ -85,6 +87,17 @@ export interface Limits {
   maxSyncEventBytes: number;
   maxSyncPageEvents: number;
   maxSyncPageBytes: number;
+  /** Lifetime asked of the TURN provider; never above 600 s (WP11, G4). */
+  callIceTtlS: number;
+  /** A caller's minted credentials are reused for this long, so retries and glare do not each hit the provider. */
+  callIceCacheMs: number;
+  callIcePerMinute: number;
+  callIceTimeoutMs: number;
+  maxCallIceResponseBytes: number;
+  /** Urgent (call-invite) wakes: one per recipient per interval, plus per-sender and server-wide budgets. */
+  urgentRecipientIntervalMs: number;
+  urgentPerSenderPerMinute: number;
+  urgentGlobalPerMinute: number;
 }
 
 const KIB = 1024;
@@ -136,6 +149,15 @@ export const DEFAULT_LIMITS: Limits = {
   maxSyncEventBytes: 256 * KIB,
   maxSyncPageEvents: 8,
   maxSyncPageBytes: 64 * KIB,
+  // WP11: 10 minutes, the value the WP02 live TURN run used. A longer call restarts ICE with fresh credentials.
+  callIceTtlS: 600,
+  callIceCacheMs: 60 * 1000,
+  callIcePerMinute: 6,
+  callIceTimeoutMs: 5000,
+  maxCallIceResponseBytes: 8 * KIB,
+  urgentRecipientIntervalMs: 3000,
+  urgentPerSenderPerMinute: 6,
+  urgentGlobalPerMinute: 60,
 };
 
 /** Optional numeric overrides from Worker vars (strings), e.g. small caps in tests. */
@@ -181,6 +203,15 @@ export function limitsFrom(env: Partial<Record<string, unknown>>): Limits {
     maxSyncEventBytes: pick("MAX_SYNC_EVENT_BYTES", DEFAULT_LIMITS.maxSyncEventBytes),
     maxSyncPageEvents: pick("MAX_SYNC_PAGE_EVENTS", DEFAULT_LIMITS.maxSyncPageEvents),
     maxSyncPageBytes: pick("MAX_SYNC_PAGE_BYTES", DEFAULT_LIMITS.maxSyncPageBytes),
+    // The TTL can be lowered but never raised past the 600 s ceiling enforced in call.ts.
+    callIceTtlS: Math.min(pick("CALL_ICE_TTL_S", DEFAULT_LIMITS.callIceTtlS), DEFAULT_LIMITS.callIceTtlS),
+    callIceCacheMs: pick("CALL_ICE_CACHE_MS", DEFAULT_LIMITS.callIceCacheMs),
+    callIcePerMinute: pick("CALL_ICE_PER_MINUTE", DEFAULT_LIMITS.callIcePerMinute),
+    callIceTimeoutMs: pick("CALL_ICE_TIMEOUT_MS", DEFAULT_LIMITS.callIceTimeoutMs),
+    maxCallIceResponseBytes: pick("MAX_CALL_ICE_RESPONSE_BYTES", DEFAULT_LIMITS.maxCallIceResponseBytes),
+    urgentRecipientIntervalMs: pick("URGENT_RECIPIENT_INTERVAL_MS", DEFAULT_LIMITS.urgentRecipientIntervalMs),
+    urgentPerSenderPerMinute: pick("URGENT_PER_SENDER_PER_MINUTE", DEFAULT_LIMITS.urgentPerSenderPerMinute),
+    urgentGlobalPerMinute: pick("URGENT_GLOBAL_PER_MINUTE", DEFAULT_LIMITS.urgentGlobalPerMinute),
   };
 }
 

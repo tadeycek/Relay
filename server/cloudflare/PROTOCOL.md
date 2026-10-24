@@ -184,7 +184,7 @@ survives a close sweep (a failed close, a hibernation race) still cannot page, a
 | client → server | `{"type":"ack","through":<seq>,"ref":"…"}`, answered by `{"type":"acked","ref":…,"acked":<n>,"through":<seq>}` |
 | server → client | `{"type":"error","ref":…,"error":{"code":…,"retryable":…}}` |
 | client → server | `ping` (raw text), answered with `pong` by the platform without waking the server |
-| client → server | `{"type":"signal","to":<pubkey>,"envelope":<gift wrap>}`: typing or presence, passed to the recipient's open sockets and **never stored** (≤16 KiB, ≤120 a minute per socket; a recipient who isn't connected misses it) |
+| client → server | `{"type":"signal","to":<pubkey>,"envelope":<gift wrap>}`: typing or presence, passed to the recipient's open sockets and **never stored** (≤16 KiB, ≤120 a minute per socket; a recipient who isn't connected misses it); also carries call bodies, see [Calls](#calls-v14-wp11) |
 | server → client | `{"type":"signal","from":<pubkey>,"envelope":…}` |
 
 ### Client loop
@@ -528,6 +528,114 @@ Every other failure uses the codes above (`bad_request`, `not_found`, `auth_miss
 - Row costs are measured in `linux-port/evidence/WP04.md`; the media object's `deleteAll` is not counted by
   the SQL meter.
 
+## Calls (v1.4, WP11)
+
+Server support for 1:1 voice calls (`linux-port/06-calls-1on1.md`, `05-protocol-changes.md` §5). Three pieces: a
+credential endpoint, an `urgent` flag on a stored delivery, and the existing `signal` frame. **Not deployed**;
+see `linux-port/evidence/WP11.md` for what was and was not run. Spec deviations are listed at the end.
+
+### `GET /v1/call/ice[?device=<id>]`
+
+Short-lived Cloudflare TURN credentials for one call. Authenticated exactly like every other mailbox request
+(NIP-98, member or enrolled device key, replay-checked, `401 auth_revoked` for a revoked device, the shared
+identity key refused after migration). No request body. The only accepted query parameter is `device`; any
+other is `400 bad_request`. Other methods: `405 method_not_allowed`.
+
+```json
+{ "v": 1,
+  "iceServers": [
+    { "urls": ["stun:stun.cloudflare.com:3478"] },
+    { "urls": ["turn:turn.cloudflare.com:3478?transport=udp", "turn:turn.cloudflare.com:80?transport=tcp",
+               "turns:turn.cloudflare.com:5349?transport=tcp", "turns:turn.cloudflare.com:443?transport=tcp"],
+      "username": "<opaque>", "credential": "<opaque>" } ],
+  "expiresAt": 1790000000000 }
+```
+
+- `expiresAt` is epoch milliseconds: the instant the provider-side credential stops being valid
+  (`mint time + ttl`). `ttl` is **at most 600 s** (it is 600 s by default and `CALL_ICE_TTL_S` can only lower it).
+  Only the fields shown are returned. Hand `iceServers` to `RTCConfiguration` as is.
+- Every URL on port **53** is removed server-side (those entries are dropped, other URLs of the same server stay).
+- The server calls `POST https://rtc.live.cloudflare.com/v1/turn/keys/<TURN_KEY_ID>/credentials/generate-ice-servers`
+  with `{"ttl":600}`, `Authorization: Bearer <TURN_API_TOKEN>`, and the honest header
+  `User-Agent: RelayMailbox/1.0 (call-ice; Cloudflare Worker)` (Cloudflare's edge answers default library
+  agents such as `Python-urllib` with error 1010). Redirects are not followed (`redirect: manual`; any non-2xx,
+  including 3xx, is a failure). The response is read with an 8 KiB cap and a 5 s deadline, parsed, validated
+  (schemes `stun|turn|turns`, hosts `*.cloudflare.com`, at most 8 servers × 8 URLs, credential strings ≤512
+  printable characters, at least one TURN server with credentials) and reduced to the shape above.
+- `TURN_KEY_ID` and `TURN_API_TOKEN` are Worker **secrets** (`wrangler secret put`), never `vars`, never in source
+  and never in a response, a log line or an error. Both must match `[A-Za-z0-9_-]{8,512}`, otherwise the endpoint
+  answers `503 not_configured`. Nothing is stored: credential expiry and revocation are the provider's job
+  (there is no revoke endpoint here).
+- A caller's answer is reused for 60 s (so retries, glare and multi-device reconnects make one provider call).
+  A reused answer keeps its original `expiresAt`, so it always has at least 540 s left. Failures are never cached.
+  A device revoked while the provider call is in flight gets `401 auth_revoked` and no credentials.
+- Limit: 6 requests per identity per minute (in memory, per Durable Object instance), counted before any storage
+  access. The authorization id of an accepted request is recorded for replay protection: 1 row written.
+
+| Status | `error.code` | Meaning | Retryable |
+|---|---|---|---|
+| 400 | `bad_request` | unknown query parameter or malformed `device` | no |
+| 401 | `auth_missing`, `auth_invalid`, `auth_expired` | missing, malformed, wrongly bound or stale NIP-98 header; shared identity key after migration | no |
+| 401 | `auth_replayed` | that authorization event was already used | no (sign a new one) |
+| 401 | `auth_revoked` | the signing device was revoked (also if revoked during the provider call) | no |
+| 403 | `not_allowed` | the key is not a member | no |
+| 405 | `method_not_allowed` | not `GET` | no |
+| 413 | `request_too_large` | declared body over the edge cap | no |
+| 429 | `rate_limited` | more than 6 requests in a minute | yes |
+| 502 | `upstream_failed` | the provider refused, timed out, redirected, answered too much, or answered something unusable | yes |
+| 503 | `not_configured` | `TURN_KEY_ID` / `TURN_API_TOKEN` absent or malformed on this deployment | no |
+
+A call that lasts longer than the credential must fetch fresh credentials before an ICE restart; the endpoint
+is cheap (cache, limit above) so clients should call it at call start and again on restart.
+
+### `urgent` on a delivery (call invite wake)
+
+`POST /v1/send` deliveries accept one optional field:
+
+```json
+{ "to": "<recipient>", "id": "<delivery id>", "envelope": "<gift wrap>", "urgent": true }
+```
+
+`urgent` is for the stored copy of a `CALL_INVITE` (05 §6). The envelope is sealed, so the server **cannot verify**
+that it is an invite; the flag is bounded by budgets instead. Absent or `false` is the legacy delivery and takes
+exactly the old code path: replies, stored rows and the Firebase message are byte-identical.
+
+- Validation: a boolean, else `400 bad_request`. At most **one** urgent delivery per request, and never to the
+  sender's own identity (`400 bad_request`).
+- Effect, only when the message is newly stored and the recipient has no open socket: the usual content-free
+  Firebase message but **bypassing the 20 s coalescing**, as `{"type":"wake","urgent":"1"}` with
+  `android: {"priority":"high","ttl":"45s"}` and **no `collapse_key`**. FCM drops it after 45 s, the same
+  window as the invite's `expires` (ts + 45 s), so a late ring is never delivered by FCM. It also stamps the
+  recipient's wake time, so ordinary messages in the next 20 s fold into the ring.
+- Budgets (in memory, checked before storing, spent only when the delivery is stored): **1 urgent per recipient
+  per 3 s**, 6 per sender per minute, 60 server-wide per minute. Over budget: `429 rate_limited`, retryable, and
+  **nothing is stored or pushed** (the client retries the same delivery later). They apply to every urgent send,
+  also when the recipient happens to be online. A `duplicate` resend is not woken again.
+- The stored message is an ordinary message: it is acked, expires after 8 days and appears in the inbox without
+  an `urgent` marker. Receivers must enforce the invite's own `expires` (the server does not age out stored
+  invites). Reply shape is unchanged.
+
+### Call signals over the socket
+
+Call bodies travel in the existing `signal` frame (see WebSocket above): `{"type":"signal","to":<pubkey>,"envelope":…}`.
+They reach **every open socket of the addressed identity** (at most 4), nobody else, and are never stored.
+`to` may be the sender's own identity: that reaches the identity's other sockets, which is
+how `answered_elsewhere` stops a second device ringing. Limits are unchanged by WP11: the envelope is at most
+**16,384 UTF-8 bytes** (`MAX_SIGNAL_BYTES`, default; WP02 measured the largest real encrypted call frame
+under 14 KiB and decided not to raise it), at most **120 signals a minute per socket**. Errors on the socket:
+`unknown_recipient`, `envelope_too_large` (also for an empty envelope), `rate_limited`, `bad_request`.
+Per-socket counting means an identity with 4 sockets can relay up to 480 a minute in total.
+
+### Compatibility and spec deviations (WP11)
+
+- No change for any client that does not use `/v1/call/ice` or `urgent`: `test/urgent-wake.test.ts` pins the
+  exact legacy reply and Firebase body; `limitsFrom({})` still equals the defaults for every old limit.
+- Deviation from `05 §5`: credential lifetime is **600 s**, not 3 h, and the per-caller cache is 60 s, not 10 min
+  (G4 asks for short-lived credentials; a 10 min cache of a 10 min credential would hand out dead ones).
+- Deviation from `G4`: the urgent flag is bounded by sender/recipient/global budgets, not tied to a server-side
+  call record, because the server cannot read the envelope and a call record would need a new client-supplied
+  call id and a new table. Recorded as open in the evidence.
+
 ## Limits (pilot defaults)
 
 | Limit | Value | On breach |
@@ -549,5 +657,15 @@ Every other failure uses the codes above (`bad_request`, `not_found`, `auth_miss
 | Unfinished sync assemblies per identity | 4 | `409 sync_limit`, retryable |
 | Sync events per identity | 64 events / 256 KiB | `409 sync_limit`, retryable |
 | Sync retention | 24 h maximum | `404` after expiry |
+| Call ICE requests | 6 per identity per minute | `429 rate_limited`, retryable |
+| Call ICE credential lifetime | 600 s maximum (`CALL_ICE_TTL_S` can lower it) | n/a |
+| Call ICE cache per caller | 60 s | n/a |
+| Call ICE provider response / deadline | 8 KiB / 5 s | `502 upstream_failed`, retryable |
+| Urgent deliveries per request | 1 (never to oneself) | `400 bad_request` |
+| Urgent wake per recipient | 1 per 3 s | `429 rate_limited`, retryable, nothing stored |
+| Urgent wakes per sender / server-wide | 6 / 60 per minute | `429 rate_limited`, retryable, nothing stored |
+| Urgent FCM lifetime | 45 s, high priority, no collapse key | dropped by FCM |
+| Signal envelope | 16,384 UTF-8 bytes (`MAX_SIGNAL_BYTES`) | `envelope_too_large` on the socket |
+| Signals | 120 per minute per socket | `rate_limited` on the socket |
 
 Caps refuse new messages. Nothing already accepted is ever evicted to make room.
