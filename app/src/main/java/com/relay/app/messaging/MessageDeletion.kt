@@ -72,11 +72,16 @@ object MessageDeletion {
         targets.forEach { (event,id) -> db.delete("reactions","scope=? AND target=?",arrayOf("$prefix$id",event)) }
         ConversationEvents.changes.value += 1
         db.delete(table, where, args)
+        if (table == "messages") {
+            com.relay.app.media.AndroidPhoneFileStore(context, MessagingDb.get(context)).cancelMissing()
+            MessagingRuntime.launchIo { com.relay.app.media.PhoneFiles.cleanup(context.applicationContext) }
+        }
         paths.forEach { path ->
             // App-private media only; never remove external files or arbitrary sender paths.
             val f = File(path).canonicalFile
             if (f.path.startsWith(context.filesDir.canonicalPath + "/") || f.path.startsWith(context.cacheDir.canonicalPath + "/")) f.delete()
         }
+        File(context.cacheDir, "file-open").deleteRecursively()
         File(context.cacheDir, "private-media-view").deleteRecursively()
         File(context.cacheDir, "mms_view").deleteRecursively()
         viewGeneration.value += 1

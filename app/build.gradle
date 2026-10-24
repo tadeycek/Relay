@@ -29,7 +29,8 @@ android {
         targetSdk 36
         versionCode 16
         versionName previewBuild ? '1.15-preview' : '1.15'
-        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+        testInstrumentationRunner providers.gradleProperty('relayTestRunner').getOrElse('androidx.test.runner.AndroidJUnitRunner')
+        buildConfigField 'boolean', 'FILE_SEND_ENABLED', providers.gradleProperty('relayFileSend').getOrElse('false').toBoolean().toString()
         buildConfigField 'String', 'MAILBOX_URL', groovy.json.JsonOutput.toJson(mailboxConfig.getProperty('url', ''))
     }
 

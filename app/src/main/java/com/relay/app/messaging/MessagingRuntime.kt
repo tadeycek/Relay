@@ -143,8 +143,12 @@ object MessagingRuntime {
                 if (com.relay.app.groups.GroupDispatch.drain(appContext)) kick()
             }
             while (true) {
+                launchIo { com.relay.app.media.PhoneFiles.cleanup(appContext) }
                 if (transport.status.value == TransportStatus.ONLINE) {
                     try {
+                        launchIo {
+                            com.relay.app.media.PhoneFiles.tick(appContext)
+                        }
                         worker.drain()
                         groupPreparation.request()
                         // Sent-copy sync: returns at once unless a computer is linked; rate-limited inside.

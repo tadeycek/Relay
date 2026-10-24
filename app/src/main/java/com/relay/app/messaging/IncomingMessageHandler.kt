@@ -157,6 +157,22 @@ class IncomingMessageHandler(context: Context) {
         com.relay.app.media.ProfilePhotoSync.requestProfile(appContext, contact)
         val sentAt = TimestampPolicy.resolve(payload.ts, now)
 
+        if (com.relay.app.files.FileBody.isFile(body)) {
+            if (contact.qrVerified) {
+                if (!com.relay.app.media.PhoneFiles.receive(appContext, contact.id, payload.copy(body = body)))
+                    storeReceived(contact, "[Unsupported file]", MessageType.TEXT, payload.id, sentAt, now)
+            } else storeReceived(contact, "[File from an unverified contact]", MessageType.TEXT, payload.id, sentAt, now)
+            notifyUpdated(contact.id)
+            return
+        }
+        // Unknown control/attachment types get a notice instead of raw wire text. The decision is an
+        // allow-list (UnsupportedBody): an earlier `startsWith("TYPE:")` check swallowed every reply.
+        val unsupported = UnsupportedBody.notice(body)
+        if (unsupported != null && IncomingClassifier.classify(body) == Classified.Text) {
+            storeReceived(contact, unsupported, MessageType.TEXT, payload.id, sentAt, now)
+            notifyUpdated(contact.id)
+            return
+        }
         when (val kind = IncomingClassifier.classify(body)) {
             Classified.PublicKey -> handlePublicKey(contact, body)
 

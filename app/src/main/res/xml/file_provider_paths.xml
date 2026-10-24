@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="mms_cache" path="mms/" />
+    <cache-path name="verified_files" path="file-open/" />
 </paths>

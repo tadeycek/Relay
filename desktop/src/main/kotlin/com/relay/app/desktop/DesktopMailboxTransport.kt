@@ -65,6 +65,7 @@ class DesktopMailboxTransport(
     private val signer: NostrSigner,
     private val rawStore: RawPacketStore,
     private val device: DesktopDeviceAuth? = null,
+    httpClient: OkHttpClient? = null,
 ) : Transport {
 
     private val base = baseUrl.trim().trimEnd('/')
@@ -75,7 +76,8 @@ class DesktopMailboxTransport(
     private val requestSigner: NostrSigner get() = device?.signer ?: signer
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val http = OkHttpClient.Builder()
+    private val http = (httpClient?.newBuilder() ?: OkHttpClient.Builder())
+        .followRedirects(false).followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
@@ -132,15 +134,31 @@ class DesktopMailboxTransport(
         payload: RelayPayload,
         relayHints: List<String>,
         ephemeral: Boolean,
-    ): SendResult {
+    ): SendResult = sendMedia(recipientPubkeyHex, payload, emptyList(), ephemeral)
+
+    override suspend fun sendWithMedia(recipientPubkeyHex: String, payload: RelayPayload, mediaDigests: List<String>, relayHints: List<String>): SendResult =
+        sendMedia(recipientPubkeyHex, payload, mediaDigests, false)
+
+    private suspend fun sendMedia(recipientPubkeyHex: String, payload: RelayPayload, mediaDigests: List<String>, ephemeral: Boolean): SendResult {
         if (ephemeral) return SendResult.Failed("Signals are not implemented in the WP06 desktop core", retryable = false)
         return withContext(Dispatchers.IO) {
             if (!MailboxProtocol.isRecipient(recipientPubkeyHex)) return@withContext SendResult.Failed("Invalid recipient key", retryable = false)
             if (!MailboxProtocol.isDeliveryId(payload.id)) return@withContext SendResult.Failed("Invalid message id", retryable = false)
             try {
-                val envelope = DesktopGiftWrap.wrap(keys, recipientPubkeyHex, payload)
+                // Validate before encryption/network, never truncate or silently omit references.
+                MailboxProtocol.sendBody(recipientPubkeyHex, payload.id, "validation", mediaDigests)
                 val url = "$base/v1/send$deviceQuery"
-                val bytes = MailboxProtocol.sendBody(recipientPubkeyHex, payload.id, envelope).toByteArray(Charsets.UTF_8)
+                val body = if (mediaDigests.isEmpty()) {
+                    MailboxProtocol.sendBody(recipientPubkeyHex, payload.id, DesktopGiftWrap.wrap(keys, recipientPubkeyHex, payload))
+                } else {
+                    val durable = rawStore as? DesktopMessageStore ?: return@withContext SendResult.Failed("Durable media outbox required", false)
+                    val existing = durable.mediaSendBodyOrNull(recipientPubkeyHex, payload.id)
+                    val candidate = existing ?: MailboxProtocol.sendBody(recipientPubkeyHex, payload.id, DesktopGiftWrap.wrap(keys, recipientPubkeyHex, payload), mediaDigests)
+                    durable.mediaSendBody(recipientPubkeyHex, payload.id) { candidate }.also { persisted ->
+                        require(org.json.JSONObject(persisted).getJSONArray("media").toString() == org.json.JSONArray(mediaDigests).toString()) { "Media retry reference mismatch" }
+                    }
+                }
+                val bytes = body.toByteArray(Charsets.UTF_8)
                 val request = Request.Builder()
                     .url(url)
                     .header("Authorization", MailboxAuth.header(requestSigner, "POST", url, bytes))
@@ -154,6 +172,10 @@ class DesktopMailboxTransport(
                         is MailboxProtocol.Outcome.Rejected -> SendResult.Failed(outcome.reason, retryable = false)
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: IllegalArgumentException) {
+                SendResult.Failed("Invalid mailbox media request", retryable = false)
             } catch (e: IOException) {
                 SendResult.Failed("Mailbox unreachable: ${e.message}", retryable = true)
             } catch (e: Exception) {

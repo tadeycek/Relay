@@ -54,6 +54,8 @@ class RelayDbHelper(context: Context) :
         createMailbox(db)
         createDispatchAndReceipts(db)
         db.execSQL(com.relay.app.sync.AndroidSyncOutbox.CREATE)
+        db.execSQL(com.relay.app.media.AndroidPhoneFileStore.CREATE)
+        db.execSQL(com.relay.app.media.AndroidPhoneFileStore.CREATE_REFS)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -148,6 +150,10 @@ class RelayDbHelper(context: Context) :
         if (oldVersion < 23) createDispatchAndReceipts(db)
         if (oldVersion < 24) db.execSQL(com.relay.app.messaging.RetiredActivity.DROP)
         if (oldVersion < 25) db.execSQL(com.relay.app.sync.AndroidSyncOutbox.CREATE)
+        if (oldVersion < 26) {
+            db.execSQL(com.relay.app.media.AndroidPhoneFileStore.CREATE)
+            db.execSQL(com.relay.app.media.AndroidPhoneFileStore.CREATE_REFS)
+        }
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.

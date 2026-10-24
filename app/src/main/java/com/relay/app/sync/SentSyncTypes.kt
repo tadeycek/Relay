@@ -17,6 +17,7 @@ data class SyncOutboxItem(
     val confirmed: Boolean = false,
     val attempts: Int = 0,
     val nextAttemptAt: Long = 0L,
+    val mediaDigests: List<String> = emptyList(),
 )
 
 interface SyncOutbox {
@@ -30,6 +31,8 @@ interface SyncOutbox {
     fun due(now: Long, limit: Int): List<SyncOutboxItem>
     fun recordAttempt(payloadId: String, attempts: Int, nextAttemptAt: Long)
     fun remove(payloadId: String)
+    /** Called only after all SENT parts have been accepted, never on expiry/permanent failure. */
+    fun published(payloadId: String) = remove(payloadId)
     /** Drops unconfirmed items older than the send give-up window; returns how many. */
     fun purgeStale(olderThan: Long): Int
     /** Removes every row (the last linked computer is gone). */

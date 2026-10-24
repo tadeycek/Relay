@@ -104,6 +104,7 @@ fun main(args: Array<String>) {
             state = androidx.compose.ui.window.rememberWindowState(size = androidx.compose.ui.unit.DpSize(900.dp, 800.dp)),
         ) {
             window.minimumSize = java.awt.Dimension(760, 740)
+            DisposableEffect(window) { installFileDrop(window); onDispose { window.dropTarget = null } }
             RelayTheme {
                 Root(paths, options.mailboxUrl, options.peerInnerKeys, options.initialPeer)
             }
@@ -145,6 +146,7 @@ private data class Args(
                         val peer = args.getOrNull(++i)
                         if (peer != null && value.isNotEmpty()) peerKeys[peer] = value
                     }
+                    "--enable-file-send-for-tests" -> System.setProperty("relay.files.send.testOptIn", "true")
                     "--print-identity" -> printIdentity = true
                     "--send-test-message" -> {
                         sendTestMessage = true
@@ -191,7 +193,7 @@ private fun RelayTheme(content: @Composable () -> Unit) {
 private fun Root(paths: DesktopPaths, mailboxUrl: String, peerInnerKeys: Map<String, String>, initialPeer: String?) {
     var generation by remember { mutableStateOf(0) }
     val engine = remember(generation) {
-        DesktopEngine.create(paths, mailboxUrl, peerInnerKeys).also { if (mailboxUrl.isNotBlank()) it.start() }
+        DesktopEngine.create(paths, mailboxUrl, peerInnerKeys, enableFileSendForTests = System.getProperty("relay.files.send.testOptIn") == "true").also { if (mailboxUrl.isNotBlank()) it.start() }
     }
     DisposableEffect(engine) { onDispose { engine.close() } }
 
@@ -421,6 +423,15 @@ private fun App(engine: DesktopEngine, initialPeer: String?) {
         selectedPeer?.let { messages = engine.messages(it) }
     }
 
+    LaunchedEffect(engine) {
+        for (path in DesktopFileDrops.paths) {
+            val peer = selectedPeer
+            val blocked = DesktopFiles.attachBlockReason(peer, engine.files?.sendEnabled == true)
+            if (peer == null || blocked != null) { error = blocked ?: "Select a conversation before attaching a file"; continue }
+            try { engine.sendFile(peer, path); refresh() } catch (e: Exception) { error = "Cannot attach file: check contact encryption key, quota and source permissions" }
+        }
+    }
+
     LaunchedEffect(engine.revision) {
         // Re-run whenever the engine commits a message.
         engine.revision.collect { refresh() }
@@ -533,7 +544,7 @@ private fun App(engine: DesktopEngine, initialPeer: String?) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(messages, key = { it.id }) { message ->
-                    MessageBubble(message)
+                    MessageBubble(message, engine)
                 }
             }
 
@@ -553,6 +564,9 @@ private fun App(engine: DesktopEngine, initialPeer: String?) {
                     maxLines = 4,
                 )
                 Spacer(Modifier.width(10.dp))
+                TextButton(enabled = DesktopFiles.attachBlockReason(selectedPeer, engine.files?.sendEnabled == true) == null, onClick = {
+                    desktopFileDialog(false)?.let { DesktopFileDrops.paths.trySend(it) }
+                }) { Text("Attach file") }
                 Button(
                     enabled = draft.isNotBlank() && selectedPeer != null &&
                         engine.status.value != com.relay.app.transport.TransportStatus.STOPPED,
@@ -575,7 +589,7 @@ private fun App(engine: DesktopEngine, initialPeer: String?) {
 }
 
 @Composable
-private fun MessageBubble(message: DesktopMessage) {
+private fun MessageBubble(message: DesktopMessage, engine: DesktopEngine) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (message.outgoing) Arrangement.End else Arrangement.Start,
@@ -586,8 +600,8 @@ private fun MessageBubble(message: DesktopMessage) {
             modifier = Modifier.width(420.dp),
         ) {
             Column(Modifier.padding(10.dp)) {
-                Text(
-                    message.body,
+                if (message.body.startsWith("TYPE:FILE|")) FileBubble(engine, message) else Text(
+                    DesktopFiles.displayText(message.body),
                     color = if (message.outgoing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                 )
                 Spacer(Modifier.height(4.dp))

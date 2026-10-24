@@ -68,7 +68,7 @@ interface SyncHttp {
     suspend fun ack(through: Long): SyncHttpResult<Long>
 }
 
-data class OutboxEntry(val id: Long, val wire: String, val createdAt: Long, val attempts: Int)
+data class OutboxEntry(val id: Long, val wire: String, val createdAt: Long, val attempts: Int, val mediaDigests: List<String> = emptyList())
 
 enum class SyncCommit { INSERTED, MERGED, NONE }
 
@@ -108,10 +108,14 @@ object SyncWire {
 
     fun serverId(wire: String): String = sha256Hex(wire.toByteArray(Charsets.UTF_8)).substring(0, 32)
 
-    fun envelope(wire: String, revision: Long, now: Long): String {
+    fun envelope(wire: String, revision: Long, now: Long, mediaDigests: List<String> = emptyList()): String {
         val bytes = wire.toByteArray(Charsets.UTF_8)
         return JSONObject()
             .put("v", 1)
+            .also { j ->
+                require(mediaDigests.size <= 8 && mediaDigests.distinct().size == mediaDigests.size && mediaDigests.all { Regex("[0-9a-f]{64}").matches(it) })
+                if (mediaDigests.isNotEmpty()) j.put("media", org.json.JSONArray(mediaDigests))
+            }
             .put("id", serverId(wire))
             .put("rev", maxOf(1L, revision))
             .put("part", 0)
@@ -198,20 +202,36 @@ class SentSyncPublisher(
         var dropped = 0
         var error: String? = null
         for (entry in store.outbox(limit)) {
+            // Age applies to EVERY entry, file copies included. A file copy older than the server's
+            // 24 h window can never be accepted again, so keeping it at the head only wedges the lane.
             if (clock() - entry.createdAt > maxAgeMs) {
+                if (entry.mediaDigests.isNotEmpty()) (store as? DesktopMessageStore)?.dropFileSync(entry.wire)
                 store.outboxDone(entry.id)
                 dropped++
+                error = "expired: ${if (entry.mediaDigests.isEmpty()) "text" else "file"} SENT copy dropped"
                 continue
             }
-            when (val result = http.post(SyncWire.envelope(entry.wire, 1, clock()))) {
+            // expires is computed at post time. Signing it from createdAt (an earlier attempt) made any
+            // retry after the server window a permanent 400; the signature is on the Nostr auth header,
+            // which is fresh on every POST, so byte-identical envelopes buy nothing.
+            when (val result = http.post(SyncWire.envelope(entry.wire, 1, clock(), entry.mediaDigests))) {
                 is SyncHttpResult.Ok -> {
                     store.outboxDone(entry.id)
+                    (store as? DesktopMessageStore)?.refreshFileSyncPublication()
                     if (result.value) duplicates++ else posted++
                 }
                 is SyncHttpResult.Rejected -> {
+                    // A file copy gets ONE retry with a fresh expiry, then it is dropped: a permanently
+                    // rejected file must never block the text copies queued behind it (it used to break
+                    // the whole lane forever). The file keeps syncPublished = false.
+                    if (entry.mediaDigests.isNotEmpty() && entry.attempts == 0) {
+                        store.outboxAttempt(entry.id)
+                        continue
+                    }
+                    if (entry.mediaDigests.isNotEmpty()) (store as? DesktopMessageStore)?.dropFileSync(entry.wire)
                     store.outboxDone(entry.id)
                     dropped++
-                    error = "rejected: ${result.reason}"
+                    error = if (entry.mediaDigests.isEmpty()) "rejected: ${result.reason}" else "file SENT rejected"
                 }
                 is SyncHttpResult.Retry -> {
                     store.outboxAttempt(entry.id)
@@ -220,6 +240,7 @@ class SentSyncPublisher(
                 }
             }
         }
+        (store as? DesktopMessageStore)?.refreshFileSyncPublication()
         FlushReport(posted, duplicates, dropped, store.outbox(1000).size, error)
     }
 }

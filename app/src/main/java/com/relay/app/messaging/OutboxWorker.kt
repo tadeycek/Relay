@@ -69,7 +69,7 @@ class OutboxWorker(
         }
         // A contact's current hints, plus any the group roster supplied for a member who isn't one.
         val hints = (entry.contactId?.let { contacts.getByIdSync(it)?.relayHints }.orEmpty() + entry.relayHints).distinct()
-        return when (val result = transport.send(entry.recipientPubkeyHex, payload, hints)) {
+        return when (val result = transport.sendWithMedia(entry.recipientPubkeyHex, payload, com.relay.app.media.AndroidPhoneFileStore.refs(db, entry.payloadId), hints)) {
             is SendResult.Sent -> {
                 outbox.markSentSync(entry.id)
                 messages.setDeliveryStateSync(entry.payloadId, DeliveryState.SENT)

@@ -63,7 +63,7 @@ object SentSync {
 
     /** A user-visible message was queued for [recipientPubkey]; call in the same transaction as its outbox row. */
     fun stageDirect(context: Context, recipientPubkey: String, payloadId: String, ts: Long, plainBody: String) {
-        if (!hint(context).get() || !SentSyncWire.mirrored(plainBody)) return
+        if ((!hint(context).get() && !com.relay.app.files.FileBody.isFile(plainBody)) || !SentSyncWire.mirrored(plainBody)) return
         stage(context, recipientPubkey, payloadId, ts, plainBody)
     }
 
@@ -87,7 +87,7 @@ object SentSync {
 
     /** The mailbox accepted the message with this payload id (or, for a group, one of its legs). */
     fun confirmed(context: Context, payloadId: String) {
-        if (!hint(context).get()) return
+        if (!hint(context).get() && com.relay.app.media.AndroidPhoneFileStore.refs(MessagingDb.get(context),payloadId).isEmpty()) return
         runCatching {
             val db = MessagingDb.get(context)
             val outbox = AndroidSyncOutbox(db)
@@ -110,7 +110,9 @@ object SentSync {
     suspend fun tick(context: Context, force: Boolean = false) {
         val app = context.applicationContext
         val hint = hint(app)
-        if (!hint.get() || !MailboxConfig.available) return
+        if (!MailboxConfig.available) return
+        val fileWork = MessagingDb.get(app).readableDatabase.rawQuery("SELECT 1 FROM sent_sync_outbox s JOIN file_media_refs f ON f.payload_id=s.payload_id WHERE f.digests!='' LIMIT 1",emptyArray<String>()).use {it.moveToFirst()}
+        if (!hint.get() && !fileWork) return
         val now = System.currentTimeMillis()
         val last = lastTick.get()
         if (!force && now - last < MIN_TICK_GAP_MS) return
@@ -167,7 +169,7 @@ class AndroidSyncOutbox(private val db: RelayDbHelper) : SyncOutbox {
             arrayOf(now.toString(), limit.toString()),
         ).use { c ->
             buildList {
-                while (c.moveToNext()) add(SyncOutboxItem(c.getString(0), c.getString(1), c.getString(2), c.getLong(3), true, c.getInt(4), c.getLong(5)))
+                while (c.moveToNext()) add(SyncOutboxItem(c.getString(0), c.getString(1), c.getString(2), c.getLong(3), true, c.getInt(4), c.getLong(5), com.relay.app.media.AndroidPhoneFileStore.refs(db,c.getString(0))))
             }
         }
 
@@ -176,6 +178,16 @@ class AndroidSyncOutbox(private val db: RelayDbHelper) : SyncOutbox {
     }
 
     override fun remove(payloadId: String) = discard(payloadId)
+
+    override fun published(payloadId: String) {
+        val sql=db.writableDatabase
+        sql.beginTransaction()
+        try {
+            com.relay.app.media.AndroidPhoneFileStore.markSyncGranted(db,payloadId)
+            discard(payloadId)
+            sql.setTransactionSuccessful()
+        } finally {sql.endTransaction()}
+    }
 
     override fun purgeStale(olderThan: Long): Int =
         db.writableDatabase.delete(TABLE, "confirmed=0 AND created_at<?", arrayOf(olderThan.toString()))
@@ -256,9 +268,15 @@ class AndroidSentCopyStore(private val context: Context, private val db: RelayDb
 
     private fun insertDirect(thread: ThreadRef, payload: RelayPayload, plain: String): Boolean {
         if (!SentSyncWire.mirrored(plain)) return true // a control body never becomes a chat row
+        if (MessageDeletion.isDeleted(db,"direct:${thread.id}",NostrIdentity.publicKeyHex(context),payload.id,payload.ts)) return true
+        if (com.relay.app.files.FileBody.isFile(plain) && com.relay.app.files.FileManifest.fromAuthenticatedPayload(payload.copy(body=plain),com.relay.app.files.FileBody.urlBasePredicate(com.relay.app.transport.mailbox.MailboxMedia::isOurs)) != null) {
+            check(com.relay.app.media.PhoneFiles.receive(context, thread.id, payload.copy(body = plain), true))
+            touchedContacts += thread.id
+            return true
+        }
         val media = MediaBody.parse(plain)
         // The attachment itself is not fetched for a copy written on a computer: the thread gets the caption.
-        val body = if (MediaBody.isMedia(plain)) media?.caption.orEmpty().ifEmpty { ATTACHMENT_NOTE } else plain
+        val body = if (com.relay.app.files.FileBody.isFile(plain)) "[Unsupported file]" else if (MediaBody.isMedia(plain)) media?.caption.orEmpty().ifEmpty { ATTACHMENT_NOTE } else plain
         val row = MessageRepository(db).insertMessageSync(
             Message(contactId = thread.id, body = body, type = MessageType.TEXT, isSent = true, timestamp = payload.ts,
                 msgId = payload.id, senderVerified = true, deliveryState = DeliveryState.SENT, unread = false),
@@ -279,7 +297,7 @@ class AndroidSentCopyStore(private val context: Context, private val db: RelayDb
         sql.execSQL("INSERT OR IGNORE INTO shared_group_seen(group_id,event) VALUES(?,?)", arrayOf(thread.id, "$own:${packet.event}"))
         val media = MediaBody.parse(packet.text)
         val row = GroupMessageRepository(db).insertMessageSync(
-            GroupMessage(groupId = thread.id, body = if (MediaBody.isMedia(packet.text)) media?.caption.orEmpty().ifEmpty { ATTACHMENT_NOTE } else packet.text,
+            GroupMessage(groupId = thread.id, body = if (com.relay.app.files.FileBody.isFile(packet.text)) "[Group files are not supported yet]" else if (MediaBody.isMedia(packet.text)) media?.caption.orEmpty().ifEmpty { ATTACHMENT_NOTE } else packet.text,
                 eventId = packet.event, senderKey = own, senderName = stored.state.members.firstOrNull { it.key == own }?.name,
                 type = MessageType.TEXT, isSent = true, timestamp = payload.ts, unread = false),
         )

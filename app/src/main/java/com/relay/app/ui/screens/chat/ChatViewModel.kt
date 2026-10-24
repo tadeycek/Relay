@@ -162,6 +162,19 @@ class ChatViewModel(
     private val _sending = MutableStateFlow(false)
     val sending = _sending.asStateFlow()
 
+    fun sendFile(context: Context, uri: android.net.Uri) {
+        if (_sending.value || !com.relay.app.media.PhoneFiles.sendEnabled) return
+        _sending.value = true
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { com.relay.app.media.PhoneFiles.send(context.applicationContext, contactId, uri) }
+                _messages.value = readWindow()
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (_: Exception) { _toastMessage.emit("Could not prepare file; check private storage and try again")
+            } finally { _sending.value = false }
+        }
+    }
+
     fun sendText(body: String, context: Context, onQueued: () -> Unit = {}) {
         if (_sending.value) return
         val contact = _contact.value ?: return

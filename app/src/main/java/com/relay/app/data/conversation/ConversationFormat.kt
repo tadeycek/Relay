@@ -46,6 +46,10 @@ object ConversationFormat {
     private const val PREVIEW_MAX = 80
 
     fun preview(type: MessageType?, body: String?, isSent: Boolean): String {
+        if (com.relay.app.files.FileBody.isFile(body.orEmpty())) {
+            val file = (com.relay.app.files.FileBody.parse(body.orEmpty()) { true } as? com.relay.app.files.FileBodyResult.Ok)?.body
+            return (if (isSent) "You: " else "") + (file?.let { oneLine("File · ${it.name}") } ?: "Unsupported file")
+        }
         if (type == null) return "No messages yet"
         val you = if (isSent) "You: " else ""
         return when (type) {

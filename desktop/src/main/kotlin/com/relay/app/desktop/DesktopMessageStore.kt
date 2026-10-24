@@ -66,6 +66,8 @@ class DesktopMessageStore(
         connection = DriverManager.getConnection("jdbc:sqlite:${databaseFile.toAbsolutePath()}", config.toProperties())
         migrate()
         createSyncTables()
+        connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS file_transfers(id TEXT PRIMARY KEY, record TEXT NOT NULL)") }
+        connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS file_sync_refs(wire TEXT PRIMARY KEY, file_id TEXT NOT NULL, media TEXT NOT NULL)") }
         secureFiles()
     }
 
@@ -112,6 +114,7 @@ class DesktopMessageStore(
 
     /** Inserts [message] once by payload id. Returns true when this call inserted it. */
     fun insertMessage(message: DesktopMessage): Boolean = synchronized(lock) {
+        registerFile(message)
         ensureConversation(message.conversationId)
         connection.autoCommit = false
         try {
@@ -257,9 +260,13 @@ class DesktopMessageStore(
         connection.prepareStatement("SELECT id, wire, created_at, attempts FROM sync_outbox ORDER BY id ASC LIMIT ?").use { ps ->
             ps.setInt(1, limit)
             ps.executeQuery().use { rs ->
-                buildList { while (rs.next()) add(OutboxEntry(rs.getLong(1), rs.getString(2), rs.getLong(3), rs.getInt(4))) }
+                buildList { while (rs.next()) add(OutboxEntry(rs.getLong(1), rs.getString(2), rs.getLong(3), rs.getInt(4), fileSyncMedia(rs.getString(2)))) }
             }
         }
+    }
+
+    private fun fileSyncMedia(wire: String): List<String> = connection.prepareStatement("SELECT media FROM file_sync_refs WHERE wire=?").use { ps ->
+        ps.setString(1, wire); ps.executeQuery().use { rs -> if (rs.next()) org.json.JSONArray(rs.getString(1)).let { a -> List(a.length()) { a.getString(it) } } else emptyList() }
     }
 
     override fun outboxDone(id: Long) {
@@ -269,6 +276,21 @@ class DesktopMessageStore(
                 ps.executeUpdate()
             }
         }
+    }
+
+    /**
+     * A file copy that will never be published (expired or permanently rejected) must lose its reference
+     * row: [refreshFileSyncPublication] treats "no outbox row" as "published", and a dropped copy that
+     * still had refs would silently mark the file synced, letting the sender confirm before grants exist.
+     */
+    fun dropFileSync(wire: String) = synchronized(lock) {
+        connection.prepareStatement("DELETE FROM file_sync_refs WHERE wire = ?").use { ps -> ps.setString(1, wire); ps.executeUpdate() }
+    }
+
+    fun refreshFileSyncPublication() = synchronized(lock) {
+        connection.createStatement().use { st -> st.executeQuery("SELECT DISTINCT f.file_id FROM file_sync_refs f WHERE NOT EXISTS (SELECT 1 FROM file_sync_refs r JOIN sync_outbox o ON o.wire=r.wire WHERE r.file_id=f.file_id)").use { rs ->
+            while (rs.next()) fileRecord(rs.getString(1))?.let { saveFile(it.copy(syncPublished = true)) }
+        } }
     }
 
     override fun outboxAttempt(id: Long) {
@@ -308,7 +330,65 @@ class DesktopMessageStore(
         }
     }
 
+    fun mediaSendBodyOrNull(peer: String, id: String): String? = synchronized(lock) { meta("file.send.$peer.$id") }
+
+    fun mediaSendBody(peer: String, id: String, create: () -> String): String = synchronized(lock) {
+        val key = "file.send.$peer.$id"
+        meta(key) ?: create().also { setMeta(key, it); secureFiles() }
+    }
+
+    /** Encrypted durable file journal. Manifest keys never enter a sidecar JSON file. */
+    fun fileRecord(id: String): DesktopFileRecord? = synchronized(lock) {
+        connection.prepareStatement("SELECT record FROM file_transfers WHERE id=?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs -> if (rs.next()) DesktopFileRecord.decode(rs.getString(1)) else null }
+        }
+    }
+
+    fun fileRecords(): List<DesktopFileRecord> = synchronized(lock) {
+        connection.createStatement().use { st -> st.executeQuery("SELECT record FROM file_transfers").use { rs ->
+            buildList { while (rs.next()) add(DesktopFileRecord.decode(rs.getString(1))) }
+        } }
+    }
+
+    fun saveFile(record: DesktopFileRecord) = synchronized(lock) {
+        connection.prepareStatement("INSERT INTO file_transfers(id,record) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record").use { ps ->
+            ps.setString(1, record.id); ps.setString(2, record.encode()); ps.executeUpdate()
+        }
+        secureFiles()
+    }
+
+    /** File row exists before a message/cursor can become visible. Replay repairs either crash boundary. */
+    private fun registerFile(message: DesktopMessage) {
+        if (!message.body.startsWith("TYPE:FILE|") || message.conversationId.startsWith("group:")) return
+        val manifest = com.relay.app.files.FileManifest.fromAuthenticatedPayload(
+            com.relay.app.transport.RelayPayload(message.id, message.ts, message.body), { true }) ?: return
+        if (fileRecord(message.id) == null) saveFile(DesktopFileRecord(message.id, message.conversationId,
+            message.sender, message.ts, message.outgoing, message.body, "QUEUED", List(manifest.body.parts.size) { false },
+            List(manifest.body.parts.size) { false }))
+    }
+
+    /** [now] is injectable so tests can age a queued copy without waiting. */
+    fun queueFileSync(id: String, wires: List<String>, media: List<String>, now: Long = System.currentTimeMillis()) = synchronized(lock) {
+        val record = fileRecord(id) ?: error("missing file")
+        if (record.syncQueued) return@synchronized
+        connection.autoCommit = false
+        try {
+            connection.prepareStatement("INSERT INTO sync_outbox(wire,created_at) VALUES(?,?)").use { ps ->
+                for (wire in wires) { ps.setString(1, wire); ps.setLong(2, now); ps.executeUpdate() }
+            }
+            require(wires.isNotEmpty()) { "No SENT copy" }
+            connection.prepareStatement("INSERT OR IGNORE INTO file_sync_refs(wire,file_id,media) VALUES(?,?,?)").use { ps ->
+                for (wire in wires) { ps.setString(1, wire); ps.setString(2, id); ps.setString(3, org.json.JSONArray(media).toString()); ps.executeUpdate() }
+            }
+            saveFile(record.copy(syncQueued = true))
+            connection.commit()
+        } catch (e: Exception) { connection.rollback(); throw e }
+        finally { connection.autoCommit = true }
+    }
+
     private fun insertMessageRow(message: DesktopMessage): Boolean {
+        registerFile(message)
         val inserted = connection.prepareStatement(
             "INSERT OR IGNORE INTO messages(id, conversation_id, sender, body, ts, outgoing) VALUES(?, ?, ?, ?, ?, ?)",
         ).use { ps ->

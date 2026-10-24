@@ -39,6 +39,14 @@ class SentSyncTest {
     private val peer = "b".repeat(64)
     private val deviceId = "1".repeat(32)
 
+    /** The media client the stale-copy test never calls: it only prepares and queues. */
+    private fun nopMedia() = object : DesktopFileMedia {
+        override val urlBase = "https://files.example/v1/media/"
+        override fun upload(file: java.io.File, hash: String, recipients: List<String>, cancellation: com.relay.app.transport.mailbox.MailboxMedia.Cancellation) = error("unused")
+        override fun download(file: java.io.File, hash: String, size: Long, cancellation: com.relay.app.transport.mailbox.MailboxMedia.Cancellation) = error("unused")
+        override fun confirm(hash: String, cancellation: com.relay.app.transport.mailbox.MailboxMedia.Cancellation) = error("unused")
+    }
+
     // ---- fakes --------------------------------------------------------------------------------
 
     /** A stand-in for the Worker's sync routes. Bytes are stored exactly as posted. */
@@ -47,6 +55,7 @@ class SentSyncTest {
         var failPosts = false
         var failList = false
         var postCalls = 0
+        var now: () -> Long = System::currentTimeMillis
         val acks = mutableListOf<Long>()
         private var seq = 0L
 
@@ -61,7 +70,8 @@ class SentSyncTest {
             require(j.getInt("parts") == 1 && j.getInt("part") == 0)
             require(j.getLong("total") <= 12 * 1024)
             require(j.getString("hash").matches(Regex("[0-9a-f]{64}")))
-            require(j.getLong("expires") > 0)
+            // The Worker rejects a part whose expires has already passed (400 -> Rejected).
+            if (j.getLong("expires") <= now()) return SyncHttpResult.Rejected("expired")
             val data = j.getString("data")
             require(data.length <= 16 * 1024)
             require(Base64.getDecoder().decode(data).size.toLong() == j.getLong("total"))
@@ -591,5 +601,24 @@ class SentSyncTest {
         assertEquals(0, env.getInt("part"))
         assertTrue(env.getLong("total") <= 12 * 1024)
         assertEquals(1_000L + 24L * 60 * 60 * 1000, env.getLong("expires"))
+    }
+
+    // ---- review finding B1 -----------------------------------------------------------------------
+
+    @Test
+    fun `a fresh file copy is posted with an expiry in the future`() = runBlocking {
+        val sender = open(paths("fresh"))
+        val server = FakeServer()
+        var now = 5_000_000L
+        server.now = { now }
+        val publisher = SentSyncPublisher(deviceId, sender, server, clock = { now })
+        val body = "TYPE:FILE|ID:abc|K:a2V5|N:r.pdf|S:9"
+        val payload = RelayPayload(PayloadCodec.newId(), now, body)
+        publisher.recordSent(DesktopMessage(payload.id, peer, me, body, now, true), peer, payload)
+        now += 60_000
+        val report = publisher.flush()
+        assertEquals(1, report.posted)
+        assertEquals(0, sender.outbox(10).size)
+        sender.close()
     }
 }

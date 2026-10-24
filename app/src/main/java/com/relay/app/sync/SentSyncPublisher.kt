@@ -55,13 +55,12 @@ class SentSyncPublisher(
     }
 
     suspend fun flush(): FlushReport {
-        if (!hint.get()) return FlushReport()
         val now = clock()
         outbox.purgeStale(now - OutboxPolicy.GIVE_UP_AFTER_MS)
-        val due = outbox.due(now, batch)
+        val due = outbox.due(now, batch).filter { hint.get() || it.mediaDigests.isNotEmpty() }
         if (due.isEmpty()) return FlushReport()
 
-        when (val linked = linkedDevices(now)) {
+        if (due.none { it.mediaDigests.isNotEmpty() }) when (val linked = linkedDevices(now)) {
             is DevicesResult.Failed -> return FlushReport(skippedDeviceLookupFailed = true)
             is DevicesResult.Ok -> if (linked.linkedCount == 0) {
                 // The last computer is gone: stop mirroring, and stop asking until the user links again.
@@ -91,7 +90,7 @@ class SentSyncPublisher(
             val syncId = SentSyncWire.syncIdFor(item.payloadId)
             var failed = false
             for ((index, wire) in wires.withIndex()) {
-                val body = SentSyncWire.envelope(wire, SentSyncWire.eventId(syncId, index, wires.size), REVISION, now)
+                val body = SentSyncWire.envelope(wire, SentSyncWire.eventId(syncId, index, wires.size), REVISION, now, item.mediaDigests)
                 when (net.post(body)) {
                     PostResult.Ok -> posted++
                     is PostResult.Permanent -> { outbox.remove(item.payloadId); dropped++; failed = true }
@@ -104,7 +103,7 @@ class SentSyncPublisher(
                 }
                 if (failed) break
             }
-            if (!failed) { outbox.remove(item.payloadId); done++ }
+            if (!failed) { outbox.published(item.payloadId); done++ }
         }
         return FlushReport(posted, done, dropped = dropped)
     }

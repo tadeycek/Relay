@@ -23,7 +23,8 @@ object SentSyncWire {
     fun syncIdFor(payloadId: String): String = sha256Hex("relay-sent:$payloadId").take(32)
 
     /** `POST /v1/sync` body: a whole wire body as a single server part. */
-    fun envelope(wire: String, id: String, rev: Long, now: Long): String {
+    fun envelope(wire: String, id: String, rev: Long, now: Long, mediaDigests: List<String> = emptyList()): String {
+        require(mediaDigests.size <= 8 && mediaDigests.distinct() == mediaDigests && mediaDigests.all { Regex("[0-9a-f]{64}").matches(it) })
         val bytes = wire.toByteArray(Charsets.UTF_8)
         return JSONObject()
             .put("v", 1)
@@ -35,6 +36,7 @@ object SentSyncWire {
             .put("hash", sha256Hex(bytes))
             .put("expires", now + SYNC_TTL_MS)
             .put("data", Base64.getEncoder().encodeToString(bytes))
+            .apply { if (mediaDigests.isNotEmpty()) put("media", org.json.JSONArray(mediaDigests)) }
             .toString()
     }
 
@@ -81,7 +83,7 @@ object SentSyncWire {
      * Everything that is not plain text carries a `TYPE:` prefix, so the allow-list is small.
      */
     fun mirrored(plainBody: String): Boolean =
-        !plainBody.startsWith("TYPE:") || MediaBody.isMedia(plainBody) || plainBody.startsWith("TYPE:REPLY|")
+        !plainBody.startsWith("TYPE:") || com.relay.app.files.FileBody.isFile(plainBody) || MediaBody.isMedia(plainBody) || plainBody.startsWith("TYPE:REPLY|")
 
     fun sha256Hex(value: String): String = sha256Hex(value.toByteArray(Charsets.UTF_8))
     fun sha256Hex(bytes: ByteArray): String =

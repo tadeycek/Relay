@@ -73,7 +73,7 @@ class MailboxTransport(
 
     private val appContext = context.applicationContext
     private val base = baseUrl.trimEnd('/')
-    private val socketUrl = base.replaceFirst(Regex("^http"), "ws") + "/v1/ws"
+    private val socketUrl = base.replaceFirst(Regex("^http"), "ws") + "/v1/ws?device=primary"
     private val store by lazy { MailboxStore(MessagingDb.get(appContext)) }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -154,6 +154,14 @@ class MailboxTransport(
         }
     }
 
+    override suspend fun sendWithMedia(recipientPubkeyHex: String, payload: RelayPayload, mediaDigests: List<String>, relayHints: List<String>): SendResult =
+        when (val outcome = deliver(recipientPubkeyHex, payload, mediaDigests)) {
+            Outcome.Stored -> SendResult.Sent(1)
+            Outcome.NotOnMailbox -> SendResult.Failed("Recipient is not on the mailbox", retryable = false)
+            is Outcome.Retry -> SendResult.Failed(outcome.reason, retryable = true)
+            is Outcome.Rejected -> SendResult.Failed(outcome.reason, retryable = false)
+        }
+
     /** Best effort, never stored: only works while connected, and is simply dropped otherwise. */
     private suspend fun signal(recipient: String, payload: RelayPayload): SendResult {
         val ws = live ?: return SendResult.Failed("Not connected", retryable = false)
@@ -172,20 +180,25 @@ class MailboxTransport(
     }
 
     /** Hands one message to the mailbox for [recipient]. Safe to call again with the same payload. */
-    suspend fun deliver(recipient: String, payload: RelayPayload): Outcome = withContext(Dispatchers.IO) {
+    suspend fun deliver(recipient: String, payload: RelayPayload, mediaDigests: List<String> = emptyList()): Outcome = withContext(Dispatchers.IO) {
         if (!MailboxProtocol.isRecipient(recipient)) return@withContext Outcome.Rejected("Invalid recipient key")
         if (!MailboxProtocol.isDeliveryId(payload.id)) return@withContext Outcome.NotOnMailbox
         val envelope = try {
+            // Only attach a reference row when there is something to reference: a plain text send must not
+            // write a file_media_refs row (it used to, one per send).
+            if (mediaDigests.isNotEmpty()) {
+                com.relay.app.media.AndroidPhoneFileStore.persistRefs(MessagingDb.get(appContext), payload.id, mediaDigests)
+            }
             store.packet(payload.id, recipient) ?: store.savePacket(payload.id, recipient, wrap(recipient, payload))
         } catch (e: Exception) {
             return@withContext Outcome.Retry("Couldn't prepare the message: ${e.message}")
         }
         val url = "$base/v1/send"
-        val body = MailboxProtocol.sendBody(recipient, payload.id, envelope).toByteArray(Charsets.UTF_8)
+        val body = MailboxProtocol.sendBody(recipient, payload.id, envelope, mediaDigests).toByteArray(Charsets.UTF_8)
         val outcome = try {
             val request = Request.Builder()
                 .url(url)
-                .header("Authorization", MailboxAuth.header(AndroidNostrSigner(identity), "POST", url, body))
+                .header("Authorization", MailboxAuth.header(AndroidNostrSigner { PhoneDeviceEnrollment.authKeys(appContext, identity) }, "POST", url, body))
                 .post(body.toRequestBody(JSON))
                 .build()
             http.newCall(request).execute().use { MailboxProtocol.sendOutcome(it.code, it.body?.string().orEmpty()) }
@@ -216,7 +229,7 @@ class MailboxTransport(
             val ws = try {
                 val request = Request.Builder()
                     .url(socketUrl)
-                    .header("Authorization", MailboxAuth.header(AndroidNostrSigner(identity), "GET", socketUrl))
+                    .header("Authorization", MailboxAuth.header(AndroidNostrSigner { PhoneDeviceEnrollment.authKeys(appContext, identity) }, "GET", socketUrl))
                     .build()
                 http.newWebSocket(request, Listener(gen, ended) { failures.set(0) })
             } catch (e: Exception) {

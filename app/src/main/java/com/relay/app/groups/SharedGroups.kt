@@ -235,7 +235,7 @@ object SharedGroups {
             com.relay.app.messaging.ConversationEvents.apply(context, "group:$id", e.author, event)
             return false
         }
-        val message = if (staged && e.author == own) 1L else GroupMessageRepository(db).insertMessageSync(GroupMessage(groupId = id, body = com.relay.app.media.MediaBody.parse(e.text)?.caption ?: e.text,
+        val message = if (staged && e.author == own) 1L else GroupMessageRepository(db).insertMessageSync(GroupMessage(groupId = id, body = if (com.relay.app.files.FileBody.isFile(e.text)) "[Group files are not supported yet]" else com.relay.app.media.MediaBody.parse(e.text)?.caption ?: e.text,
             eventId = e.event, mediaUri = mediaPath,
             type = if(event?.kind == "screenshot" || event?.kind == "media_saved") com.relay.app.data.model.MessageType.SCREENSHOT else com.relay.app.media.MediaBody.parse(e.text)?.let { if (it.isVideo) com.relay.app.data.model.MessageType.VIDEO else com.relay.app.data.model.MessageType.IMAGE } ?: com.relay.app.data.model.MessageType.TEXT,
             senderKey = e.author, senderName = state.members.first { it.key == e.author }.name,

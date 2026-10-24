@@ -169,7 +169,7 @@ private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((
             Text(reply.quote, maxLines = 3, style = MaterialTheme.typography.bodySmall, color = TextSecondary)
         }
         when (message.type) {
-            MessageType.TEXT -> TextBubble(message, shape, replyTo)
+            MessageType.TEXT -> if (com.relay.app.files.FileBody.isFile(message.body)) FileBubble(message) else TextBubble(message, shape, replyTo)
             MessageType.LOCATION -> LocationCard(message, shape, replyTo)
             MessageType.IMAGE -> ImageBubble(message, shape, replyTo, groupId)
             MessageType.VIDEO -> VideoBubble(message, shape, replyTo)

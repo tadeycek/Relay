@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import rust.nostr.sdk.Keys
 
 /**
@@ -40,6 +41,7 @@ class DesktopEngine(
     private val syncPublisher: SentSyncPublisher? = null,
     private val syncApplier: SentSyncApplier? = null,
     syncIntervalMs: Long = 15_000,
+    val files: DesktopFiles? = null,
 ) : AutoCloseable {
 
     private val _revision = MutableStateFlow(0L)
@@ -49,6 +51,7 @@ class DesktopEngine(
     val status: StateFlow<TransportStatus> get() = transport.status
 
     private var collector: Job? = null
+    private var fileWorker: Job? = null
 
     private val sync: DesktopSyncService? =
         if (syncPublisher != null && syncApplier != null) {
@@ -74,11 +77,16 @@ class DesktopEngine(
                     .onFailure { /* keep the connection: a poison packet must not stop delivery */ }
             }
         }
+        runCatching { files?.sweep() }
         sync?.start()
+        fileWorker = scope.launch { while (kotlinx.coroutines.currentCoroutineContext().isActive) {
+            files?.let { _ -> store.fileRecords().filter { it.state !in listOf("COMPLETE", "CANCELLED", "DELETED", "UNSUPPORTED") }.forEach { retryFile(it.id) } }
+            kotlinx.coroutines.delay(15_000)
+        } }
     }
 
     suspend fun sendText(peerHex: String, text: String): SendResult {
-        val recipientInnerKey = peerInnerKeys[peerHex]
+        val recipientInnerKey = recipientKey(peerHex)
         val body = InnerEnvelope.seal(keyMaterial, recipientInnerKey, text)
         val payload = RelayPayload(PayloadCodec.newId(), System.currentTimeMillis(), body)
         val result = transport.send(peerHex, payload)
@@ -104,6 +112,33 @@ class DesktopEngine(
             _revision.value++
         }
         return result
+    }
+
+    private fun recipientKey(peer: String): String? = store.contacts().firstOrNull { it.nostrPubkey == peer && it.deletedAt == null }?.publicKey ?: peerInnerKeys[peer]
+
+    suspend fun sendFile(peer: String, source: java.nio.file.Path): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val controller = files ?: error("File transport unavailable")
+        require(!recipientKey(peer).isNullOrBlank()) { "Import the contact encryption key from your phone before sending files" }
+        val record = controller.prepare(peer, source)
+        _revision.value++
+        retryFile(record.id)
+        record.id
+    }
+
+    suspend fun retryFile(id: String) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        files?.run(id, send = { r, refs ->
+            val key = recipientKey(r.peer) ?: return@run SendResult.Failed("Contact encryption key missing", false)
+            val sealed = InnerEnvelope.seal(keyMaterial, key, r.body)
+            if (sealed == null) SendResult.Failed("Cannot encrypt file reference", false)
+            else transport.sendWithMedia(r.peer, RelayPayload(r.id, r.ts, sealed), refs)
+        }, sentCopy = { r ->
+            if (syncPublisher != null) {
+                val manifest = com.relay.app.files.FileManifest.fromAuthenticatedPayload(RelayPayload(r.id, r.ts, r.body)) { true }!!
+                store.queueFileSync(r.id, syncPublisher.buildWires(r.peer, RelayPayload(r.id, r.ts, r.body)), manifest.body.parts.map { it.sha256Hex })
+                syncPublisher.flush()
+            } else if (linkedDevice() == null) store.saveFile((store.fileRecord(id) ?: r).copy(syncPublished = true))
+        })
+        _revision.value++
     }
 
     fun messages(peerHex: String): List<DesktopMessage> = store.messages(peerHex)
@@ -151,6 +186,11 @@ class DesktopEngine(
         } else {
             payload.body
         }
+        if (text.startsWith("TYPE:FILE|")) {
+            if (files?.accept(DesktopMessage(payload.id, envelope.senderPubkeyHex, envelope.senderPubkeyHex, text, payload.ts, false)) == true) {
+                envelope.onHandled?.invoke(); _revision.value++; scope.launch { retryFile(payload.id) }; return
+            }
+        }
         store.insertMessage(
             DesktopMessage(
                 id = payload.id,
@@ -166,6 +206,7 @@ class DesktopEngine(
     }
 
     suspend fun stop() {
+        fileWorker?.cancel(); fileWorker = null
         sync?.stop()
         collector?.cancel()
         collector = null
@@ -199,6 +240,7 @@ class DesktopEngine(
             paths: DesktopPaths,
             mailboxUrl: String,
             peerInnerKeys: Map<String, String> = emptyMap(),
+            enableFileSendForTests: Boolean = false,
         ): DesktopEngine {
             val secrets = SecretStores.open(paths)
             val linkKeys = DesktopLinkKeys(paths, secrets)
@@ -237,6 +279,10 @@ class DesktopEngine(
             return DesktopEngine(
                 identity, keyMaterial, store, transport, peerInnerKeys,
                 linkKeys = linkKeys, syncPublisher = publisher, syncApplier = applier,
+                files = if (mailboxUrl.startsWith("https://")) DesktopFiles(paths.databaseFile.parent.resolve("files"), store,
+                    DesktopFileMediaClient(com.relay.app.transport.mailbox.MailboxMedia.Client(
+                        com.relay.app.transport.mailbox.MailboxMedia.RequestContext(device?.signer ?: identity.signer(), device?.deviceId), mailboxUrl)),
+                    identity.publicKeyHex(), sendEnabled = enableFileSendForTests) else null,
             )
         }
     }

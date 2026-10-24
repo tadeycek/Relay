@@ -105,6 +105,12 @@ fun ChatScreen(contactId: Long, navController: NavController) {
         replyDraft = com.relay.app.messaging.ReplyBody.draft(message, if (message.isSent) com.relay.app.util.RelayPreferences(app).myName.ifBlank { "Me" } else contact?.name ?: "Someone")
     }, onDismiss = { actionMessage = null })
     val context = LocalContext.current
+    var selectedFile by remember { mutableStateOf<Uri?>(null) }
+    val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (com.relay.app.media.PhoneFiles.sendEnabled) selectedFile = uri
+    }
+    if (selectedFile != null) ConfirmDialog(title = "Send selected file?", message = "Files up to 100 MiB are encrypted and sent to this direct chat.", confirmLabel = "Send file",
+        onConfirm = { selectedFile?.let { vm.sendFile(context, it) }; selectedFile = null }, onDismiss = { selectedFile = null })
     val listState = remember(contactId) { androidx.compose.foundation.lazy.LazyListState() }
 
     val items = remember(messages, unreadAnchor) {
@@ -157,6 +163,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     if (showAttachSheet) {
         AttachSheet(
             onDismiss = { showAttachSheet = false },
+            onFile = if (com.relay.app.media.PhoneFiles.sendEnabled) ({ showAttachSheet = false; filePicker.launch(arrayOf("*/*")) }) else null,
             onGif = { showAttachSheet = false; mediaPicker.open(contactId, ChatMediaSource.GIF) },
             onPhoto = {
                 showAttachSheet = false
@@ -305,8 +312,9 @@ fun ChatScreen(contactId: Long, navController: NavController) {
 }
 
 @Composable
-internal fun AttachSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, onVideo: () -> Unit, onCamera: () -> Unit, onGif: () -> Unit = onPhoto) {
+internal fun AttachSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, onVideo: () -> Unit, onCamera: () -> Unit, onGif: () -> Unit = onPhoto, onFile: (() -> Unit)? = null) {
     RelayBottomSheet(onDismiss = onDismiss) {
+        if (com.relay.app.media.PhoneFiles.sendEnabled && onFile != null) ListRow(headline = "File (up to 100 MiB)", onClick = onFile, leading = { AttachIcon(Icons.Outlined.AttachFile) })
         ListRow(headline = "Animated GIF / sticker", onClick = onGif, leading = { AttachIcon(Icons.Outlined.Image) })
         ListRow(headline = "Photo from gallery", onClick = onPhoto, leading = { AttachIcon(Icons.Outlined.Image) })
         ListRow(headline = "Video from gallery", onClick = onVideo, leading = { AttachIcon(Icons.Outlined.VideoLibrary) })
