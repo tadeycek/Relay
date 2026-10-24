@@ -36,6 +36,10 @@ export type ErrorCode =
   | "link_busy"
   | "sync_conflict"
   | "sync_limit"
+  | "room_exists"
+  | "room_full"
+  | "session_limit"
+  | "track_exists"
   | "not_configured"
   | "upstream_failed"
   | "storage_error";
@@ -98,6 +102,24 @@ export interface Limits {
   urgentRecipientIntervalMs: number;
   urgentPerSenderPerMinute: number;
   urgentGlobalPerMinute: number;
+  /** WP15 group calls: at most 17 participants (the largest Relay group). */
+  maxCallParticipants: number;
+  /** A dropped socket keeps its pid for this long, so a client can rejoin without appearing as a new participant. */
+  callReconnectGraceMs: number;
+  callJoinsPerMinute: number;
+  callSfuPerMinute: number;
+  /** A rejoin with a pid still calls the Mailbox for revocation/membership; this is how often its socket heartbeats do too. */
+  callHeartbeatRecheckMs: number;
+  /** An unjoined room is wiped after this long, so an abandoned call start does not hold a DO row forever. */
+  callUnjoinedTtlMs: number;
+  callCreatesPerMinute: number;
+  /** Create/end bodies are tiny; SFU bodies carry bounded SDP and at most 64 track descriptors. */
+  maxCallRequestBytes: number;
+  maxSfuRequestBytes: number;
+  maxSfuResponseBytes: number;
+  sfuTimeoutMs: number;
+  maxCallTracksPerRequest: number;
+  maxCallSdpBytes: number;
 }
 
 const KIB = 1024;
@@ -158,6 +180,21 @@ export const DEFAULT_LIMITS: Limits = {
   urgentRecipientIntervalMs: 3000,
   urgentPerSenderPerMinute: 6,
   urgentGlobalPerMinute: 60,
+  maxCallParticipants: 17,
+  callReconnectGraceMs: 30 * 1000,
+  callJoinsPerMinute: 60,
+  callSfuPerMinute: 120,
+  // Revoked-device trust must end with a closed socket; one Mailbox check per socket per 12 s is cheap.
+  callHeartbeatRecheckMs: 12 * 1000,
+  // Abandoned call starts: an unjoined room is wiped after 12 minutes (the client's "voice active" banner is 10).
+  callUnjoinedTtlMs: 12 * 60 * 1000,
+  callCreatesPerMinute: 30,
+  maxCallRequestBytes: 8 * KIB,
+  maxSfuRequestBytes: 64 * KIB,
+  maxSfuResponseBytes: 256 * KIB,
+  sfuTimeoutMs: 15000,
+  maxCallTracksPerRequest: 64,
+  maxCallSdpBytes: 16 * KIB,
 };
 
 /** Optional numeric overrides from Worker vars (strings), e.g. small caps in tests. */
@@ -212,6 +249,19 @@ export function limitsFrom(env: Partial<Record<string, unknown>>): Limits {
     urgentRecipientIntervalMs: pick("URGENT_RECIPIENT_INTERVAL_MS", DEFAULT_LIMITS.urgentRecipientIntervalMs),
     urgentPerSenderPerMinute: pick("URGENT_PER_SENDER_PER_MINUTE", DEFAULT_LIMITS.urgentPerSenderPerMinute),
     urgentGlobalPerMinute: pick("URGENT_GLOBAL_PER_MINUTE", DEFAULT_LIMITS.urgentGlobalPerMinute),
+    maxCallParticipants: pick("MAX_CALL_PARTICIPANTS", DEFAULT_LIMITS.maxCallParticipants),
+    callReconnectGraceMs: pick("CALL_RECONNECT_GRACE_MS", DEFAULT_LIMITS.callReconnectGraceMs),
+    callJoinsPerMinute: pick("CALL_JOINS_PER_MINUTE", DEFAULT_LIMITS.callJoinsPerMinute),
+    callSfuPerMinute: pick("CALL_SFU_PER_MINUTE", DEFAULT_LIMITS.callSfuPerMinute),
+    callHeartbeatRecheckMs: pick("CALL_HEARTBEAT_RECHECK_MS", DEFAULT_LIMITS.callHeartbeatRecheckMs),
+    callUnjoinedTtlMs: pick("CALL_UNJOINED_TTL_MS", DEFAULT_LIMITS.callUnjoinedTtlMs),
+    callCreatesPerMinute: pick("CALL_CREATES_PER_MINUTE", DEFAULT_LIMITS.callCreatesPerMinute),
+    maxCallRequestBytes: pick("MAX_CALL_REQUEST_BYTES", DEFAULT_LIMITS.maxCallRequestBytes),
+    maxSfuRequestBytes: pick("MAX_SFU_REQUEST_BYTES", DEFAULT_LIMITS.maxSfuRequestBytes),
+    maxSfuResponseBytes: pick("MAX_SFU_RESPONSE_BYTES", DEFAULT_LIMITS.maxSfuResponseBytes),
+    sfuTimeoutMs: pick("SFU_TIMEOUT_MS", DEFAULT_LIMITS.sfuTimeoutMs),
+    maxCallTracksPerRequest: pick("MAX_CALL_TRACKS_PER_REQUEST", DEFAULT_LIMITS.maxCallTracksPerRequest),
+    maxCallSdpBytes: pick("MAX_CALL_SDP_BYTES", DEFAULT_LIMITS.maxCallSdpBytes),
   };
 }
 
@@ -291,4 +341,21 @@ export async function sha256Hex(data: ArrayBuffer | Uint8Array | string): Promis
   const bytes = typeof data === "string" ? utf8.encode(data) : data;
   const digest = await crypto.subtle.digest("SHA-256", bytes);
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** WP15: a room id is 16 random bytes; the join secret is 32 random bytes and only its SHA-256 is stored. */
+export const CALL_ROOM_ID = /^[0-9a-f]{32}$/;
+export const CALL_PID = /^[0-9a-f]{16}$/;
+export const SHA256_HEX = /^[0-9a-f]{64}$/;
+/** A provider session id: opaque url-safe token, bounded. */
+export const SFU_SESSION_ID = /^[A-Za-z0-9_-]{1,256}$/;
+/** A WebRTC media id / track name: short url-safe token. */
+export const SFU_TRACK_ID = /^[A-Za-z0-9_-]{1,64}$/;
+
+/** Compares two lowercase-hex digests without an early-exit on the first differing character. */
+export function constantTimeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }

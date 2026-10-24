@@ -20,7 +20,8 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 | `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after every recipient device confirms (dormant/unlinked devices waived) or 8 days; `attachCheck`/`grant` RPCs for send-time media references (WP04-AC4) |
 | `src/auth.ts` | NIP-98 request auth |
 | `src/push.ts` | Content-free Firebase wake-ups, service-account JWT signing and OAuth token caching |
-| `src/call.ts` | Call support (WP11): mints short-lived Cloudflare TURN credentials for `GET /v1/call/ice` from the `TURN_KEY_ID` / `TURN_API_TOKEN` secrets; bounded, no redirects, honest User-Agent, response sanitized |
+| `src/call.ts` | Call support (WP11): mints short-lived Cloudflare TURN credentials for `GET /v1/call/ice` from the `TURN_KEY_ID` / `TURN_API_TOKEN` secrets; bounded, no redirects, honest User-Agent, response sanitized. WP15: the bounded Cloudflare Realtime SFU proxy used by `CallRoom` |
+| `src/callroom.ts` | One Durable Object per active group call (WP15): capability-token auth, hibernatable participant sockets, roster events, SFU session ownership, per-session mutation serialisation and storage wipe when the room empties |
 | `src/protocol.ts` | Limits, error codes, shared types |
 | `client/mailbox-client.ts` | Minimal client used by the tests and tools: signing, NIP-17 wrap and open |
 | `test/` | Vitest suites that run inside the Workers runtime (`@cloudflare/vitest-plugin`) |
@@ -125,6 +126,44 @@ Three server pieces for 1:1 voice calls; wire shapes, errors and limits are in
 - `signal` frames carry the call bodies. `MAX_SIGNAL_BYTES` stays at 16 KiB (WP02 measured the real frames).
 
 Nothing here is deployed yet (the WP's live-Worker criterion is open).
+
+## Group calls (WP15)
+
+One `CallRoom` Durable Object per active group call: capability-token join, participant roster over
+hibernatable WebSockets, and an authenticated proxy to the Cloudflare Realtime SFU. The SFU has no rooms;
+the DO is the room. Wire shapes, errors, limits and the client contract are in
+[PROTOCOL.md](PROTOCOL.md#group-calls-wp15); measurements in
+[linux-port/evidence/WP15.md](../../linux-port/evidence/WP15.md).
+
+- `POST /v1/call/rooms` creates a room from the client's `room` id and `secretHash`. The raw join secret
+  travels E2E to group members and is never stored; the DO keeps only its SHA-256 and compares in
+  constant time. A join also needs NIP-98 over the exact URL and a current member/device.
+- `GET /v1/call/rooms/<room>/ws?secret=…&pid=…` is the roster socket. It relays join/leave/mute events.
+  A dropped socket keeps its pid for 30 s; the last participant's departure tears the room down and wipes
+  its storage. An empty room's `alarm` does the same 30 s after a socket drop.
+- `POST`/`PUT /v1/call/rooms/<room>/sfu/<op>` proxies `sessions-new`, `tracks-new`, `renegotiate` and
+  `tracks-close` to `rtc.live.cloudflare.com/v1/apps/<SFU_APP_ID>/…`. A participant may only touch its
+  own provider session. Mutations for one session are serialised. Request bodies are narrowed and bounded,
+  redirects are refused, the provider deadline is 15 s and the response cap is 256 KiB.
+- Needs two **secrets** (never vars, never committed, never printed):
+
+  ```sh
+  npx wrangler secret put SFU_APP_ID
+  npx wrangler secret put SFU_APP_SECRET
+  ```
+
+  Without them the SFU endpoints answer `503 not_configured`. Tests use a faked provider fetch and no
+  real key. The Worker only ever sends the honest `User-Agent: RelayMailbox/1.0 (call-room-sfu; Cloudflare Worker)`.
+- Limits: 17 participants, 60 joins per room per minute, 120 SFU operations per identity per minute,
+  8 KiB create/end bodies, 64 KiB SFU bodies, 16 KiB SDP, 64 tracks per request. Row cost measured with
+  `EXPOSE_METRICS=1`: create 4 written, 5 per join, 5 for the leaves, 34 total for the scripted
+  five-participant sequence.
+- **Eviction:** clients treat the socket as disposable. A close or error is followed by a reconnect to the
+  same room/secret/pid within 30 s. If the room was already wiped the join returns `404 not_found`; the
+  client falls back to the stored `group_start` and the banner self-clears after 10 minutes. The DO wipes
+  provider tracks best-effort within a 3 s budget.
+- Not deployed. No live SFU call was made from this code; the provider is faked in every test. See the
+  WP15 evidence for the Not run list.
 
 ## Linked devices (WP04)
 

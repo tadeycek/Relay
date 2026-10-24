@@ -145,6 +145,10 @@ interface Authorized {
 type DeviceAccess = { ok: true; linked: false } | { ok: true; linked: true; row: DeviceRow } | { ok: false; response: Response };
 
 type AuthOk = Extract<AuthOutcome, { ok: true }>;
+/** WP15: the outcome of resolving a call-room caller. */
+export type CallAuthOutcome =
+  | { ok: true; identity: string; device: string; member: boolean; revoked: boolean }
+  | { ok: false; code: "auth_invalid" | "not_primary" | "unknown_device" };
 /** [urgent] is the WP11 call-invite flag: true only when the client sent `"urgent": true`. */
 type SizedDelivery = Delivery & { size: number; urgent: boolean };
 /** A send whose messages were queued together with their media grants (WP04-AC4). */
@@ -592,6 +596,30 @@ export class Mailbox extends DurableObject<Env> {
     }
     // An unmigrated identity: the WP04 behaviour. Membership is checked by the caller.
     return { identity: signer, device, admin: false, legacy: true, revoked: false };
+  }
+
+  /**
+   * WP15: authorization probe for the CallRoom Durable Object. Resolves the NIP-98 signer to the shared
+   * identity and acting device, and reports current membership and revocation. It does not record the auth
+   * event: each CallRoom keeps its own per-room replay table, so a dead room costs the mailbox nothing.
+   */
+  async callAuth(signer: string, device: string): Promise<CallAuthOutcome> {
+    const who = this.resolveSigner(signer, device);
+    if (!who) return { ok: false, code: "auth_invalid" };
+    if (who.device !== device) return { ok: false, code: device === PRIMARY_DEVICE ? "not_primary" : "unknown_device" };
+    return { ok: true, identity: who.identity, device: who.device, member: this.isMember(who.identity), revoked: who.revoked };
+  }
+
+  /** Shared, eviction-safe budget; resolve the signer rather than trusting a room-supplied identity. */
+  async callCreateAllowed(signer: string, device: string): Promise<boolean> {
+    const who = await this.callAuth(signer, device);
+    if (!who.ok || who.revoked || !who.member) return false;
+    const now = Date.now();
+    this.sql.exec("DELETE FROM call_create_budget WHERE at_ms < ?", now - 60_000);
+    const n = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM call_create_budget WHERE identity = ?", who.identity).one().n;
+    if (n >= this.limits.callCreatesPerMinute) return false;
+    this.sql.exec("INSERT INTO call_create_budget (identity, at_ms) VALUES (?, ?)", who.identity, now);
+    return true;
   }
 
   /**
@@ -1817,6 +1845,7 @@ export class Mailbox extends DurableObject<Env> {
   }
 
   private migrate(): void {
+    this.sql.exec("CREATE TABLE IF NOT EXISTS call_create_budget (id INTEGER PRIMARY KEY AUTOINCREMENT, identity TEXT NOT NULL, at_ms INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const current = Number(this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'schema'")[0]?.value ?? 0);
     const steps: Array<() => void> = [

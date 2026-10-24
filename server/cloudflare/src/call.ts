@@ -194,3 +194,114 @@ export function sanitizeIceServers(body: unknown): IceServer[] | null {
   }
   return hasTurn ? out : null;
 }
+
+
+// ---- WP15: Cloudflare Realtime SFU proxy -------------------------------------------------------
+
+export interface SfuConfig {
+  appId: string;
+  secret: string;
+}
+
+export type SfuOperation = "sessions-new" | "tracks-new" | "renegotiate" | "tracks-close";
+
+export type SfuOutcome =
+  | { ok: true; data: Record<string, unknown> }
+  | { ok: false; reason: "status" | "timeout" | "oversize" | "parse" };
+
+export interface SfuOptions {
+  timeoutMs: number;
+  maxResponseBytes: number;
+}
+
+/** The only host this code talks to; the app id and session id are validated before entering the URL. */
+export const SFU_API_ORIGIN = "https://rtc.live.cloudflare.com";
+export const SFU_USER_AGENT = "RelayMailbox/1.0 (call-room-sfu; Cloudflare Worker)";
+
+const SFU_APP_ID = /^[A-Za-z0-9_-]{1,128}$/;
+const SFU_PATH_ID = /^[A-Za-z0-9_-]{1,256}$/;
+
+/** The SFU app credentials from the Worker env, or null when absent or malformed. */
+export function sfuConfigFrom(env: Partial<Record<string, unknown>>): SfuConfig | null {
+  const appId = env.SFU_APP_ID;
+  const secret = env.SFU_APP_SECRET;
+  if (typeof appId !== "string" || typeof secret !== "string") return null;
+  if (!SFU_APP_ID.test(appId)) return null;
+  if (secret.length < 8 || secret.length > 512 || /[\r\n]/.test(secret)) return null;
+  return { appId, secret };
+}
+
+function sfuPath(config: SfuConfig, operation: SfuOperation, sessionId: string | null): string | null {
+  if (operation === "sessions-new") return `/v1/apps/${config.appId}/sessions/new`;
+  if (sessionId === null || !SFU_PATH_ID.test(sessionId)) return null;
+  switch (operation) {
+    case "tracks-new": return `/v1/apps/${config.appId}/sessions/${sessionId}/tracks/new`;
+    case "renegotiate": return `/v1/apps/${config.appId}/sessions/${sessionId}/renegotiate`;
+    case "tracks-close": return `/v1/apps/${config.appId}/sessions/${sessionId}/tracks/close`;
+  }
+}
+
+/**
+ * Calls one whitelisted SFU operation. The URL is built here from the app id and a validated session id, so a
+ * caller can never proxy an arbitrary URL. No redirects, a hard timeout, and a bounded response. The app
+ * secret is never logged, echoed or returned.
+ */
+export async function proxySfu(
+  config: SfuConfig,
+  fetcher: Fetch,
+  operation: SfuOperation,
+  sessionId: string | null,
+  body: Record<string, unknown>,
+  options: SfuOptions,
+): Promise<SfuOutcome> {
+  const path = sfuPath(config, operation, sessionId);
+  if (!path) return { ok: false, reason: "parse" };
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const request = new Request(SFU_API_ORIGIN + path, {
+      method: operation === "renegotiate" || operation === "tracks-close" ? "PUT" : "POST",
+      headers: {
+        Authorization: `Bearer ${config.secret}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": SFU_USER_AGENT,
+      },
+      body: JSON.stringify(body),
+      redirect: "manual",
+      signal: controller.signal,
+    });
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error("timeout"));
+      }, options.timeoutMs);
+    });
+    const work = (async (): Promise<SfuOutcome> => {
+      const response = await fetcher(request);
+      if (response.status < 200 || response.status > 299) {
+        await response.body?.cancel().catch(() => undefined);
+        console.error("call sfu upstream refused", { status: response.status });
+        return { ok: false, reason: "status" };
+      }
+      const bytes = await readBounded(response, options.maxResponseBytes);
+      if (!bytes) {
+        console.error("call sfu upstream response too large");
+        return { ok: false, reason: "oversize" };
+      }
+      const parsed = parseJson(bytes);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        console.error("call sfu upstream response unusable");
+        return { ok: false, reason: "parse" };
+      }
+      return { ok: true, data: parsed as Record<string, unknown> };
+    })();
+    work.catch(() => undefined);
+    return await Promise.race([work, timeout]);
+  } catch (e) {
+    console.error("call sfu upstream failed", { error: (e as Error)?.name });
+    return { ok: false, reason: "timeout" };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}

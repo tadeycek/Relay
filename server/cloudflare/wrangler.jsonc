@@ -9,13 +9,15 @@
   "durable_objects": {
     "bindings": [
       { "name": "MAILBOX", "class_name": "Mailbox" },
-      { "name": "MEDIA", "class_name": "MediaBlob" }
+      { "name": "MEDIA", "class_name": "MediaBlob" },
+      { "name": "CALLROOM", "class_name": "CallRoom" }
     ]
   },
   // SQLite-backed Durable Objects are the storage backend available on Workers Free.
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["Mailbox"] },
-    { "tag": "v2", "new_sqlite_classes": ["MediaBlob"] }
+    { "tag": "v2", "new_sqlite_classes": ["MediaBlob"] },
+    { "tag": "v3", "new_sqlite_classes": ["CallRoom"] }
   ],
   "vars": {
     // Set per deployment with `--var ALLOWED_PUBKEYS:...`; empty admits nobody.
@@ -27,6 +29,11 @@
     // URGENT_RECIPIENT_INTERVAL_MS, URGENT_PER_SENDER_PER_MINUTE, URGENT_GLOBAL_PER_MINUTE, MAX_SIGNAL_BYTES.
     // The Cloudflare TURN credentials are SECRETS, never vars: `wrangler secret put TURN_KEY_ID` and
     // `wrangler secret put TURN_API_TOKEN` (and FCM_SERVICE_ACCOUNT for pushes). Do not add them here.
+    // WP15 call limits (all optional, defaults in src/protocol.ts): MAX_CALL_PARTICIPANTS,
+    // CALL_RECONNECT_GRACE_MS, CALL_JOINS_PER_MINUTE, CALL_SFU_PER_MINUTE, MAX_CALL_REQUEST_BYTES,
+    // MAX_SFU_REQUEST_BYTES, MAX_SFU_RESPONSE_BYTES, SFU_TIMEOUT_MS, MAX_CALL_TRACKS_PER_REQUEST,
+    // MAX_CALL_SDP_BYTES. SFU_APP_ID and SFU_APP_SECRET are also SECRETS: `wrangler secret put SFU_APP_ID`
+    // and `wrangler secret put SFU_APP_SECRET`. Without them the SFU proxy answers 503 not_configured.
   },
   "observability": { "enabled": true }
 }

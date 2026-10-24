@@ -669,3 +669,163 @@ Per-socket counting means an identity with 4 sockets can relay up to 480 a minut
 | Signals | 120 per minute per socket | `rate_limited` on the socket |
 
 Caps refuse new messages. Nothing already accepted is ever evicted to make room.
+
+## Group calls (WP15)
+
+A group call is one `CallRoom` Durable Object per room id. The room is the SFU's missing directory: it
+holds who is in the call, which provider session each participant owns and which track that session
+publishes. The Cloudflare Realtime SFU has no rooms of its own.
+
+Authorization is two independent checks: NIP-98 over the exact URL (as everywhere else) and the room's
+capability token. The starter mints a random 32-hex `room` and a 32-byte random `secret`, encodes the
+secret as **64 lowercase hex characters**, sends `secretHash` = lowercase hex SHA-256 of the UTF-8
+bytes of that 64-hex *text* when creating the room, and sends the 64-hex value E2E to the group.
+The server stores only the hash. A join presents the raw secret in the query; the room hashes it and
+compares in constant time. The server never learns the group roster; it only sees which server members
+connect. Every request also resolves the signer to an enrolled device and checks current membership
+(the Mailbox's G1 device authorization); a revoked device gets `401 auth_revoked` and a non-member
+`403 not_allowed`. **The pid reconnect path also calls `callAuth` on every rejoin**, so a device revoked
+after the initial join cannot reuse its old pid. Heartbeats recheck at most once per 12 s; an active-room
+alarm also rechecks silent sockets every 12 s, closing revoked sockets `4009 auth_revoked` and removing
+them from the roster. One alarm performs at most 17 Mailbox probes and one reschedule; no participant
+row is written for a healthy check. Failed Mailbox probes fail closed.
+
+The `secretHash` contract is pinned: SHA-256(UTF-8(`0000000000000000000000000000000000000000000000000000000000000001`))
+is lowercase hex `c386d8e8d07342f2e39e189c8e6c57bb205bb373fe4e3a6f69404a8bb767b417`.
+Hashing the decoded 32 bytes instead is **not** this contract.
+
+### Endpoints
+
+| Request | Auth | Effect |
+|---|---|---|
+| `POST /v1/call/rooms` `{"v":1,"room":"<32hex>","secretHash":"<64hex>"}` | NIP-98 member/device | Creates the room. `{"v":1,"created":true}`. Idempotent for the same hash; a different hash for the same room is `409 room_exists`. |
+| `GET /v1/call/rooms/<room>[?device=<id>]` | NIP-98 member/device | `200 {"v":1,"room":"…","participants":<n>,"createdAt":<ms>}` while the room lives; `404 not_found` after teardown. The only accepted query parameter is `device`. |
+| `GET /v1/call/rooms/<room>/ws?secret=<64hex>[&device=<id>][&pid=<16hex>]` | NIP-98 member/device + secret | The room control socket. `426 upgrade_required` without `Upgrade: websocket`; `400 bad_request` for an unknown query parameter or malformed `room`/`secret`/`pid`; `403 forbidden` for a wrong secret; `404 not_found` for an unknown room; `409 room_full` at the cap; `429 rate_limited` above the join budget. |
+| `POST /v1/call/rooms/<room>/end[?device=<id>]` | NIP-98 member/device + creator only | `{"v":1,"ended":true}` after telling every member `{"type":"end","by":<creator pubkey>}` and wiping the room. Any other member gets `403 forbidden`. |
+| `POST` or `PUT /v1/call/rooms/<room>/sfu/<op>[?device=<id>]` | NIP-98 member/device + an open room socket | Proxies the provider call. `<op>` is `sessions-new`, `tracks-new`, `renegotiate` or `tracks-close`. The caller may only touch its own provider session ids. |
+
+> The join secret travels in the WebSocket URL query string as the protocol specifies. It also appears
+> inside the signed NIP-98 URL, so capturing request headers leaks it. The Worker and DO never log the
+> query; edge request logs outside this code may capture the URL. The secret is per room, short-lived and
+> delivered E2E. A first-frame secret would require a different handshake.
+
+Every request except the WebSocket upgrade has a JSON body with `"v":1`; errors are the usual
+`{"v":1,"error":{"code":…,"retryable":bool}}`.
+
+### Join and roster frames
+
+On a successful upgrade the room sends:
+
+```json
+{"type":"welcome","v":1,"you":"<pid>","participants":[
+  {"pid":"<pid>","pubkey":"<hex>","device":"<id>","sessionId":null,"track":null,"muted":false}
+]}
+```
+
+`participants` lists the **other** participants; the caller's own entry is `you`. `sessionId`, `track`
+and `muted` reflect what the room knows. The roster never includes the secret, the secret hash or any
+provider credential.
+
+The client sends text frames:
+
+| Frame | Effect |
+|---|---|
+| `{"type":"heartbeat"}` | Keepalive only. The room refreshes the hibernatable attachment; no row write. |
+| `{"type":"state","muted":bool,"deafened":bool?}` | Stores and broadcasts the mute/deafen hint. |
+| `{"type":"leave"}` | Leaves immediately; the room closes the socket `1000 "left"` and tears down if this was the last participant. |
+| `{"type":"end"}` | Creator only. Ends the room for everyone (`{"type":"end"}`), then wipes it. |
+
+Unknown frame types get `{"type":"error","code":"bad_request"}` and the socket stays open. A frame from a
+revoked device gets close `4009 "auth_revoked"`.
+
+The room sends:
+
+| Frame | Meaning |
+|---|---|
+| `{"type":"welcome",…}` | The join succeeded; the roster above. |
+| `{"type":"joined","pid","pubkey","device","sessionId","track","muted"}` | A participant joined or published its mic. |
+| `{"type":"left","pid","pubkey","device"}` | A participant left. |
+| `{"type":"state","pid","muted","deafened"}` | A participant changed mute/deafen. |
+| `{"type":"end","by":<pubkey>}` | The creator ended the room. |
+| `{"type":"error","code":"…"}` | A frame was malformed or forbidden. |
+
+Close codes: `1000` normal (`left`, `ended`, `expired`), `4003` no session attachment, `4009` replaced by
+a duplicate join or revoked device. A dropped socket keeps the participant's `pid` for 30 s; a reconnect
+with the same `pid` and the same NIP-98 signer/device reuses it. After 30 s with no active socket the
+room tears itself down and every later request gets `404`.
+
+### SFU proxy operations
+
+The Worker holds `SFU_APP_ID` and `SFU_APP_SECRET` as Worker **secrets** (`wrangler secret put`), never
+vars, never in source, never in a response or a log. If either is absent or malformed, the endpoint
+answers `503 not_configured`. The provider base URL is fixed:
+`https://rtc.live.cloudflare.com/v1/apps/<SFU_APP_ID>/…`. The Worker sends
+`Authorization: Bearer <SFU_APP_SECRET>`, `User-Agent: RelayMailbox/1.0 (call-room-sfu; Cloudflare Worker)`,
+`redirect: "manual"`, a 15 s deadline and a 256 KiB response cap. A non-2xx, a redirect, a timeout or an
+oversized/unparseable body is `502 upstream_failed` (retryable). The caller cannot choose a URL.
+
+The bodies are narrowed to the provider's shape:
+
+| `<op>` | Client body | Provider call |
+|---|---|---|
+| `sessions-new` | `{"v":1,"offer":"<sdp>"?}` | `POST …/sessions/new` with `{"sessionDescription":{"type":"offer","sdp":"…"}}` |
+| `tracks-new` | `{"v":1,"sessionId":"…"?,"sessionDescription":{"type":"offer","sdp":"…"}?,"tracks":[…]}` | `POST …/sessions/<sessionId>/tracks/new` with the same `tracks` and offer |
+| `renegotiate` | `{"v":1,"sessionId":"…"?,"answer":"<sdp>"}` | `PUT …/sessions/<sessionId>/renegotiate` with `{"sessionDescription":{"type":"answer","sdp":"…"}}` |
+| `tracks-close` | `{"v":1,"sessionId":"…"?,"mids":["…"]}` | `PUT …/sessions/<sessionId>/tracks/close` with `{"tracks":[{"mid":"…"}],"force":true}` |
+
+`tracks` has 1–64 entries. A local entry is exactly `{"location":"local","mid":"<id>","trackName":"mic"}`
+(at most one per request). A remote entry is
+`{"location":"remote","sessionId":"<publisher session>","trackName":"mic"}`; the publisher must be another
+participant currently in the room (its current or 30 s grace session id). Any other location or track name
+is `400 bad_request`. The response is reduced to `v`, `sessionId`, `tracks` (`mid`, `trackName`),
+`sessionDescription` and `requiresImmediateRenegotiation`; provider-only fields are dropped.
+
+Mutations for a participant are serialised: concurrent `sessions-new`/`tracks-new` requests cannot
+replace an unclosed local mic. Session rotation closes the current published track first and keeps only
+the newest current and previous session ids (previous is authorized for up to 30 s). Older sessions
+are no longer addressable through Relay; the provider has no session-delete endpoint, so empty sessions
+expire under provider policy, **not** a Relay-enforced deadline. Local publishing on a previous session
+is refused. Provider close failure keeps a durable retry entry and refuses further publish/rotation until
+closure succeeds; alarm retries may continue indefinitely if provider credentials or service are lost.
+A provider response without a valid `mid` is rejected and the requested MID is quarantined for cleanup;
+provider behavior when it returns a different, unreported MID is not verifiable here.
+
+Room creates are limited to 30 per identity per rolling minute in the *shared Mailbox DO*, across all
+room ids. A bounded SQLite budget is pruned on create (up to member-count × limit rows plus expired
+rows until the next create), so eviction does not reset it. Unjoined rooms expire after 12 minutes on
+both existence and upgrade, even if their alarm fires late.
+
+A participant can only name its own current session id or its previous one within the
+30 s grace window; another participant's session id is `403 forbidden`.
+
+### Limits (pilot defaults)
+
+| Limit | Value | On breach |
+|---|---|---|
+| Participants per room | 17 | `409 room_full` |
+| Reconnect grace for a dropped socket | 30 s | room tears down |
+| Joins per room per minute | 60 | `429 rate_limited`, retryable |
+| SFU operations per identity per minute | 120 | `429 rate_limited`, retryable |
+| Create/end/existence body | 8 KiB | `413 request_too_large` |
+| SFU request body | 64 KiB | `413 request_too_large` |
+| SFU SDP string | 16 KiB | `400 bad_request` |
+| Tracks per SFU request | 64 | `400 bad_request` |
+| SFU provider response | 256 KiB | `502 upstream_failed`, retryable |
+| SFU provider deadline | 15 s | `502 upstream_failed`, retryable |
+
+### Measured cost (workerd, `EXPOSE_METRICS=1`)
+
+The scripted five-participant create/join/leave sequence measured **4 rows written for create, 5 per
+join (25 total), 5 for the leaves, 34 total**. A join writes the participant row, its identity index and
+the room's auth-replay row; the secret hash is the only secret-derived value stored. Reads: 6–16 per join
+as the roster grows. `x-relay-sql-rows` carries the counts on every non-101 response. The full run and
+the raw numbers are in [linux-port/evidence/WP15.md](../../linux-port/evidence/WP15.md).
+
+### Eviction and failure behaviour
+
+A room can be evicted or its object replaced at any time. Clients treat the socket as disposable: on a
+close or error they reconnect to the same `wss …/ws?secret=…&pid=<pid>` within 30 s and reuse the pid.
+If the room was already wiped, the join gets `404 not_found`; the client falls back to the stored
+`group_start` announcement and the group's "voice active" banner self-clears after 10 minutes without
+room activity. The room's `alarm` wipes an empty room 30 s after the last socket closes, so a dead room
+holds no rows. The provider's tracks are closed best-effort within a 3 s budget during teardown.
