@@ -1,0 +1,38 @@
+{
+  "killed": 8,
+  "mutations": [
+    {
+      "killed": true,
+      "mutation": "stream_count"
+    },
+    {
+      "killed": true,
+      "mutation": "pair_set"
+    },
+    {
+      "killed": true,
+      "mutation": "energy"
+    },
+    {
+      "killed": true,
+      "mutation": "window_throughput"
+    },
+    {
+      "killed": true,
+      "mutation": "inactive_count"
+    },
+    {
+      "killed": true,
+      "mutation": "disposition"
+    },
+    {
+      "killed": true,
+      "mutation": "egress_arithmetic"
+    },
+    {
+      "killed": true,
+      "mutation": "zero_window"
+    }
+  ],
+  "total": 8
+}

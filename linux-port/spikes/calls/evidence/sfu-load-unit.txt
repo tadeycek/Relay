@@ -1,0 +1,18 @@
+test_cleanup_requested_count (test_sfu_load.LoadGuards.test_cleanup_requested_count) ... ok
+test_cleanup_requires_all_inactive (test_sfu_load.LoadGuards.test_cleanup_requires_all_inactive) ... ok
+test_duplicate_pair_is_rejected (test_sfu_load.LoadGuards.test_duplicate_pair_is_rejected) ... ok
+test_egress_arithmetic (test_sfu_load.LoadGuards.test_egress_arithmetic) ... ok
+test_failed_readback_is_rejected (test_sfu_load.LoadGuards.test_failed_readback_is_rejected) ... ok
+test_low_energy_is_rejected (test_sfu_load.LoadGuards.test_low_energy_is_rejected) ... ok
+test_missing_stream_is_rejected (test_sfu_load.LoadGuards.test_missing_stream_is_rejected) ... ok
+test_process_sample (test_sfu_load.LoadGuards.test_process_sample) ... ok
+test_self_pair_is_rejected (test_sfu_load.LoadGuards.test_self_pair_is_rejected) ... ok
+test_stale_window_is_rejected (test_sfu_load.LoadGuards.test_stale_window_is_rejected) ... ok
+test_unresolved_disposition_is_rejected (test_sfu_load.LoadGuards.test_unresolved_disposition_is_rejected) ... ok
+test_valid_load_passes (test_sfu_load.LoadGuards.test_valid_load_passes) ... ok
+test_zero_window_is_rejected (test_sfu_load.LoadGuards.test_zero_window_is_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 13 tests in 0.001s
+
+OK

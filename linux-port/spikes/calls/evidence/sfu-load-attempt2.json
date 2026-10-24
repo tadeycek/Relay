@@ -1,0 +1,440 @@
+{
+  "attempt": 2,
+  "participants": 5,
+  "stream_count": 20,
+  "stage": "media",
+  "error": null,
+  "retryable": false,
+  "http_error_status": null,
+  "passed": true,
+  "native_normal_exit": true,
+  "timings": {
+    "connected": [
+      {
+        "participant": 0,
+        "connected_seconds": 0.97,
+        "connect_seconds": 0.96
+      },
+      {
+        "participant": 1,
+        "connected_seconds": 2.11,
+        "connect_seconds": 0.97
+      },
+      {
+        "participant": 2,
+        "connected_seconds": 3.19,
+        "connect_seconds": 0.9
+      },
+      {
+        "participant": 3,
+        "connected_seconds": 4.12,
+        "connect_seconds": 0.8
+      },
+      {
+        "participant": 4,
+        "connected_seconds": 5.21,
+        "connect_seconds": 1.0
+      }
+    ],
+    "time_to_full_media_seconds": 8.38,
+    "observation_window_seconds": 10.008
+  },
+  "per_participant": [
+    {
+      "participant": 0,
+      "frames_pushed": 1820,
+      "packets_sent": 877,
+      "bytes_sent": 70606,
+      "header_bytes_sent": 17840,
+      "packets_received": 2564,
+      "bytes_received": 205740,
+      "cpu_seconds_total": 0.82,
+      "cpu_seconds_window": 0.31,
+      "peak_rss_kb": 80036,
+      "rss_kb_window_end": 80036,
+      "threads": 24
+    },
+    {
+      "participant": 1,
+      "frames_pushed": 1707,
+      "packets_sent": 820,
+      "bytes_sent": 66014,
+      "header_bytes_sent": 16700,
+      "packets_received": 2472,
+      "bytes_received": 198288,
+      "cpu_seconds_total": 0.76,
+      "cpu_seconds_window": 0.27,
+      "peak_rss_kb": 80420,
+      "rss_kb_window_end": 80420,
+      "threads": 24
+    },
+    {
+      "participant": 2,
+      "frames_pushed": 1592,
+      "packets_sent": 766,
+      "bytes_sent": 61636,
+      "header_bytes_sent": 15620,
+      "packets_received": 2390,
+      "bytes_received": 191808,
+      "cpu_seconds_total": 0.74,
+      "cpu_seconds_window": 0.28,
+      "peak_rss_kb": 80528,
+      "rss_kb_window_end": 80528,
+      "threads": 24
+    },
+    {
+      "participant": 3,
+      "frames_pushed": 1489,
+      "packets_sent": 719,
+      "bytes_sent": 57834,
+      "header_bytes_sent": 14680,
+      "packets_received": 2321,
+      "bytes_received": 186219,
+      "cpu_seconds_total": 0.75,
+      "cpu_seconds_window": 0.3,
+      "peak_rss_kb": 81024,
+      "rss_kb_window_end": 81024,
+      "threads": 24
+    },
+    {
+      "participant": 4,
+      "frames_pushed": 1400,
+      "packets_sent": 665,
+      "bytes_sent": 53473,
+      "header_bytes_sent": 13600,
+      "packets_received": 2263,
+      "bytes_received": 181521,
+      "cpu_seconds_total": 0.7,
+      "cpu_seconds_window": 0.27,
+      "peak_rss_kb": 79828,
+      "rss_kb_window_end": 79828,
+      "threads": 24
+    }
+  ],
+  "streams": [
+    {
+      "participant": 0,
+      "publisher": 1,
+      "packets": 641,
+      "bytes": 51435,
+      "window_packets": 504,
+      "window_bytes": 40500,
+      "samples": 614880,
+      "square_sum": 43851181401123,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 0,
+      "publisher": 2,
+      "packets": 641,
+      "bytes": 51435,
+      "window_packets": 507,
+      "window_bytes": 40581,
+      "samples": 614880,
+      "square_sum": 43817076297401,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 0,
+      "publisher": 3,
+      "packets": 641,
+      "bytes": 51435,
+      "window_packets": 507,
+      "window_bytes": 40581,
+      "samples": 614880,
+      "square_sum": 43822567313357,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 0,
+      "publisher": 4,
+      "packets": 641,
+      "bytes": 51435,
+      "window_packets": 507,
+      "window_bytes": 40581,
+      "samples": 614880,
+      "square_sum": 43815137029305,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 1,
+      "publisher": 0,
+      "packets": 618,
+      "bytes": 49572,
+      "window_packets": 505,
+      "window_bytes": 40581,
+      "samples": 595200,
+      "square_sum": 42224694303511,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 1,
+      "publisher": 2,
+      "packets": 618,
+      "bytes": 49572,
+      "window_packets": 507,
+      "window_bytes": 40581,
+      "samples": 595200,
+      "square_sum": 42222014166849,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 1,
+      "publisher": 3,
+      "packets": 618,
+      "bytes": 49572,
+      "window_packets": 507,
+      "window_bytes": 40581,
+      "samples": 595200,
+      "square_sum": 42226030882120,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 1,
+      "publisher": 4,
+      "packets": 618,
+      "bytes": 49572,
+      "window_packets": 507,
+      "window_bytes": 40581,
+      "samples": 595200,
+      "square_sum": 42219526953474,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 2,
+      "publisher": 0,
+      "packets": 596,
+      "bytes": 47952,
+      "window_packets": 505,
+      "window_bytes": 40581,
+      "samples": 574080,
+      "square_sum": 40838847887593,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 2,
+      "publisher": 1,
+      "packets": 598,
+      "bytes": 47952,
+      "window_packets": 504,
+      "window_bytes": 40500,
+      "samples": 574080,
+      "square_sum": 40867992487693,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 2,
+      "publisher": 3,
+      "packets": 598,
+      "bytes": 47952,
+      "window_packets": 507,
+      "window_bytes": 40581,
+      "samples": 573600,
+      "square_sum": 40838151120832,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 2,
+      "publisher": 4,
+      "packets": 598,
+      "bytes": 47952,
+      "window_packets": 507,
+      "window_bytes": 40581,
+      "samples": 573600,
+      "square_sum": 40831992983371,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 3,
+      "publisher": 0,
+      "packets": 579,
+      "bytes": 46575,
+      "window_packets": 504,
+      "window_bytes": 40500,
+      "samples": 555360,
+      "square_sum": 39657494878993,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 3,
+      "publisher": 1,
+      "packets": 580,
+      "bytes": 46494,
+      "window_packets": 504,
+      "window_bytes": 40500,
+      "samples": 555360,
+      "square_sum": 39619797696485,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 3,
+      "publisher": 2,
+      "packets": 581,
+      "bytes": 46575,
+      "window_packets": 506,
+      "window_bytes": 40500,
+      "samples": 555360,
+      "square_sum": 39654283055871,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 3,
+      "publisher": 4,
+      "packets": 581,
+      "bytes": 46575,
+      "window_packets": 506,
+      "window_bytes": 40500,
+      "samples": 555360,
+      "square_sum": 39651806434349,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 4,
+      "publisher": 0,
+      "packets": 564,
+      "bytes": 45360,
+      "window_packets": 504,
+      "window_bytes": 40500,
+      "samples": 542880,
+      "square_sum": 38616849936099,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 4,
+      "publisher": 1,
+      "packets": 567,
+      "bytes": 45441,
+      "window_packets": 505,
+      "window_bytes": 40581,
+      "samples": 542880,
+      "square_sum": 38648222358239,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 4,
+      "publisher": 2,
+      "packets": 566,
+      "bytes": 45360,
+      "window_packets": 506,
+      "window_bytes": 40500,
+      "samples": 542400,
+      "square_sum": 38613145272522,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    },
+    {
+      "participant": 4,
+      "publisher": 3,
+      "packets": 566,
+      "bytes": 45360,
+      "window_packets": 506,
+      "window_bytes": 40500,
+      "samples": 542400,
+      "square_sum": 38619228065008,
+      "jitter": 0.001,
+      "packets_lost": 0,
+      "connected": true
+    }
+  ],
+  "cleanup": {
+    "sessions": 5,
+    "requested": 25,
+    "inactive_records": 25,
+    "close_ok": 5,
+    "readback_ok": 5,
+    "dispositions": [
+      "inactive",
+      "inactive",
+      "inactive",
+      "inactive",
+      "inactive"
+    ]
+  },
+  "resources": {
+    "total_threads": 120,
+    "total_peak_rss_kb": 401836,
+    "processes_sampled": 5
+  },
+  "egress": {
+    "label": "ESTIMATE",
+    "observed_seconds": 10.008,
+    "observed_total_payload_bytes": 810891,
+    "observed_total_packets": 10115,
+    "observed_payload_kbps": 648.18,
+    "observed_wire_kbps_estimate": 1052.44,
+    "streams": 20,
+    "per_stream_payload_bytes_minute": 243065.8,
+    "per_stream_wire_bytes_minute_estimate": 394665.2,
+    "per_participant_payload_bytes_minute": 972263.3,
+    "assumptions": [
+      "Opus mono ~32 kbps, DTX off, continuous generated tone",
+      "no video, no FEC/RTX counted in payload bytes",
+      "wire overhead estimate adds 50 B per packet to provider-observed payload bytes",
+      "N publishers x (N-1) subscribers, all streams continuously active",
+      "17-participant figure is extrapolated from the 5-participant measurement, not measured"
+    ],
+    "estimate": {
+      "5": {
+        "participants": 5,
+        "streams": 20,
+        "payload_bytes_minute": 4861316.7,
+        "wire_bytes_minute_estimate": 7893303.7,
+        "wire_mb_hour_estimate": 473.6,
+        "gb_hour_estimate": 0.4736,
+        "room_hours_until_1000gb_estimate": 2111.5,
+        "cost_usd_per_room_hour_after_free": 0.0237
+      },
+      "17": {
+        "participants": 17,
+        "streams": 272,
+        "payload_bytes_minute": 66113907.3,
+        "wire_bytes_minute_estimate": 107348929.8,
+        "wire_mb_hour_estimate": 6440.9,
+        "gb_hour_estimate": 6.4409,
+        "room_hours_until_1000gb_estimate": 155.3,
+        "cost_usd_per_room_hour_after_free": 0.322
+      }
+    }
+  },
+  "elapsed_seconds": 20.13,
+  "synthetic_audio": true,
+  "physical_microphone": false,
+  "e2ee": false
+}

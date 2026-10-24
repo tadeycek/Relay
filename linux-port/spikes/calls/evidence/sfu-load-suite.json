@@ -1,0 +1,97 @@
+{
+  "live_executed_this_invocation": true,
+  "participants": 5,
+  "attempts": [
+    {
+      "attempt": 1,
+      "passed": true,
+      "stage": "media",
+      "error": null,
+      "retryable": false,
+      "stream_count": 20,
+      "time_to_full_media_seconds": 8.5,
+      "elapsed_seconds": 20.03
+    }
+  ],
+  "final_passed": true,
+  "egress": {
+    "label": "ESTIMATE",
+    "observed_seconds": 10.009,
+    "observed_total_payload_bytes": 810243,
+    "observed_total_packets": 10091,
+    "observed_payload_kbps": 647.63,
+    "observed_wire_kbps_estimate": 1050.91,
+    "streams": 20,
+    "per_stream_payload_bytes_minute": 242860.3,
+    "per_stream_wire_bytes_minute_estimate": 394092.9,
+    "per_participant_payload_bytes_minute": 971441.1,
+    "assumptions": [
+      "Opus mono ~32 kbps, DTX off, continuous generated tone",
+      "no video, no FEC/RTX counted in payload bytes",
+      "wire overhead estimate adds 50 B per packet to provider-observed payload bytes",
+      "N publishers x (N-1) subscribers, all streams continuously active",
+      "17-participant figure is extrapolated from the 5-participant measurement, not measured"
+    ],
+    "estimate": {
+      "5": {
+        "participants": 5,
+        "streams": 20,
+        "payload_bytes_minute": 4857205.7,
+        "wire_bytes_minute_estimate": 7881857.7,
+        "wire_mb_hour_estimate": 472.9,
+        "gb_hour_estimate": 0.4729,
+        "room_hours_until_1000gb_estimate": 2114.6,
+        "cost_usd_per_room_hour_after_free": 0.0236
+      },
+      "17": {
+        "participants": 17,
+        "streams": 272,
+        "payload_bytes_minute": 66057997.1,
+        "wire_bytes_minute_estimate": 107193264.5,
+        "wire_mb_hour_estimate": 6431.6,
+        "gb_hour_estimate": 6.4316,
+        "room_hours_until_1000gb_estimate": 155.5,
+        "cost_usd_per_room_hour_after_free": 0.3216
+      }
+    }
+  },
+  "guard_mutations": {
+    "killed": 8,
+    "mutations": [
+      {
+        "killed": true,
+        "mutation": "stream_count"
+      },
+      {
+        "killed": true,
+        "mutation": "pair_set"
+      },
+      {
+        "killed": true,
+        "mutation": "energy"
+      },
+      {
+        "killed": true,
+        "mutation": "window_throughput"
+      },
+      {
+        "killed": true,
+        "mutation": "inactive_count"
+      },
+      {
+        "killed": true,
+        "mutation": "disposition"
+      },
+      {
+        "killed": true,
+        "mutation": "egress_arithmetic"
+      },
+      {
+        "killed": true,
+        "mutation": "zero_window"
+      }
+    ],
+    "total": 8
+  },
+  "unit_tests": "evidence/sfu-load-unit.txt"
+}
