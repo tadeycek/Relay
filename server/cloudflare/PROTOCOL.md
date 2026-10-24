@@ -416,6 +416,56 @@ decoded size, the SHA-256 of the assembled body and an expiry:
 The cursor is per `(identity, device)`, like the mailbox cursors, and is independent of `acked`. Events
 stay until their expiry: an ack frees the device, not the server row, which is bounded by the caps above.
 
+### Own SENT media grants (WP09)
+
+A publisher may add **`"media":["<64 lowercase hex SHA-256>",…]`** to the signed JSON body of
+`POST /v1/sync?device=<publisher-device>`. At most **8 distinct digests**, using exactly the `/v1/send`
+validation (`400 bad_request` for malformed/duplicate references, `400 too_many_media` above the cap).
+This is outside the opaque encrypted `data`, and covered by NIP-98's body hash.
+
+```json
+{"v":1,"id":"abcdef0123456789","rev":1,"part":0,"parts":1,"total":2,
+ "hash":"<assembled encrypted event SHA-256>","expires":1760000000000,"data":"<base64>",
+ "media":["<uploaded encrypted blob SHA-256>"]}
+```
+
+- `media` is a **publication attribute of the request that completes assembly**, not a stored part
+  manifest. Publishers should repeat the same list on **every part and retry**, including out-of-order
+  uploads: whichever request completes the event supplies its grant list. Earlier partial requests do
+  not save a list, check blob ownership, create an outbox, or grant anything. Omitting it on the completing
+  request uses the legacy path, even if an earlier part carried it. The server cannot inspect SENT vs KEYS
+  inside opaque bytes; clients attach references only to file SENT events.
+- After full size/hash verification, each blob must be live, **uploaded by this authenticated identity**,
+  and already include **that same identity** among its PUT recipients. Otherwise `409 media_unavailable`:
+  no event/grant is published; held parts can be retried after correcting availability. The PUT must name
+  contact **and own pubkey** in `x-relay-recipients`. Confirmation keeps confirmed recipient rows while
+  another pair is waiting, so origin confirmation does not erase proof of own-recipient authorization.
+- At completed publication, one synchronous SQLite transaction inserts the event and one existing
+  `media_grants` outbox row per digest, containing only `(own identity, active device)` pairs at **that
+  instant** (primary included; revoked/dormant devices excluded). Publisher binding and event expiry are
+  rechecked after RPC awaits. No awaits occur in this transaction. The retry alarm is armed beforehand.
+- Blob RPC application is **not** a distributed atomic transaction. The event can be fetched before its
+  blob grant applies; `GET` may temporarily be `404`. A successful completing reply adds
+  `"media":[{"hash":"…","status":"attached"}]`; `pending` means the durable outbox will retry via alarm,
+  and `gone` means the blob disappeared/expired between validation and application. Neither status rolls
+  back an already published event or resurrects a blob. Consumers may retry transient missing blobs;
+  do not treat `complete:true` alone as proof that every blob is available.
+- A completed duplicate does not enqueue, resnapshot, validate newly supplied blob references or widen
+  access. Its entries say `unchanged` (no new grant, **not** a blob-availability guarantee), just like send;
+  it may drain the existing outbox. Alarm/retry only applies the originally durable pairs. A new event id
+  is a new authenticated publication, subject to ownership checks and sync caps.
+- GET never adds recipients. Existing blob idempotency preserves confirmed pairs; revocation, dormancy,
+  per-device confirmation and the original 8-day lifetime still apply. A stale key after device re-enrolment
+  cannot publish through an in-flight request or fetch media.
+- Missing `media` or `media:[]` preserves the old replies, SQL rows and behavior; no grant RPC/table/metrics.
+
+**History boundary:** sync is **not** the inbox's no-history cursor. A newly enrolled device starts its sync
+cursor at zero and can backfill retained events for up to **24 hours**. Devices enrolled **after** completed
+publication do not gain its media grant, even when that older SENT event appears in this backfill or the
+publisher retries it. Existing PUT grants remain valid, but no new grant is inferred from reading history.
+A backfilled file card may therefore refer to unavailable media; this extension fixes PUT → enrol → completed
+SENT publication, not historical media transfer to future devices.
+
 ### Error codes added by the link slot and sync channel
 
 | Code | Status | Meaning | Retryable |
@@ -423,8 +473,8 @@ stay until their expiry: an ack frees the device, not the server row, which is b
 | `link_busy` | 409 | this identity already has a live link slot, or that slot value is in use | no |
 | `sync_conflict` | 409 | same sync id with a different revision, or different bytes for a part | no |
 | `sync_limit` | 409 | too many unfinished assemblies, or the event/byte cap is reached | yes |
-| `media_unavailable` | 409 | `POST /v1/send` `media` names a blob that does not exist, was not uploaded by the sender, or has expired; nothing was queued | no |
-| `too_many_media` | 400 | `POST /v1/send` `media` has more than 8 digests; nothing was queued | no |
+| `media_unavailable` | 409 | send/sync `media` names an absent, foreign-owned or expired blob (sync also requires own identity already on the blob); no message/event/grant published | no |
+| `too_many_media` | 400 | send/sync `media` has more than 8 digests; nothing published | no |
 
 Every other failure uses the codes above (`bad_request`, `not_found`, `auth_missing`, `auth_invalid`,
 `auth_replayed`, `not_allowed`, `not_primary`, `rate_limited`, `envelope_too_large`, `storage_error`).

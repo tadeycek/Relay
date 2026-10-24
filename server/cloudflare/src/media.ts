@@ -78,10 +78,13 @@ export class MediaBlob extends DurableObject<Env> {
   /**
    * RPC from the Mailbox before it queues a send that attaches this blob (WP04-AC4): true only while the object
    * exists, was uploaded by [uploader] and has not outlived its lifetime. The answer is the same for "absent",
-   * "someone else's" and "expired", so it is not an oracle.
+   * "someone else's" and "expired", so it is not an oracle. Sync publication additionally requires the
+   * uploader's own identity to already be a recipient. Confirmed rows still prove that authorization:
+   * settle only waives unconfirmed dormant/revoked pairs, and forget erases the whole blob.
    */
-  async attachCheck(uploader: string): Promise<boolean> {
-    return this.ctx.blockConcurrencyWhile(async () => this.attachable(uploader));
+  async attachCheck(uploader: string, ownRecipient = false): Promise<boolean> {
+    return this.ctx.blockConcurrencyWhile(async () => this.attachable(uploader) &&
+      (!ownRecipient || this.run("SELECT 1 FROM recipients WHERE pubkey = ? LIMIT 1", uploader).length > 0));
   }
 
   /**

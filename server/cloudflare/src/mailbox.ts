@@ -1048,18 +1048,32 @@ export class Mailbox extends DurableObject<Env> {
     if (authorized instanceof Response) return authorized;
     const parsed = parseSyncPart(body, this.limits);
     if ("code" in parsed) return errorResponse(parsed.status, parsed.code);
-    return this.measured(() => this.storeSyncPart(authorized, parsed, Date.now()));
+    const media = parseMediaRefs(parseJson(body)?.media, this.limits);
+    if (media === null) return errorResponse(400, "bad_request");
+    if (media === "too_many") return errorResponse(400, "too_many_media");
+    return this.measured(() => this.storeSyncPart(authorized, parsed, Date.now(), media));
   }
 
-  private async storeSyncPart(authorized: Authorized, parsed: SyncPart, now: number): Promise<Response> {
+  private async storeSyncPart(authorized: Authorized, parsed: SyncPart, now: number, media: string[] = []): Promise<Response> {
     if (!this.recordAuth(authorized.auth)) return errorResponse(401, "auth_replayed");
     const identity = authorized.identity;
     const done = (row: SyncEventRow) => json({
       v: PROTOCOL_VERSION, id: row.id, rev: row.rev, complete: true, duplicate: true, cursor: row.seq,
     });
 
+    const grantIds = new Map<string, number>();
+    const finish = async (response: Response): Promise<Response> => {
+      if (media.length === 0 || response.status !== 200) return response;
+      const outcome = await this.drainGrants();
+      const payload = await response.json() as Record<string, unknown>;
+      payload.media = media.map((hash) => ({ hash, status: grantIds.has(hash)
+        ? (outcome.statuses.get(grantIds.get(hash)!) ?? "pending") : "unchanged" }));
+      const result = json(payload);
+      if (this.exposeMetrics) result.headers.set("x-relay-media-rows", `read=${outcome.blobRows.read};written=${outcome.blobRows.written}`);
+      return result;
+    };
     const existing = this.q<SyncEventRow>("SELECT * FROM sync_events WHERE pubkey = ? AND id = ?", identity, parsed.id)[0];
-    if (existing) return existing.rev === parsed.rev ? done(existing) : errorResponse(409, "sync_conflict");
+    if (existing) return existing.rev === parsed.rev ? finish(done(existing)) : errorResponse(409, "sync_conflict");
 
     const outcome = this.ctx.storage.transactionSync((): Response | { complete: false } | { complete: true; bytes: Uint8Array } => {
       this.q("DELETE FROM sync_parts WHERE pubkey = ? AND expires_at <= ?", identity, now);
@@ -1074,10 +1088,10 @@ export class Mailbox extends DurableObject<Env> {
       const prior = this.q<{ data: ArrayBuffer }>(
         "SELECT data FROM sync_parts WHERE pubkey = ? AND id = ? AND part = ?", identity, parsed.id, parsed.part,
       )[0];
-      if (prior) {
-        return sameBytes(new Uint8Array(prior.data), parsed.data) ? { complete: false } : errorResponse(409, "sync_conflict");
+      if (prior && !sameBytes(new Uint8Array(prior.data), parsed.data)) {
+        return errorResponse(409, "sync_conflict");
       }
-      this.q(
+      if (!prior) this.q(
         "INSERT INTO sync_parts (pubkey, id, rev, part, parts, total, hash, expires_at, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         identity, parsed.id, parsed.rev, parsed.part, parsed.parts, parsed.total, parsed.hash, parsed.expiresAt,
         parsed.data.slice().buffer,
@@ -1119,7 +1133,21 @@ export class Mailbox extends DurableObject<Env> {
       this.ctx.storage.transactionSync(() => this.q("DELETE FROM sync_parts WHERE pubkey = ? AND id = ?", identity, parsed.id));
       return errorResponse(400, "bad_request");
     }
-    return this.ctx.storage.transactionSync((): Response => {
+    if (media.length > 0) {
+      // Only a complete, verified body can request grants. No RPC/await in the publication transaction.
+      const usable = await Promise.all(media.map((h) => this.blob(h).attachCheck(identity, true)));
+      if (!usable.every(Boolean)) return errorResponse(409, "media_unavailable");
+      this.ensureGrantTable();
+      // Arm BEFORE durable publication: a crash after committing must still retry the outbox.
+      await this.ctx.storage.setAlarm(Date.now() + MEDIA_GRANT_RETRY_MS);
+    }
+    const response = this.ctx.storage.transactionSync((): Response => {
+      if (media.length > 0) {
+        if (parsed.expiresAt <= Date.now()) return errorResponse(400, "bad_request");
+        const who = this.resolveSigner(authorized.auth.pubkey, authorized.device);
+        if (!who || who.revoked || who.identity !== identity || who.device !== authorized.device ||
+            !this.sendBindingActive(authorized)) return errorResponse(401, "auth_revoked");
+      }
       const raced = this.q<SyncEventRow>("SELECT * FROM sync_events WHERE pubkey = ? AND id = ?", identity, parsed.id)[0];
       if (raced) return raced.rev === parsed.rev ? done(raced) : errorResponse(409, "sync_conflict");
       const usage = this.q<{ n: number; bytes: number }>(
@@ -1132,11 +1160,20 @@ export class Mailbox extends DurableObject<Env> {
         "INSERT INTO sync_events (pubkey, id, rev, total, hash, body, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING seq",
         identity, parsed.id, parsed.rev, parsed.total, parsed.hash, outcome.bytes.slice().buffer, now, parsed.expiresAt,
       )[0].seq;
+      if (media.length > 0) {
+        const pairs = JSON.stringify(this.activeDevices(identity, Date.now()).map((d) => [identity, d]));
+        for (const hash of media) {
+          grantIds.set(hash, this.q<{ id: number }>(
+            "INSERT INTO media_grants (digest, uploader, pairs, created_at) VALUES (?, ?, ?, ?) RETURNING id",
+            hash, identity, pairs, Date.now())[0].id);
+        }
+      }
       this.q("DELETE FROM sync_parts WHERE pubkey = ? AND id = ?", identity, parsed.id);
       return json({
         v: PROTOCOL_VERSION, id: parsed.id, rev: parsed.rev, parts: parsed.parts, complete: true, cursor: seq,
       });
     });
+    return finish(response);
   }
 
   /** `GET /v1/sync?after=&limit=`: what this device missed, in cursor order, bounded by count and bytes. */

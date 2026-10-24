@@ -147,6 +147,14 @@ contract is in [PROTOCOL.md](PROTOCOL.md#linked-devices-per-device-cursors-v11-w
   (409) and `too_many_media` (400); `media_grants` is created lazily on the first such send. Contract:
   [PROTOCOL.md](PROTOCOL.md#attaching-media-to-a-send-wp04-ac4); tests `test/media-race.test.ts` (prints a
   `WP04-MEDIA-RACE-ROWS` line); evidence [linux-port/evidence/WP04-media-race.md](../../linux-port/evidence/WP04-media-race.md).
+- **WP09 own SENT media:** signed `POST /v1/sync` accepts the same optional `media` digest array (≤8).
+  Repeat it on every part/retry: the **completing request** supplies the publication's list; partials grant
+  nothing. Only live uploader-owned blobs already naming own identity are eligible. Event + active own-device
+  snapshot use the existing durable grant outbox, with async `attached`/`pending`/`gone` application and no
+  duplicate-retry widening. Sync still backfills up to 24 hours from cursor zero; post-publication enrollees
+  may see an older SENT card without media access. Missing/empty media stays unchanged. Wire contract:
+  [own SENT media grants](PROTOCOL.md#own-sent-media-grants-wp09); evidence:
+  [WP09-self-sync-grants.md](../../linux-port/evidence/WP09-self-sync-grants.md).
 - **Not deployed.** These routes exist in this branch only; `wrangler dev --local` and the vitest workerd
   pool are the only environments they have run in.
 
