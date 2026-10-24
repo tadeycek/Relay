@@ -15,8 +15,8 @@ the log together.
 | [WP08](wps/WP08-desktop-media.md) | L2 | Desktop: photos and videos | WP06 | planned |
 | [WP09](wps/WP09-files-both-platforms.md) | L2 | Files on phone and desktop (`TYPE:FILE`, up to 100 MiB) | WP03, WP04, WP06 | planned |
 | [WP10](wps/WP10-linux-packaging-release.md) | L2 | Linux packaging and desktop release | WP06, WP07, WP08, WP09 | planned |
-| [WP11](wps/WP11-server-call-support.md) | L3 | Server: TURN credentials, urgent wake, signal size | WP02, WP04 | planned |
-| [WP12](wps/WP12-core-call-engine.md) | L3 | `:core` 1:1 call engine and `TYPE:CALL` codec | WP03 | planned |
+| [WP11](wps/WP11-server-call-support.md) | L3 | Server: TURN credentials, urgent wake, signal size | WP02, WP04 | doing |
+| [WP12](wps/WP12-core-call-engine.md) | L3 | `:core` 1:1 call engine and `TYPE:CALL` codec | WP03 | doing |
 | [WP13](wps/WP13-android-1on1-calls.md) | L3 | Android: 1:1 calls (WebRTC, Telecom, FCM ring) | WP11, WP12 | planned |
 | [WP14](wps/WP14-desktop-1on1-calls.md) | L3 | Desktop: 1:1 calls | WP06, WP12 | planned |
 | [WP15](wps/WP15-server-callroom-sfu.md) | L4 | Server: CallRoom Durable Object and SFU proxy | WP02, WP11 | planned |
@@ -51,6 +51,8 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 - [WP01](evidence/WP01.md): local interop passed; original-app UI and live-provider checks open.
 
 ## Log
+
+- 2026-10-24 UTC — WP11 + WP12 committed `294e31d` (TURN ICE credentials from env only, urgent wake budgets, signal bounds; `TYPE:CALL` codecs + pure 1:1 state machine with glare/accept-race/busy/ICE-restart/timeouts). Review fixes: urgent budget spent synchronously, full nonce cache refuses instead of evicting, a busy device no longer ends a call another device can answer, winning device notifies siblings. Verified core 500 + server 360 + tsc clean. Not deployed, no live TURN, no FCM, no device.
 
 - 2026-10-24 UTC — WP02 5-party SFU load + egress measured (`40a0116`); WP03 `2a161d3`; WP04 `9477b28`; WP06 desktop shell `45ac4a1`; WP05-A implemented + security-reviewed + hardened. Nothing deployed or merged.
 
