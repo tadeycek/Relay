@@ -3,16 +3,25 @@
 > Read [10-readiness-gates.md](10-readiness-gates.md) before implementation. It corrects security, lifecycle and
 > compatibility assumptions below and takes precedence where the initial proposal conflicts with a gate.
 
-Status: **planning only, nothing implemented.** Written 2026-10-23 on branch `feat/linux-port`, from `main` at
-`af86743` (Calculator 1.15 preview), after a design discussion with the owner plus web research done the same day.
-Nothing in `app/` or `server/` is changed by this folder.
+Status: **planning documents plus partial implementation on `feat/linux-port`.** Written 2026-10-23 from `main` at
+`af86743` (Calculator 1.15 preview). The design docs below describe the plan; [tasks.md](tasks.md) and
+[evidence/](evidence/) record what has actually been built and verified.
 
 ## Execution status
 
-WP01 and WP02 now have isolated runnable spikes and [evidence](tasks.md). Both remain `doing`: local results
-are verified, including actual app chat UI and Android↔Linux generated audio; live-provider, physical-audio and
-security acceptance remain open. No production
-application/server implementation has been changed. The original planning status below describes the design docs.
+| WP | Lane | What is actually verified |
+|---|---|---|
+| WP01 | `doing` | JVM/Android transport interop, production chat UI against a local Worker; live service open |
+| WP02 | `doing` | Local and live Cloudflare TURN/TLS443 Android-Linux generated audio; live SFU (3 Linux parties, 6 streams; Android+Linux publish/subscribe); frame-E2EE interop. Egress, UDP-block, physical devices open |
+| WP03 | `doing` | `:core` extracted (`2a161d3`), 328-vector golden corpus byte-identical, 198 core + 146 app tests, single-emulator UI smoke green. Two-emulator AC4 not run |
+| WP04 | `doing` | Per-device cursors, dormancy/gap, `/v1/devices`, per-device media confirmation (`9477b28`), 159 local tests. AC4 blocked by the upload-enrol-send race; deploy/pilot not run |
+| WP05-WP18 | see board | Not started or in progress |
+
+Nothing is deployed and nothing is merged into `main`. Group-call audio stays readable by the SFU until WP17.
+
+The planning docs that follow are unchanged from the original design; the board and evidence files are the
+authority on current state. Read [10-readiness-gates.md](10-readiness-gates.md) before touching security or
+lifecycle code - those gates are binding acceptance criteria, not suggestions.
 
 ## One-paragraph summary
 
