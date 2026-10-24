@@ -67,7 +67,12 @@ import java.nio.file.Path
  * so requests are signed as that device.
  */
 fun main(args: Array<String>) {
-    val options = Args.parse(args)
+    val options = try {
+        Args.parse(args)
+    } catch (e: IllegalArgumentException) {
+        System.err.println(e.message)
+        kotlin.system.exitProcess(2)
+    }
     val paths = DesktopPaths(options.configDir?.let(Path::of), options.dataDir?.let(Path::of))
     val engine = DesktopEngine.create(paths, options.mailboxUrl, options.peerInnerKeys)
     if (options.printIdentity) {
@@ -106,13 +111,13 @@ fun main(args: Array<String>) {
             window.minimumSize = java.awt.Dimension(760, 740)
             DisposableEffect(window) { installFileDrop(window); onDispose { window.dropTarget = null } }
             RelayTheme {
-                Root(paths, options.mailboxUrl, options.peerInnerKeys, options.initialPeer)
+                Root(paths, options.mailboxUrl, options.peerInnerKeys, options.initialPeer, options.showChatUi)
             }
         }
     }
 }
 
-private data class Args(
+internal data class Args(
     val mailboxUrl: String,
     val initialPeer: String?,
     val configDir: String?,
@@ -122,6 +127,8 @@ private data class Args(
     val sendTestMessage: Boolean = false,
     val sendTo: String? = null,
     val sendToInner: String? = null,
+    /** WP07 diagnostics: render the chat UI without a linked phone. */
+    val showChatUi: Boolean = false,
 ) {
     companion object {
         fun parse(args: Array<String>): Args {
@@ -130,6 +137,7 @@ private data class Args(
             var configDir: String? = null
             var dataDir: String? = null
             var printIdentity = false
+            var showChatUi = false
             var sendTestMessage = false
             var sendTo: String? = null
             var sendToInner: String? = null
@@ -148,6 +156,7 @@ private data class Args(
                     }
                     "--enable-file-send-for-tests" -> System.setProperty("relay.files.send.testOptIn", "true")
                     "--print-identity" -> printIdentity = true
+                    "--show-chat-ui" -> showChatUi = true
                     "--send-test-message" -> {
                         sendTestMessage = true
                         sendTo = args.getOrNull(++i)
@@ -157,14 +166,21 @@ private data class Args(
                         println(
                             "usage: relay-desktop [--mailbox-url URL] [--peer HEX] " +
                                 "[--peer-inner-key BASE64 PEER] [--config-dir DIR] [--data-dir DIR] " +
-                                "[--print-identity] [--send-test-message PUBKEY INNERKEY]",
+                                "[--print-identity] [--show-chat-ui] [--send-test-message PUBKEY INNERKEY]",
                         )
                         kotlin.system.exitProcess(0)
                     }
                 }
                 i++
             }
-            return Args(mailboxUrl, initialPeer, configDir, dataDir, peerKeys, printIdentity, sendTestMessage, sendTo, sendToInner)
+            // Diagnostics render the chat UI without a linked phone. They must never open the user's real
+            // profile, so both directories have to be named explicitly.
+            if (showChatUi) {
+                require(!configDir.isNullOrBlank() && !dataDir.isNullOrBlank()) {
+                    "--show-chat-ui requires explicit --config-dir and --data-dir (it never uses the default profile)"
+                }
+            }
+            return Args(mailboxUrl, initialPeer, configDir, dataDir, peerKeys, printIdentity, sendTestMessage, sendTo, sendToInner, showChatUi)
         }
     }
 }
@@ -190,14 +206,14 @@ private fun RelayTheme(content: @Composable () -> Unit) {
  * ([generation] increments) and the transport picks up the device-auth key and `?device=<id>`.
  */
 @Composable
-private fun Root(paths: DesktopPaths, mailboxUrl: String, peerInnerKeys: Map<String, String>, initialPeer: String?) {
+private fun Root(paths: DesktopPaths, mailboxUrl: String, peerInnerKeys: Map<String, String>, initialPeer: String?, showChatUi: Boolean = false) {
     var generation by remember { mutableStateOf(0) }
     val engine = remember(generation) {
         DesktopEngine.create(paths, mailboxUrl, peerInnerKeys, enableFileSendForTests = System.getProperty("relay.files.send.testOptIn") == "true").also { if (mailboxUrl.isNotBlank()) it.start() }
     }
     DisposableEffect(engine) { onDispose { engine.close() } }
 
-    if (engine.isLinked()) {
+    if (showChatUi || engine.isLinked()) {
         App(engine, initialPeer)
     } else {
         LinkScreen(engine, mailboxUrl, onLinked = { generation++ })
@@ -407,185 +423,52 @@ private fun copyToClipboard(text: String) {
 
 @Composable
 private fun App(engine: DesktopEngine, initialPeer: String?) {
-    var conversations by remember { mutableStateOf(engine.conversations()) }
-    var selectedPeer by remember { mutableStateOf(initialPeer) }
-    var messages by remember { mutableStateOf(if (initialPeer != null) engine.messages(initialPeer) else emptyList()) }
-    var newPeer by remember { mutableStateOf("") }
-    var draft by remember { mutableStateOf("") }
-    var error by remember { mutableStateOf<String?>(null) }
-    var contacts by remember { mutableStateOf(engine.contacts()) }
     val scope = rememberCoroutineScope()
-    val linked = engine.linkedDevice()
+    val controller = remember(engine) { DesktopChat(engine, scope) }
+    LaunchedEffect(engine) { controller.start() }
+    var state by remember { mutableStateOf(ChatUiState()) }
+    LaunchedEffect(controller) { controller.state.collect { state = it } }
 
-    fun refresh() {
-        conversations = engine.conversations()
-        contacts = engine.contacts()
-        selectedPeer?.let { messages = engine.messages(it) }
+    // Select the requested peer on launch (linking flow).
+    LaunchedEffect(initialPeer) {
+        if (initialPeer != null && engine.store.conversation(initialPeer) != null) {
+            controller.select(initialPeer)
+        }
     }
 
+    // Drag and drop handler: file drops target the currently selected conversation.
     LaunchedEffect(engine) {
         for (path in DesktopFileDrops.paths) {
-            val peer = selectedPeer
-            val blocked = DesktopFiles.attachBlockReason(peer, engine.files?.sendEnabled == true)
-            if (peer == null || blocked != null) { error = blocked ?: "Select a conversation before attaching a file"; continue }
-            try { engine.sendFile(peer, path); refresh() } catch (e: Exception) { error = "Cannot attach file: check contact encryption key, quota and source permissions" }
+            val peer = controller.state.value.selected?.id
+            if (peer == null) continue
+            try {
+                engine.sendFile(peer, path)
+                controller.refresh()
+            } catch (_: Exception) {
+                // The controller surfaces the error in its own state if it needs to; dropping a file
+                // when no conversation is selected is ignored.
+            }
         }
     }
 
-    LaunchedEffect(engine.revision) {
-        // Re-run whenever the engine commits a message.
-        engine.revision.collect { refresh() }
-    }
-
-    Row(Modifier.fillMaxSize()) {
-        Column(
-            Modifier.width(300.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surface).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("Relay", fontSize = 26.sp, fontWeight = FontWeight.Bold)
-            if (linked != null) {
-                Text("Linked to ${shortKey(linked.identityPubkeyHex)}", fontSize = 12.sp, fontWeight = FontWeight.Medium)
-                Text(
-                    "This computer: ${linked.deviceLabel}",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Text("Conversations", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(conversations, key = { it.id }) { conversation ->
-                    val selected = conversation.id == selectedPeer
-                    Surface(
-                        color = if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().clickable {
-                            selectedPeer = conversation.id
-                            messages = engine.messages(conversation.id)
-                        },
-                    ) {
-                        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-                            Text(shortKey(conversation.id), fontWeight = FontWeight.Medium)
-                            Text(
-                                conversation.title.takeIf { it != conversation.peer } ?: "Direct message",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    }
-                }
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = newPeer,
-                    onValueChange = { newPeer = it.trim() },
-                    label = { Text("Peer pubkey") },
-                    singleLine = true,
-                    modifier = Modifier.weight(1f),
-                )
-                Spacer(Modifier.width(8.dp))
-                TextButton(onClick = {
-                    val peer = newPeer.trim()
-                    if (peer.length == 64 && peer.all { it in "0123456789abcdef" }) {
-                        engine.store.ensureConversation(peer)
-                        selectedPeer = peer
-                        messages = engine.messages(peer)
-                        newPeer = ""
-                        refresh()
-                    } else {
-                        error = "A peer pubkey is 64 lowercase hex characters"
-                    }
-                }) { Text("Add") }
-            }
-            Text(
-                "Messages: ${messages.size} · Contacts: ${contacts.size}",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (contacts.isNotEmpty()) {
-                Text("From your phone", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                LazyColumn(Modifier.height(140.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    items(contacts, key = { it.key }) { contact ->
-                        Text(
-                            contact.name + if (contact.nostrPubkey != null) " · Relay" else "",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-        }
-
-        Column(Modifier.weight(1f).fillMaxHeight().background(MaterialTheme.colorScheme.background)) {
-            Row(
-                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    selectedPeer?.let(::shortKey) ?: "No conversation selected",
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 18.sp,
-                )
-                Spacer(Modifier.weight(1f))
-                Text(
-                    when (engine.status.value) {
-                        com.relay.app.transport.TransportStatus.ONLINE -> "Online"
-                        com.relay.app.transport.TransportStatus.CONNECTING -> "Connecting…"
-                        com.relay.app.transport.TransportStatus.OFFLINE -> "Offline"
-                        com.relay.app.transport.TransportStatus.STOPPED -> "Offline"
-                        else -> "Offline"
-                    },
-                    fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
-            LazyColumn(
-                Modifier.weight(1f).fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(messages, key = { it.id }) { message ->
-                    MessageBubble(message, engine)
-                }
-            }
-
-            error?.let {
-                Text(it, color = MaterialTheme.colorScheme.error, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 20.dp))
-            }
-
-            Row(
-                Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    placeholder = { Text("Write a message") },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 4,
-                )
-                Spacer(Modifier.width(10.dp))
-                TextButton(enabled = DesktopFiles.attachBlockReason(selectedPeer, engine.files?.sendEnabled == true) == null, onClick = {
+    val actions = remember(controller) {
+        ChatActions(
+            select = { controller.select(it) },
+            draftChanged = { controller.draftChanged(it) },
+            send = { controller.send(it) },
+            setOwnName = { controller.setOwnName(it) },
+            setOwnAvatar = { controller.setOwnAvatar(it) },
+            dismissError = { controller.dismissError() },
+            attach = {
+                val peer = controller.state.value.selected?.id
+                if (peer != null) {
                     desktopFileDialog(false)?.let { DesktopFileDrops.paths.trySend(it) }
-                }) { Text("Attach file") }
-                Button(
-                    enabled = draft.isNotBlank() && selectedPeer != null &&
-                        engine.status.value != com.relay.app.transport.TransportStatus.STOPPED,
-                    onClick = {
-                        val peer = selectedPeer ?: return@Button
-                        val text = draft
-                        draft = ""
-                        error = null
-                        scope.launch {
-                            when (val result = engine.sendText(peer, text)) {
-                                is SendResult.Sent -> refresh()
-                                is SendResult.Failed -> error = result.reason
-                            }
-                        }
-                    },
-                ) { Text("Send") }
+                }
             }
-        }
+        )
     }
+
+    ChatScreen(state = state, actions = actions, engine = engine)
 }
 
 @Composable

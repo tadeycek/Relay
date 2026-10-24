@@ -62,6 +62,8 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     testImplementation("org.json:json:20240303")
+    // WP07-AC3: real Compose UI tests (semantics tree + key/mouse input) for the desktop window.
+    testImplementation(compose.desktop.uiTestJUnit4)
 }
 
 compose.desktop {

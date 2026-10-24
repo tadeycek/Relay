@@ -45,6 +45,30 @@ class DesktopEngine(
 ) : AutoCloseable {
 
     private val _revision = MutableStateFlow(0L)
+
+    /** Group traffic and profiles use the same seal+send path as 1:1 text. */
+    private val wireSender = GroupSender { peer, inner, relays, body ->
+        val key = inner ?: recipientKey(peer)
+        val sealed = key?.let { InnerEnvelope.seal(keyMaterial, it, body) }
+        if (sealed == null) SendResult.Failed("No encryption key for that contact", retryable = false)
+        else transport.send(peer, RelayPayload(PayloadCodec.newId(), System.currentTimeMillis(), sealed), relays)
+    }
+
+    val profiles = DesktopProfiles(
+        store = store,
+        ownPubkey = identity.publicKeyHex(),
+        nameProvider = { store.profile(identity.publicKeyHex())?.name ?: "This computer" },
+        sender = wireSender,
+        onReply = { peer, body -> scope.launch { wireSender.send(peer, recipientKey(peer), emptyList(), body) } },
+    )
+
+    val groups = DesktopGroups(
+        store = store,
+        ownPubkey = identity.publicKeyHex(),
+        ownName = { profiles.ownName() },
+        ownInner = { keyMaterial.publicKeyBase64() },
+        sender = wireSender,
+    )
     /** Bumped after every stored/updated message so the UI can refresh without polling the DB. */
     val revision: StateFlow<Long> = _revision.asStateFlow()
 
@@ -86,6 +110,12 @@ class DesktopEngine(
     }
 
     suspend fun sendText(peerHex: String, text: String): SendResult {
+        if (isGroupConversation(peerHex)) {
+            val report = groups.send(peerHex, text)
+            _revision.value++
+            return if (report.failed == 0) SendResult.Sent(report.sent.coerceAtLeast(1))
+            else SendResult.Failed(report.firstError ?: "Some members could not be reached", retryable = true)
+        }
         val recipientInnerKey = recipientKey(peerHex)
         val body = InnerEnvelope.seal(keyMaterial, recipientInnerKey, text)
         val payload = RelayPayload(PayloadCodec.newId(), System.currentTimeMillis(), body)
@@ -185,6 +215,18 @@ class DesktopEngine(
             }
         } else {
             payload.body
+        }
+        // Group rosters, group posts, group avatars and profile controls are never chat rows.
+        if (groups.handle(envelope.senderPubkeyHex, text)) {
+            envelope.onHandled?.invoke(); _revision.value++; return
+        }
+        if (groups.isAvatarControl(text)) {
+            groups.handleAvatar(envelope.senderPubkeyHex, text)
+            runCatching { groups.answerAvatarRequest(envelope.senderPubkeyHex, text) }
+            envelope.onHandled?.invoke(); _revision.value++; return
+        }
+        if (profiles.handle(envelope.senderPubkeyHex, text)) {
+            envelope.onHandled?.invoke(); _revision.value++; return
         }
         if (text.startsWith("TYPE:FILE|")) {
             if (files?.accept(DesktopMessage(payload.id, envelope.senderPubkeyHex, envelope.senderPubkeyHex, text, payload.ts, false)) == true) {

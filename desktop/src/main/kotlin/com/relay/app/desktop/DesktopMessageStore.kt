@@ -1,6 +1,8 @@
 package com.relay.app.desktop
 
+import com.relay.app.groups.GroupProtocol
 import com.relay.app.transport.mailbox.MailboxMessage
+import org.json.JSONArray
 import org.json.JSONObject
 import java.nio.file.Path
 import java.sql.Connection
@@ -104,7 +106,7 @@ class DesktopMessageStore(
 
     fun conversations(): List<DesktopConversation> = synchronized(lock) {
         connection.createStatement().use { st ->
-            st.executeQuery("SELECT id, peer, title, updated_at FROM conversations ORDER BY updated_at DESC").use { rs ->
+            st.executeQuery("SELECT id, peer, title, updated_at FROM conversations ORDER BY updated_at DESC, id ASC").use { rs ->
                 buildList {
                     while (rs.next()) add(DesktopConversation(rs.getString(1), rs.getString(2), rs.getString(3), rs.getLong(4)))
                 }
@@ -115,7 +117,15 @@ class DesktopMessageStore(
     /** Inserts [message] once by payload id. Returns true when this call inserted it. */
     fun insertMessage(message: DesktopMessage): Boolean = synchronized(lock) {
         registerFile(message)
-        ensureConversation(message.conversationId)
+        // Never retitle an existing conversation: the rail title is owned by the contact import or the
+        // group roster, and a message arriving must not replace "Jane" or "Design" with a raw id.
+        connection.prepareStatement("INSERT INTO conversations(id, peer, title, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO NOTHING").use { ps ->
+            ps.setString(1, message.conversationId)
+            ps.setString(2, message.conversationId)
+            ps.setString(3, message.conversationId)
+            ps.setLong(4, message.ts)
+            ps.executeUpdate()
+        }
         connection.autoCommit = false
         try {
             val inserted = connection.prepareStatement(
@@ -148,7 +158,7 @@ class DesktopMessageStore(
     fun messages(conversationId: String, limit: Int = 200): List<DesktopMessage> = synchronized(lock) {
         connection.prepareStatement(
             "SELECT id, conversation_id, sender, body, ts, outgoing FROM messages " +
-                "WHERE conversation_id = ? ORDER BY ts ASC LIMIT ?",
+                "WHERE conversation_id = ? ORDER BY ts DESC, rowid DESC LIMIT ?",
         ).use { ps ->
             ps.setString(1, conversationId)
             ps.setInt(2, limit)
@@ -157,7 +167,21 @@ class DesktopMessageStore(
                     while (rs.next()) {
                         add(DesktopMessage(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getLong(5), rs.getInt(6) == 1))
                     }
-                }
+                }.asReversed()
+            }
+        }
+    }
+
+    /** Newest row of a conversation, for the rail preview and its ordering. */
+    fun lastMessage(conversationId: String): DesktopMessage? = synchronized(lock) {
+        connection.prepareStatement(
+            "SELECT id, conversation_id, sender, body, ts, outgoing FROM messages " +
+                "WHERE conversation_id = ? ORDER BY ts DESC, rowid DESC LIMIT 1",
+        ).use { ps ->
+            ps.setString(1, conversationId)
+            ps.executeQuery().use { rs ->
+                if (rs.next()) DesktopMessage(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getLong(5), rs.getInt(6) == 1)
+                else null
             }
         }
     }
@@ -611,10 +635,304 @@ class DesktopMessageStore(
             .joinToString("") { "%02x".format(it) }
 
     fun setMeta(name: String, value: String) = synchronized(lock) {
+        if (name == "ui.selected") require(value.length <= MAX_CONVERSATION_ID_LENGTH) { "Conversation selection is too long" }
         connection.prepareStatement("INSERT INTO meta(name, value) VALUES(?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value").use { ps ->
             ps.setString(1, name)
             ps.setString(2, value)
             ps.executeUpdate()
+        }
+    }
+
+    // ---- groups, profiles, read state and drafts (WP07) ---------------------------------------
+
+    /**
+     * Upserts a roster from a [GroupProtocol.State]. The caller has already decided that this state
+     * is authentic and newer (`GroupProtocol.acceptSync`); the row keeps the group's own revision so a
+     * later replay can be compared. The conversation row is created or retitled here, so a group
+     * appears in the rail even before its first message.
+     */
+    fun saveGroupState(state: GroupProtocol.State, now: Long = System.currentTimeMillis()) {
+        val conv = groupConversationId(state.owner, state.id)
+        val members = JSONArray().apply {
+            for (m in state.members) put(JSONObject().put("key", m.key).put("name", m.name).put("inner", m.inner).put("relays", JSONArray(m.relays)))
+        }
+        synchronized(lock) {
+            connection.autoCommit = false
+            try {
+                connection.prepareStatement(
+                    "INSERT INTO group_rosters(conversation_id, owner, shared_id, name, revision, members, avatar_revision, updated_at) " +
+                        "VALUES(?, ?, ?, ?, ?, ?, -1, ?) ON CONFLICT(conversation_id) DO UPDATE SET " +
+                        "name = excluded.name, revision = excluded.revision, members = excluded.members, updated_at = excluded.updated_at " +
+                        "WHERE group_rosters.revision < excluded.revision",
+                ).use { ps ->
+                    ps.setString(1, conv); ps.setString(2, state.owner); ps.setString(3, state.id)
+                    ps.setString(4, state.name); ps.setLong(5, state.revision); ps.setString(6, members.toString()); ps.setLong(7, now)
+                    if (ps.executeUpdate() == 0) {
+                        connection.rollback()
+                        return@synchronized
+                    }
+                }
+                connection.prepareStatement(
+                    "INSERT INTO conversations(id, peer, title, updated_at) VALUES(?, '', ?, ?) " +
+                        "ON CONFLICT(id) DO UPDATE SET title = excluded.title",
+                ).use { ps ->
+                    ps.setString(1, conv); ps.setString(2, state.name); ps.setLong(3, now); ps.executeUpdate()
+                }
+                connection.commit()
+                secureFiles()
+            } catch (e: Exception) {
+                runCatching { connection.rollback() }
+                throw e
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    }
+
+    fun storedGroup(conversationId: String): StoredGroup? = synchronized(lock) {
+        connection.prepareStatement(
+            "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at " +
+                "FROM group_rosters WHERE conversation_id = ?",
+        ).use { ps ->
+            ps.setString(1, conversationId)
+            ps.executeQuery().use { rs -> if (rs.next()) readGroup(rs) else null }
+        }
+    }
+
+    fun storedGroup(owner: String, sharedId: String): StoredGroup? = synchronized(lock) {
+        connection.prepareStatement(
+            "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at " +
+                "FROM group_rosters WHERE owner = ? AND shared_id = ?",
+        ).use { ps ->
+            ps.setString(1, owner); ps.setString(2, sharedId)
+            ps.executeQuery().use { rs -> if (rs.next()) readGroup(rs) else null }
+        }
+    }
+
+    fun storedGroups(): List<StoredGroup> = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery(
+                "SELECT conversation_id, owner, shared_id, name, revision, members, avatar, avatar_revision, updated_at " +
+                    "FROM group_rosters ORDER BY updated_at DESC",
+            ).use { rs -> buildList { while (rs.next()) add(readGroup(rs)) } }
+        }
+    }
+
+    private fun readGroup(rs: java.sql.ResultSet): StoredGroup {
+        val array = JSONArray(rs.getString(6))
+        val members = buildList {
+            for (i in 0 until array.length()) {
+                val o = array.getJSONObject(i)
+                val relays = o.optJSONArray("relays") ?: JSONArray()
+                add(
+                    GroupProtocol.Member(
+                        key = o.getString("key"),
+                        name = o.optString("name", ""),
+                        inner = if (o.isNull("inner")) null else o.getString("inner"),
+                        relays = buildList { for (r in 0 until relays.length()) add(relays.getString(r)) },
+                    ),
+                )
+            }
+        }
+        return StoredGroup(
+            conversationId = rs.getString(1), owner = rs.getString(2), sharedId = rs.getString(3),
+            name = rs.getString(4), revision = rs.getLong(5), members = members,
+            avatar = rs.getBytes(7), avatarRevision = rs.getLong(8), updatedAt = rs.getLong(9),
+        )
+    }
+
+    /** Owner-only avatar; only a strictly newer revision is applied. Returns true when it was stored. */
+    fun setGroupAvatar(conversationId: String, jpeg: ByteArray?, revision: Long): Boolean = synchronized(lock) {
+        if (!validDesktopAvatar(jpeg)) return@synchronized false
+        connection.prepareStatement(
+            "UPDATE group_rosters SET avatar = ?, avatar_revision = ? WHERE conversation_id = ? AND avatar_revision < ?",
+        ).use { ps ->
+            ps.setBytes(1, jpeg); ps.setLong(2, revision); ps.setString(3, conversationId); ps.setLong(4, revision)
+            ps.executeUpdate() == 1
+        }.also { if (it) secureFiles() }
+    }
+
+    fun profile(pubkey: String): DesktopProfile? = synchronized(lock) {
+        connection.prepareStatement(
+            "SELECT pubkey, name, avatar, name_revision, avatar_revision, updated_at FROM profiles WHERE pubkey = ?",
+        ).use { ps ->
+            ps.setString(1, pubkey)
+            ps.executeQuery().use { rs -> if (rs.next()) readProfile(rs) else null }
+        }
+    }
+
+    fun profiles(): List<DesktopProfile> = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT pubkey, name, avatar, name_revision, avatar_revision, updated_at FROM profiles").use { rs ->
+                buildList { while (rs.next()) add(readProfile(rs)) }
+            }
+        }
+    }
+
+    private fun readProfile(rs: java.sql.ResultSet) = DesktopProfile(
+        pubkey = rs.getString(1),
+        name = rs.getString(2),
+        avatar = rs.getBytes(3),
+        nameRevision = rs.getLong(4),
+        avatarRevision = rs.getLong(5),
+        updatedAt = rs.getLong(6),
+    )
+
+    /** Revision-guarded name update. Returns false when [revision] is not newer than what is stored. */
+    fun saveProfileName(pubkey: String, name: String, revision: Long, now: Long = System.currentTimeMillis()): Boolean =
+        synchronized(lock) {
+            val exists = connection.prepareStatement("SELECT 1 FROM profiles WHERE pubkey = ?").use { ps ->
+                ps.setString(1, pubkey); ps.executeQuery().use { it.next() }
+            }
+            if (!exists) {
+                connection.prepareStatement(
+                    "INSERT INTO profiles(pubkey, name, name_revision, updated_at) VALUES(?, ?, ?, ?)",
+                ).use { ps ->
+                    ps.setString(1, pubkey); ps.setString(2, name); ps.setLong(3, revision); ps.setLong(4, now)
+                    ps.executeUpdate()
+                }
+                return@synchronized true
+            }
+            connection.prepareStatement(
+                "UPDATE profiles SET name = ?, name_revision = ?, updated_at = ? WHERE pubkey = ? AND name_revision < ?",
+            ).use { ps ->
+                ps.setString(1, name); ps.setLong(2, revision); ps.setLong(3, now); ps.setString(4, pubkey); ps.setLong(5, revision)
+                ps.executeUpdate() == 1
+            }.also { if (it) secureFiles() }
+        }
+
+    /** Revision-guarded avatar update; `null` clears the photo. Returns false for a stale revision. */
+    fun saveProfileAvatar(pubkey: String, jpeg: ByteArray?, revision: Long, now: Long = System.currentTimeMillis()): Boolean =
+        synchronized(lock) {
+            if (!validDesktopAvatar(jpeg)) return@synchronized false
+            val exists = connection.prepareStatement("SELECT 1 FROM profiles WHERE pubkey = ?").use { ps ->
+                ps.setString(1, pubkey); ps.executeQuery().use { it.next() }
+            }
+            if (!exists) {
+                connection.prepareStatement(
+                    "INSERT INTO profiles(pubkey, avatar, avatar_revision, updated_at) VALUES(?, ?, ?, ?)",
+                ).use { ps ->
+                    ps.setString(1, pubkey); ps.setBytes(2, jpeg); ps.setLong(3, revision); ps.setLong(4, now)
+                    ps.executeUpdate()
+                }
+                return@synchronized true
+            }
+            connection.prepareStatement(
+                "UPDATE profiles SET avatar = ?, avatar_revision = ?, updated_at = ? WHERE pubkey = ? AND avatar_revision < ?",
+            ).use { ps ->
+                ps.setBytes(1, jpeg); ps.setLong(2, revision); ps.setLong(3, now); ps.setString(4, pubkey); ps.setLong(5, revision)
+                ps.executeUpdate() == 1
+            }.also { if (it) secureFiles() }
+        }
+
+    fun readThrough(conversationId: String): Long = synchronized(lock) {
+        connection.prepareStatement("SELECT read_through FROM conversation_state WHERE conversation_id = ?").use { ps ->
+            ps.setString(1, conversationId)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getLong(1) else 0L }
+        }
+    }
+
+    /** Moves the read mark forward only: a late or repeated mark never re-badges read messages. */
+    fun markRead(conversationId: String, through: Long) {
+        synchronized(lock) {
+            connection.prepareStatement(
+                "INSERT INTO conversation_state(conversation_id, read_through, updated_at) VALUES(?, ?, ?) " +
+                    "ON CONFLICT(conversation_id) DO UPDATE SET read_through = max(conversation_state.read_through, excluded.read_through), " +
+                    "updated_at = excluded.updated_at",
+            ).use { ps ->
+                ps.setString(1, conversationId); ps.setLong(2, through); ps.setLong(3, System.currentTimeMillis())
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    fun unreadCount(conversationId: String): Int = synchronized(lock) {
+        connection.prepareStatement(
+            "SELECT count(*) FROM messages WHERE conversation_id = ? AND outgoing = 0 AND ts > ?",
+        ).use { ps ->
+            ps.setString(1, conversationId); ps.setLong(2, readThrough(conversationId))
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+        }
+    }
+
+    fun conversationDraft(conversationId: String): String = synchronized(lock) {
+        connection.prepareStatement("SELECT draft FROM conversation_state WHERE conversation_id = ?").use { ps ->
+            ps.setString(1, conversationId)
+            ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else "" }
+        }
+    }
+
+    fun setConversationDraft(conversationId: String, draft: String) {
+        require(conversationId.length <= MAX_CONVERSATION_ID_LENGTH) { "Conversation id is too long" }
+        require(draft.length <= MAX_DRAFT_LENGTH) { "Draft is too long" }
+        synchronized(lock) {
+            connection.prepareStatement(
+                "INSERT INTO conversation_state(conversation_id, draft, updated_at) VALUES(?, ?, ?) " +
+                    "ON CONFLICT(conversation_id) DO UPDATE SET draft = excluded.draft, updated_at = excluded.updated_at",
+            ).use { ps ->
+                ps.setString(1, conversationId); ps.setString(2, draft); ps.setLong(3, System.currentTimeMillis())
+                ps.executeUpdate()
+            }
+        }
+    }
+
+    /** Holds an event that arrived before its roster, bounded so a hostile sender cannot fill the disk. */
+    fun holdGroupEvent(owner: String, sharedId: String, sender: String, body: String, now: Long = System.currentTimeMillis()) {
+        synchronized(lock) {
+            connection.autoCommit = false
+            try {
+                connection.prepareStatement(
+                    "INSERT INTO group_pending(owner, shared_id, sender, body, received_at) VALUES(?, ?, ?, ?, ?)",
+                ).use { ps ->
+                    ps.setString(1, owner); ps.setString(2, sharedId); ps.setString(3, sender); ps.setString(4, body); ps.setLong(5, now)
+                    ps.executeUpdate()
+                }
+                // Same limits as the phone's SharedGroups: 100 per group, 500 total, 7 days.
+                connection.prepareStatement(
+                    "DELETE FROM group_pending WHERE row IN (SELECT row FROM group_pending WHERE owner = ? AND shared_id = ? " +
+                        "ORDER BY row DESC LIMIT -1 OFFSET $PENDING_PER_GROUP)",
+                ).use { ps -> ps.setString(1, owner); ps.setString(2, sharedId); ps.executeUpdate() }
+                connection.prepareStatement(
+                    "DELETE FROM group_pending WHERE row IN (SELECT row FROM group_pending ORDER BY row DESC LIMIT -1 OFFSET $PENDING_TOTAL)",
+                ).use { it.executeUpdate() }
+                connection.prepareStatement("DELETE FROM group_pending WHERE received_at < ?").use { ps ->
+                    ps.setLong(1, now - PENDING_TTL_MS); ps.executeUpdate()
+                }
+                connection.commit()
+                secureFiles()
+            } catch (e: Exception) {
+                runCatching { connection.rollback() }
+                throw e
+            } finally {
+                connection.autoCommit = true
+            }
+        }
+    }
+
+    fun pendingGroupEvents(owner: String, sharedId: String): List<PendingGroupEvent> = synchronized(lock) {
+        connection.prepareStatement(
+            "SELECT row, sender, body, received_at FROM group_pending WHERE owner = ? AND shared_id = ? ORDER BY row",
+        ).use { ps ->
+            ps.setString(1, owner); ps.setString(2, sharedId)
+            ps.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) add(PendingGroupEvent(rs.getLong(1), rs.getString(2), rs.getString(3), rs.getLong(4)))
+                }
+            }
+        }
+    }
+
+    fun pendingGroupEventCount(): Int = synchronized(lock) {
+        connection.createStatement().use { st ->
+            st.executeQuery("SELECT count(*) FROM group_pending").use { rs -> if (rs.next()) rs.getInt(1) else 0 }
+        }
+    }
+
+    fun deletePendingGroupEvent(row: Long) {
+        synchronized(lock) {
+            connection.prepareStatement("DELETE FROM group_pending WHERE row = ?").use { ps ->
+                ps.setLong(1, row); ps.executeUpdate()
+            }
         }
     }
 
@@ -700,16 +1018,16 @@ class DesktopMessageStore(
                 } finally {
                     connection.autoCommit = true
                 }
-                migrationDone(2)
+                migrationDone(3)
                 return
             }
-            if (version < 2) {
-                migrationDone(2)
+            if (version < 3) {
+                migrationDone(3)
             }
         }
     }
 
-    /** Applies the schema-2 tables (link import) in one transaction and bumps `user_version`. */
+    /** Applies the schema-2/3 tables (link import, groups, profiles, read state) and bumps `user_version`. */
     private fun migrationDone(target: Int) {
         connection.autoCommit = false
         try {
@@ -745,6 +1063,59 @@ class DesktopMessageStore(
                     )
                     """.trimIndent(),
                 )
+                // WP07: group rosters as GroupProtocol states, owner-authenticated group avatars,
+                // peer/own profiles and per-conversation read/draft state. All additive.
+                st.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS group_rosters(
+                        conversation_id TEXT PRIMARY KEY,
+                        owner TEXT NOT NULL,
+                        shared_id TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        revision INTEGER NOT NULL,
+                        members TEXT NOT NULL,
+                        avatar BLOB,
+                        avatar_revision INTEGER NOT NULL DEFAULT -1,
+                        updated_at INTEGER NOT NULL,
+                        UNIQUE(owner, shared_id)
+                    )
+                    """.trimIndent(),
+                )
+                st.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS profiles(
+                        pubkey TEXT PRIMARY KEY,
+                        name TEXT,
+                        avatar BLOB,
+                        name_revision INTEGER NOT NULL DEFAULT -1,
+                        avatar_revision INTEGER NOT NULL DEFAULT -1,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                st.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS conversation_state(
+                        conversation_id TEXT PRIMARY KEY,
+                        read_through INTEGER NOT NULL DEFAULT 0,
+                        draft TEXT NOT NULL DEFAULT '',
+                        updated_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                st.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS group_pending(
+                        row INTEGER PRIMARY KEY AUTOINCREMENT,
+                        owner TEXT NOT NULL,
+                        shared_id TEXT NOT NULL,
+                        sender TEXT NOT NULL,
+                        body TEXT NOT NULL,
+                        received_at INTEGER NOT NULL
+                    )
+                    """.trimIndent(),
+                )
+                st.execute("CREATE INDEX IF NOT EXISTS group_pending_by_group ON group_pending(owner, shared_id, row)")
                 st.execute("PRAGMA user_version = $target")
             }
             connection.commit()
@@ -761,6 +1132,11 @@ class DesktopMessageStore(
         private const val SYNC_CURSOR = "sync.cursor"
         private const val LINK_SETTINGS = "link.settings"
         private const val LINK_SETTINGS_AT = "link.settings.updatedAt"
+        private const val PENDING_PER_GROUP = 100
+        private const val MAX_DRAFT_LENGTH = 16_384
+        private const val MAX_CONVERSATION_ID_LENGTH = 256
+        private const val PENDING_TOTAL = 500
+        private const val PENDING_TTL_MS = 7L * 24 * 60 * 60 * 1000
         private const val CONTACT_COLUMNS =
             "key, nostr_pubkey, name, phone, has_relay, trust_level, public_key, pending_public_key, " +
                 "signing_public_key, relay_hints, qr_verified, deleted_at, original_name, updated_at"
@@ -802,3 +1178,43 @@ data class LinkImportCounts(
     val groups: Int,
     val settingsApplied: Boolean,
 )
+
+/** `group:<owner pubkey>:<protocol uuid>` — the conversation id a group shares with SENT sync. */
+fun groupConversationId(owner: String, sharedId: String): String = "group:$owner:$sharedId"
+
+fun isGroupConversation(id: String): Boolean = id.startsWith("group:")
+
+/** A roster as this desktop stores it: the protocol state plus the owner-authenticated avatar. */
+data class StoredGroup(
+    val conversationId: String,
+    val owner: String,
+    val sharedId: String,
+    val name: String,
+    val revision: Long,
+    val members: List<com.relay.app.groups.GroupProtocol.Member>,
+    val avatar: ByteArray?,
+    val avatarRevision: Long,
+    val updatedAt: Long,
+) {
+    override fun equals(other: Any?): Boolean = this === other || (other is StoredGroup &&
+        conversationId == other.conversationId && owner == other.owner && sharedId == other.sharedId &&
+        name == other.name && revision == other.revision && members == other.members &&
+        avatarRevision == other.avatarRevision && updatedAt == other.updatedAt &&
+        (avatar?.contentEquals(other.avatar ?: ByteArray(0)) ?: (other.avatar == null)))
+
+    override fun hashCode(): Int = conversationId.hashCode() * 31 + revision.hashCode()
+}
+
+/** A display name and/or avatar learned from a peer, or this install's own profile. */
+data class DesktopProfile(
+    val pubkey: String,
+    val name: String?,
+    val avatar: ByteArray?,
+    val nameRevision: Long,
+    val avatarRevision: Long,
+    val updatedAt: Long,
+)
+
+/** A group event held until its roster arrives (`GroupProtocol.Verdict.LATER`). */
+data class PendingGroupEvent(val row: Long, val sender: String, val body: String, val receivedAt: Long)
+
