@@ -62,7 +62,7 @@ object MailboxMembership {
         val bytes = body.toByteArray(Charsets.UTF_8)
         val request = Request.Builder()
             .url(url)
-            .header("Authorization", MailboxAuth.header(NostrIdentity.keys(context), "POST", url, bytes))
+            .header("Authorization", MailboxAuth.header(AndroidNostrSigner { NostrIdentity.keys(context) }, "POST", url, bytes))
             .post(bytes.toRequestBody(JSON))
             .build()
         return http.newCall(request).execute()

@@ -13,8 +13,10 @@ import com.relay.app.messaging.MessageDeletion
 import com.relay.app.messaging.MessageNotifier
 import com.relay.app.messaging.MessagingDb
 import com.relay.app.messaging.Outgoing
+import com.relay.app.transport.mailbox.AndroidNostrSigner
 import com.relay.app.transport.mailbox.MailboxConfig
 import com.relay.app.transport.mailbox.MailboxMedia
+import com.relay.app.transport.nostr.NostrIdentity
 import com.relay.app.util.RelayPreferences
 import java.io.File
 import java.util.concurrent.Semaphore
@@ -57,7 +59,7 @@ object MediaSender {
         val blobSha256 = MediaCrypto.sha256Hex(encrypted.blob)
         val url = if (MailboxConfig.available) {
             try {
-                MailboxMedia.upload(context, encrypted.blob, blobSha256, recipients)
+                MailboxMedia.upload(AndroidNostrSigner { NostrIdentity.keys(context) }, encrypted.blob, blobSha256, recipients)
             } catch (e: Exception) {
                 Log.w(TAG, "upload to the delivery server failed: ${e.message}")
                 error("Upload failed - check your connection and try again")
@@ -143,7 +145,7 @@ object MediaReceiver {
                     MessageNotifier.notifyIncoming(context, contact, type, ref.caption, alertToken)
             }
             // Stored on this phone, so the server may forget it.
-            MailboxMedia.confirm(context, ref.url)
+            MailboxMedia.confirm(AndroidNostrSigner { NostrIdentity.keys(context) }, ref.url)
         } catch (e: Exception) {
             Log.w(TAG, "media receive failed: ${e.message}")
             store(context, repo, contact, payloadId, sentAt, MessageType.TEXT, "[Media couldn't be downloaded or verified]", null)

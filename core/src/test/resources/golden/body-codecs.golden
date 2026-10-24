@@ -1,0 +1,328 @@
+payload.encode.0	"{"v":1,"id":"id-1","body":"hello","ts":1700000000000}"
+payload.encode.1	"{"v":1,"id":"123e4567-e89b-42d3-a456-426614174000","body":"","ts":0}"
+payload.encode.2	"{"v":1,"id":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx","body":"unicode \u00e9\u4e2d\ud83d\udc4d \\"quoted\\" \\\\ back\\nline","ts":9223372036854775807}"
+payload.encode.3	"{"v":1,"id":"id","body":"b","ts":5}"
+payload.decode.0	RelayPayload(id=a, ts=5, body=b, v=1)
+payload.decode.1	null
+payload.decode.2	null
+payload.decode.3	null
+payload.decode.4	null
+payload.decode.5	null
+payload.decode.6	null
+payload.decode.7	null
+payload.decode.8	null
+payload.decode.9	RelayPayload(id=a, ts=5, body=b, v=1)
+media.format.0	"TYPE:MEDIA|URL:https://m.example/v1/media/abababababababababababababababababababababababababababababababab|SHA:abababababababababababababababababababababababababababababababab|KEY:AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=|MIME:image/jpeg|SIZE:1234"
+media.roundtrip.0	MediaRef(url=https://m.example/v1/media/abababababababababababababababababababababababababababababababab, sha256Hex=abababababababababababababababababababababababababababababababab, keyBase64=AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=, mime=image/jpeg, size=1234, caption=)
+media.normalizeCaption.0	""
+media.format.1	"TYPE:MEDIA|URL:https://m.example/x|SHA:abababababababababababababababababababababababababababababababab|KEY:AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=|MIME:video/mp4|SIZE:26214400|CAP:a caption  with pipe"
+media.roundtrip.1	MediaRef(url=https://m.example/x, sha256Hex=abababababababababababababababababababababababababababababababab, keyBase64=AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=, mime=video/mp4, size=26214400, caption=a caption  with pipe)
+media.normalizeCaption.1	"a caption  with pipe"
+media.format.2	"TYPE:MEDIA|URL:https://m.example/x|SHA:abababababababababababababababababababababababababababababababab|KEY:AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=|MIME:image/png|SIZE:1|CAP64:VFlQRTpSRVBMWXx7InJlZiI6IjEyM2U0NTY3LWU4OWItNDJkMy1hNDU2LTQyNjYxNDE3NDAwMCIsInF1b3RlIjoicSIsInYiOjEsIm5hbWUiOiJBbm4iLCJ0ZXh0IjoicmVwbHkgY2FwdGlvbiJ9"
+media.roundtrip.2	MediaRef(url=https://m.example/x, sha256Hex=abababababababababababababababababababababababababababababababab, keyBase64=AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=, mime=image/png, size=1, caption=TYPE:REPLY|{"ref":"123e4567-e89b-42d3-a456-426614174000","quote":"q","v":1,"name":"Ann","text":"reply caption"})
+media.normalizeCaption.2	"TYPE:REPLY|{"ref":"123e4567-e89b-42d3-a456-426614174000","quote":"q","v":1,"name":"Ann","text":"reply caption"}"
+media.format.3	"TYPE:MEDIA|URL:http://insecure.example/x|SHA:abababababababababababababababababababababababababababababababab|KEY:AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=|MIME:image/gif|SIZE:1"
+media.roundtrip.3	null
+media.normalizeCaption.3	""
+media.format.4	"TYPE:MEDIA|URL:https://m.example/x|SHA:abababababababababababababababababababababababababababababababab|KEY:AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=|MIME:image/webp|SIZE:99|CAP:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+media.roundtrip.4	MediaRef(url=https://m.example/x, sha256Hex=abababababababababababababababababababababababababababababababab, keyBase64=AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=, mime=image/webp, size=99, caption=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc)
+media.normalizeCaption.4	"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+media.parse.0	MediaRef(url=https://h/x, sha256Hex=abababababababababababababababababababababababababababababababab, keyBase64=AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=, mime=image/jpeg, size=10, caption=)
+media.isMedia.0	true
+media.parse.1	MediaRef(url=https://h/x, sha256Hex=abababababababababababababababababababababababababababababababab, keyBase64=AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=, mime=image/png, size=10, caption=hi)
+media.isMedia.1	true
+media.parse.2	null
+media.isMedia.2	true
+media.parse.3	null
+media.isMedia.3	true
+media.parse.4	null
+media.isMedia.4	true
+media.parse.5	null
+media.isMedia.5	true
+media.parse.6	null
+media.isMedia.6	true
+media.parse.7	null
+media.isMedia.7	true
+media.parse.8	null
+media.isMedia.8	true
+media.parse.9	null
+media.isMedia.9	true
+media.parse.10	MediaRef(url=https://h/x, sha256Hex=abababababababababababababababababababababababababababababababab, keyBase64=AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=, mime=image/png, size=5, caption=)
+media.isMedia.10	true
+media.parse.11	null
+media.isMedia.11	false
+media.url.0	true
+media.url.1	false
+media.url.2	false
+media.url.3	false
+media.url.4	false
+media.url.5	false
+media.url.6	false
+profilename.format.0	"TYPE:PROFILE_PHOTO|KIND:NAME|REV:0|NAME:QQ=="
+profilename.roundtrip.0	Update(revision=0, name=A)
+profilename.format.1	"TYPE:PROFILE_PHOTO|KIND:NAME|REV:42|NAME:Wm/DqyDkuK0="
+profilename.roundtrip.1	Update(revision=42, name=Zo\u00eb \u4e2d)
+profilename.format.2	throws:IllegalArgumentException
+profilename.roundtrip.2	throws:IllegalArgumentException
+profilename.format.3	throws:IllegalArgumentException
+profilename.roundtrip.3	throws:IllegalArgumentException
+profilename.format.4	throws:IllegalArgumentException
+profilename.roundtrip.4	throws:IllegalArgumentException
+profilename.format.5	throws:IllegalArgumentException
+profilename.roundtrip.5	throws:IllegalArgumentException
+profilename.parse.0	Update(revision=3, name=Ann)
+profilename.parse.1	null
+profilename.parse.2	null
+profilename.parse.3	null
+profilename.parse.4	null
+profilephoto.format.0	"TYPE:PROFILE_PHOTO|REV:0|JPEG:/9j/AQIDBAX6+w=="
+profilephoto.roundtrip.0	PPUpdate(0,bytes:ffd8ff0102030405fafb)
+profilephoto.format.1	"TYPE:PROFILE_PHOTO|REV:7|JPEG:"
+profilephoto.roundtrip.1	PPUpdate(7,null)
+profilephoto.format.2	throws:IllegalArgumentException
+profilephoto.roundtrip.2	throws:IllegalArgumentException
+profilephoto.format.3	throws:IllegalArgumentException
+profilephoto.roundtrip.3	throws:IllegalArgumentException
+profilephoto.format.4	throws:IllegalArgumentException
+profilephoto.roundtrip.4	throws:IllegalArgumentException
+profilephoto.parse.0	null
+profilephoto.isControl.0	true
+profilephoto.parse.1	PPUpdate(1,null)
+profilephoto.isControl.1	true
+profilephoto.parse.2	null
+profilephoto.isControl.2	true
+profilephoto.parse.3	null
+profilephoto.isControl.3	true
+reply.format.0	"TYPE:REPLY|{"ref":"123e4567-e89b-42d3-a456-426614174000","quote":"quoted","v":1,"name":"Ann","text":"text"}"
+reply.roundtrip.0	Reply(name=Ann, quote=quoted, reference=123e4567-e89b-42d3-a456-426614174000, text=text)
+reply.preview.0	"text"
+reply.format.1	"TYPE:REPLY|{"ref":"r","quote":"","v":1,"name":"B","text":"\u00e9\ud83d\udc4d \\"q\\" \\\\"}"
+reply.roundtrip.1	Reply(name=B, quote=, reference=r, text=\u00e9\ud83d\udc4d "q" \\)
+reply.preview.1	"\u00e9\ud83d\udc4d "q" \\"
+reply.format.2	throws:IllegalArgumentException
+reply.roundtrip.2	throws:IllegalArgumentException
+reply.preview.2	throws:IllegalArgumentException
+reply.format.3	throws:IllegalArgumentException
+reply.roundtrip.3	throws:IllegalArgumentException
+reply.preview.3	throws:IllegalArgumentException
+reply.format.4	throws:IllegalArgumentException
+reply.roundtrip.4	throws:IllegalArgumentException
+reply.preview.4	throws:IllegalArgumentException
+reply.parse.v2	null
+reply.parse.garbage	null
+reply.preview.plain	"plain"
+reply.withText.null	"x"
+reply.withText.draft	"TYPE:REPLY|{"ref":"r","quote":"q","v":1,"name":"Ann","text":"new text"}"
+deletion.format.ok	"TYPE:PROFILE_PHOTO|KIND:DELETE|{"v":1,"id":"123e4567-e89b-42d3-a456-426614174000"}"
+deletion.format.bad	throws:IllegalArgumentException
+deletion.parse.ok	"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d"
+deletion.parse.bad	null
+deletion.parse.v2	null
+purge.format.ok	"TYPE:PROFILE_PHOTO|KIND:PURGE|{"before":1700000000000,"v":1}"
+purge.format.zero	throws:IllegalArgumentException
+purge.parse.ok	99
+purge.parse.neg	null
+readreceipt.format.1	"TYPE:READ_RECEIPT|MSG_ID:1700000000000|IDS:123e4567-e89b-42d3-a456-426614174000"
+readreceipt.format.2	"TYPE:READ_RECEIPT|MSG_ID:5|IDS:123e4567-e89b-42d3-a456-426614174000,9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d"
+readreceipt.format.dup	throws:IllegalArgumentException
+readreceipt.format.empty	throws:IllegalArgumentException
+readreceipt.format.ts0	throws:IllegalArgumentException
+readreceipt.parseIds.ok	["123e4567-e89b-42d3-a456-426614174000","9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d"]
+readreceipt.parseIds.bad	null
+readreceipt.parseIds.toomany	null
+event.format.0	"TYPE:PROFILE_PHOTO|KIND:CHAT_EVENT|{"emoji":"","kind":"screenshot","id":"123e4567-e89b-42d3-a456-426614174000","targets":["9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d"],"target":"","revision":0}"
+event.roundtrip.0	Event(kind=screenshot, id=123e4567-e89b-42d3-a456-426614174000, target=, emoji=, revision=0, targets=[9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d])
+event.format.1	"TYPE:PROFILE_PHOTO|KIND:CHAT_EVENT|{"emoji":"","kind":"media_saved","id":"123e4567-e89b-42d3-a456-426614174000","targets":[],"target":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","revision":0}"
+event.roundtrip.1	Event(kind=media_saved, id=123e4567-e89b-42d3-a456-426614174000, target=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, emoji=, revision=0, targets=[])
+event.format.2	"TYPE:PROFILE_PHOTO|KIND:CHAT_EVENT|{"emoji":"\u2764\ufe0f","kind":"reaction","id":"123e4567-e89b-42d3-a456-426614174000","targets":[],"target":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","revision":3}"
+event.roundtrip.2	Event(kind=reaction, id=123e4567-e89b-42d3-a456-426614174000, target=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, emoji=\u2764\ufe0f, revision=3, targets=[])
+event.format.3	"TYPE:PROFILE_PHOTO|KIND:CHAT_EVENT|{"emoji":"","kind":"reaction","id":"123e4567-e89b-42d3-a456-426614174000","targets":[],"target":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","revision":1}"
+event.roundtrip.3	Event(kind=reaction, id=123e4567-e89b-42d3-a456-426614174000, target=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, emoji=, revision=1, targets=[])
+event.format.4	throws:IllegalArgumentException
+event.roundtrip.4	throws:IllegalArgumentException
+event.format.5	throws:IllegalArgumentException
+event.roundtrip.5	throws:IllegalArgumentException
+event.emoji	["\ud83d\udc4d","\u2764\ufe0f","\ud83d\ude02","\ud83d\ude2e","\ud83d\ude22","\ud83d\ude4f"]
+typing.format.0	"TYPE:PROFILE_PHOTO|KIND:TYPING|{"owner":"","v":1,"author":"","typing":true,"time":1700000000000,"group":""}"
+typing.roundtrip.0	Signal(typing=true, time=1700000000000, group=, owner=, author=)
+typing.format.1	"TYPE:PROFILE_PHOTO|KIND:TYPING|{"owner":"","v":1,"author":"","typing":false,"time":1699999999000,"group":""}"
+typing.roundtrip.1	Signal(typing=false, time=1699999999000, group=, owner=, author=)
+typing.format.2	"TYPE:PROFILE_PHOTO|KIND:TYPING|{"owner":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":1,"author":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","typing":true,"time":1700000000000,"group":"123e4567-e89b-42d3-a456-426614174000"}"
+typing.roundtrip.2	Signal(typing=true, time=1700000000000, group=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, author=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef)
+typing.format.3	"TYPE:PROFILE_PHOTO|KIND:TYPING|{"owner":"y","v":1,"author":"z","typing":true,"time":1700000000000,"group":"x"}"
+typing.roundtrip.3	null
+typing.parse.stale	null
+typing.parse.future	null
+typing.parse.junk	null
+groupavatar.format.jpeg	"TYPE:PROFILE_PHOTO|KIND:GROUP_AVATAR|{"jpeg":"/9j/AQIDBAX6+w==","group":"123e4567-e89b-42d3-a456-426614174000","revision":4}"
+groupavatar.format.null	"TYPE:PROFILE_PHOTO|KIND:GROUP_AVATAR|{"jpeg":"","group":"123e4567-e89b-42d3-a456-426614174000","revision":0}"
+groupavatar.format.badgroup	throws:IllegalArgumentException
+groupavatar.roundtrip.jpeg	GAUpdate(123e4567-e89b-42d3-a456-426614174000,4,bytes:ffd8ff0102030405fafb)
+groupavatar.roundtrip.null	GAUpdate(9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d,1,null)
+groupavatar.parse.notjpeg	null
+group.sync.format	"TYPE:PROFILE_PHOTO|KIND:GROUP|{"owner":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":2,"kind":"sync","members":[{"name":"Owner","relays":["wss://r1.example","wss://r2.example"],"inner":"AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"Friend \u00e9","key":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}],"name":"Team","id":"123e4567-e89b-42d3-a456-426614174000","revision":3}"
+group.sync.roundtrip	Sync(state=State(id=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, name=Team, revision=3, members=[Member(key=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, name=Owner, inner=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, relays=[wss://r1.example, wss://r2.example]), Member(key=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, name=Friend \u00e9, inner=null, relays=[])]))
+group.sync.fitted	"TYPE:PROFILE_PHOTO|KIND:GROUP|{"owner":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":2,"kind":"sync","members":[{"name":"Owner","relays":["wss://r1.example","wss://r2.example"],"inner":"AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=","key":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},{"name":"Friend \u00e9","key":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}],"name":"Team","id":"123e4567-e89b-42d3-a456-426614174000","revision":3}"
+group.ref	Ref(id=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, revision=3)
+group.memberId	-5124095576030431
+group.relayHints	["wss://a.example","wss://b.example"]
+group.event.post.format	"TYPE:PROFILE_PHOTO|KIND:GROUP|{"owner":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":2,"kind":"post","author":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","id":"123e4567-e89b-42d3-a456-426614174000","text":"hi there","time":1700000000000,"event":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","revision":3}"
+group.event.post.roundtrip	Event(kind=post, group=Ref(id=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, revision=3), event=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, author=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, text=hi there, time=1700000000000)
+group.event.post.check.ok	ACCEPT
+group.event.post.check.spoof	REJECT
+group.event.post.check.null	LATER
+group.event.delete.format	"TYPE:PROFILE_PHOTO|KIND:GROUP|{"owner":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":2,"kind":"delete","author":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","id":"123e4567-e89b-42d3-a456-426614174000","text":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","time":1700000000000,"event":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","revision":3}"
+group.event.delete.roundtrip	Event(kind=delete, group=Ref(id=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, revision=3), event=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, author=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, text=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, time=1700000000000)
+group.event.delete.check.ok	ACCEPT
+group.event.delete.check.spoof	REJECT
+group.event.delete.check.null	LATER
+group.event.purge.format	"TYPE:PROFILE_PHOTO|KIND:GROUP|{"owner":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":2,"kind":"purge","author":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","id":"123e4567-e89b-42d3-a456-426614174000","text":"1700000000000","time":1700000000000,"event":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","revision":3}"
+group.event.purge.roundtrip	Event(kind=purge, group=Ref(id=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, revision=3), event=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, author=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, text=1700000000000, time=1700000000000)
+group.event.purge.check.ok	ACCEPT
+group.event.purge.check.spoof	REJECT
+group.event.purge.check.null	LATER
+group.event.profile.format	"TYPE:PROFILE_PHOTO|KIND:GROUP|{"owner":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":2,"kind":"profile","author":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","id":"123e4567-e89b-42d3-a456-426614174000","text":"TYPE:PROFILE_PHOTO|KIND:NAME|REV:1|NAME:Tm0=","time":1700000000000,"event":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","revision":3}"
+group.event.profile.roundtrip	Event(kind=profile, group=Ref(id=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, revision=3), event=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, author=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, text=TYPE:PROFILE_PHOTO|KIND:NAME|REV:1|NAME:Tm0=, time=1700000000000)
+group.event.profile.check.ok	ACCEPT
+group.event.profile.check.spoof	REJECT
+group.event.profile.check.null	LATER
+group.event.read.format	"TYPE:PROFILE_PHOTO|KIND:GROUP|{"owner":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","v":2,"kind":"read","author":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","id":"123e4567-e89b-42d3-a456-426614174000","text":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","time":1700000000000,"event":"9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d","revision":3}"
+group.event.read.roundtrip	Event(kind=read, group=Ref(id=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, revision=3), event=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, author=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, text=9b2c1a7e-0f3d-4b6a-8c5d-1e2f3a4b5c6d, time=1700000000000)
+group.event.read.check.ok	ACCEPT
+group.event.read.check.spoof	REJECT
+group.event.read.check.null	LATER
+group.acceptSync.ok	true
+group.acceptSync.old	false
+group.acceptSync.wrongsender	false
+group.parse.v1sync	Sync(state=State(id=123e4567-e89b-42d3-a456-426614174000, owner=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, name=Team, revision=3, members=[Member(key=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, name=Owner, inner=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, relays=[wss://r1.example, wss://r2.example]), Member(key=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, name=Friend \u00e9, inner=null, relays=[])]))
+group.parse.junk	null
+sms.location.0	"TYPE:LOCATION|LAT:46.056946|LNG:14.505751"
+sms.location.1	"TYPE:LOCATION|LAT:-33.868800|LNG:151.209300|EXPIRY:6hr|LABEL:Home sweet home"
+sms.location.2	"TYPE:LOCATION|LAT:0.000000|LNG:-0.000000|LABEL:LLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+sms.location.parse	ParsedLocation(lat=-33.8688, lng=151.2093)
+sms.location.parseExpiry	FORTY_EIGHT_HOURS
+sms.location.parseLabel	"\u00e9 Caf\u00e9"
+sms.readReceipt	"TYPE:READ_RECEIPT|MSG_ID:1700000000000"
+sms.readReceipt.parse	123
+sms.pubkey.0	"TYPE:PUBKEY|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE="
+sms.pubkey.1	"TYPE:PUBKEY|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=|SIG://79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=|ROT://79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=|NAME:N\u00e4mex"
+sms.pubkey.parse.key	"AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE="
+sms.pubkey.parse.sig	"//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA="
+sms.pubkey.parse.rot	"//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA="
+sms.pubkey.parse.name	"Name"
+sms.enc.0	"TYPE:ENC|CT:QUJD"
+sms.enc.1	"TYPE:ENC|CT:QUJD|SIG://79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA="
+sms.enc.parse.ct	"QUJD+/=="
+sms.enc.parse.sig	"//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA="
+sms.enc.parse.none	null
+classify.0	Text
+classify.1	PublicKey
+classify.2	LocationRequest
+classify.3	LocationDeclined
+classify.4	Pin(lat=1.5, lng=2.5, expiry=TWENTY_FOUR_HOURS, label=Lab)
+classify.5	ReadReceipt(upToTimestamp=77, ids=null)
+classify.6	ReadReceipt(upToTimestamp=88, ids=[123e4567-e89b-42d3-a456-426614174000])
+classify.7	Ignore
+classify.8	Media(ref=MediaRef(url=https://m.example/v1/media/abababababababababababababababababababababababababababababababab, sha256Hex=abababababababababababababababababababababababababababababababab, keyBase64=AQgPFh0kKzI5QEdOVVxjanF4f4aNlJuiqbC3vsXM09o=, mime=image/jpeg, size=1234, caption=))
+classify.9	Ignore
+classify.10	Text
+pair.req.0	"TYPE:PAIR_REQUEST|NONCE:00112233445566778899aabbccddeeff|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=|SIG://79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=|NAME:Ann"
+pair.req.1	"TYPE:PAIR_REQUEST|NONCE:00112233445566778899aabbccddeeff|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=|NAME:Name"
+pair.req.2	"TYPE:PAIR_REQUEST|NONCE:00112233445566778899aabbccddeeff|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE="
+pair.confirm	"TYPE:PAIR_CONFIRM|NONCE:00112233445566778899aabbccddeeff"
+pair.parse.req	Request(nonce=00112233445566778899aabbccddeeff, name=Ann, publicKeyBase64=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, signingPublicKeyBase64=//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=)
+pair.parse.confirm	Confirm(nonce=00112233445566778899aabbccddeeff)
+pair.parse.badnonce	null
+pair.parse.badkey	null
+pair.valid	[true,false,false]
+pair.pending.toJson	"{"sig":null,"peer":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","created":true,"contact":12,"name":"Ann","relays":["wss://r.example"],"deadline":1700000000000,"nonce":"00112233445566778899aabbccddeeff","key":"AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE="}"
+pair.pending.roundtrip	PendingPairing(peerPubkeyHex=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, nonce=00112233445566778899aabbccddeeff, name=Ann, publicKeyBase64=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, signingPublicKeyBase64=null, relayHints=[wss://r.example], createdContact=true, contactId=12, deadlineMs=1700000000000)
+pair.pending.roundtrip.sig	PendingPairing(peerPubkeyHex=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, nonce=00112233445566778899aabbccddeeff, name=Ann, publicKeyBase64=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, signingPublicKeyBase64=//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=, relayHints=[wss://r.example], createdContact=true, contactId=12, deadlineMs=1700000000000)
+pair.pending.bad	null
+qr.encode.0	"RELAYQR:3|NAME:Ann|NPUB:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE="
+qr.encode.1	"RELAYQR:3|NAME:An n|NPUB:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=|SIGKEY://79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=|RELAYS:wss://r1.example,ws://abc.onion"
+qr.encode.2	"RELAYQR:4|NAME:Ann|NPUB:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=|PAIR:00112233445566778899aabbccddeeff"
+qr.encode.3	"RELAYQR:5|NAME:Ann|NPUB:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa|KEY:AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=|SIGKEY://79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=|PAIR:00112233445566778899aabbccddeeff|EXPIRES:1700000000000"
+qr.encode.bad	throws:IllegalArgumentException
+qr.decode.0	ScannedContact(phone=null, name=Ann, publicKeyBase64=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, signingPublicKeyBase64=null, nostrPubkeyHex=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, relayHints=[], pairNonce=null, expiresAtMs=null)
+qr.decode.1	ScannedContact(phone=null, name=Ann, publicKeyBase64=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, signingPublicKeyBase64=//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=, nostrPubkeyHex=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, relayHints=[wss://r1.example], pairNonce=00112233445566778899aabbccddeeff, expiresAtMs=null)
+qr.decode.2	ScannedContact(phone=null, name=Ann, publicKeyBase64=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, signingPublicKeyBase64=//79/Pv6+fj39vX08/Lx8O/u7ezr6uno5+bl5OPi4eA=, nostrPubkeyHex=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, relayHints=[wss://r1.example], pairNonce=00112233445566778899aabbccddeeff, expiresAtMs=1700000000000)
+qr.decode.3	ScannedContact(phone=+38640123456, name=Old, publicKeyBase64=AAMGCQwPEhUYGx4hJCcqLTAzNjk8P0JFSEtOUVRXWl1gY2ZpbG9ydXh7foE=, signingPublicKeyBase64=null, nostrPubkeyHex=null, relayHints=[], pairNonce=null, expiresAtMs=null)
+qr.decode.4	null
+qr.decode.5	null
+qr.decode.6	null
+qr.decode.7	null
+qr.decode.8	null
+qr.usable	[true,false]
+qr.hints	["wss://bc","ws://x.onion"]
+inboxrelays.tags	[["relay","wss://a.example"],["relay","ws://x.onion"]]
+inboxrelays.parse	["wss://a.example"]
+inboxrelays.resolve	["wss://h.example","wss://o.example"]
+mailbox.frame.0	Ready(expiresAt=1700000000)
+mailbox.frame.1	Batch(messages=[MailboxMessage(seq=1, envelope=e1), MailboxMessage(seq=4, envelope=e4)], more=true, cursor=4)
+mailbox.frame.2	Message(message=MailboxMessage(seq=9, envelope=e9))
+mailbox.frame.3	Other
+mailbox.frame.4	Acked(through=12)
+mailbox.frame.5	Error(code=rate, retryable=true, ref=sync)
+mailbox.frame.6	Error(code=x, retryable=false, ref=null)
+mailbox.frame.7	Signal(envelope=sig)
+mailbox.frame.8	Other
+mailbox.frame.9	Other
+mailbox.frame.10	Other
+mailbox.frame.11	Other
+mailbox.sync	"{"ref":"sync","after":17,"type":"sync"}"
+mailbox.ack	"{"through":18,"ref":"ack","type":"ack"}"
+mailbox.signal	"{"envelope":"env","ref":"ref-1","to":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","type":"signal"}"
+mailbox.send	"{"v":1,"deliveries":[{"envelope":"{\\"k\\":\\"\u00e9\\"}","to":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","id":"id-1"}]}"
+mailbox.outcome.0	Stored
+mailbox.outcome.1	Stored
+mailbox.outcome.2	NotOnMailbox
+mailbox.outcome.3	Stored
+mailbox.outcome.4	Rejected(reason=Message too large for the mailbox)
+mailbox.outcome.5	Retry(reason=Mailbox busy (busy))
+mailbox.outcome.6	Rejected(reason=Mailbox refused the message (nope))
+mailbox.outcome.7	Retry(reason=Malformed mailbox reply)
+mailbox.outcome.8	Retry(reason=Malformed mailbox reply)
+mailbox.outcome.9	Retry(reason=Unexpected mailbox status)
+mailbox.outcome.10	NotOnMailbox
+mailbox.outcome.11	NotOnMailbox
+mailbox.outcome.12	Rejected(reason=Message too large for the mailbox)
+mailbox.outcome.13	Retry(reason=Mailbox refused the signature (stale); check the phone's clock)
+mailbox.outcome.14	Retry(reason=Mailbox refused the signature (auth); check the phone's clock)
+mailbox.outcome.15	Retry(reason=Mailbox unavailable (500))
+mailbox.ids	[true,false,true,false]
+container.size.0	26
+container.sha.0	"d8e7da81044c7c3fd0940b9fa9c7ac90ffb7345f48ab290d45f0ca526645741a"
+container.unwrap.0	"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+container.size.1	27
+container.sha.1	"ce94d277832e46e8c5eca79c8270a46c440acdd6ff31874a661a6565d6fa4d6c"
+container.unwrap.1	"ca358758f6d27e6cf45272937977a748fd88391db679ceda7dc7bf1f005ee879"
+container.size.2	28
+container.sha.2	"fcf64699ba7f026a0faef04424fbe514bc536f824db5b288a784aa243e8c0798"
+container.unwrap.2	"140d811b81973993df99b8b1742b383ab83f6f52bf7af850812e7bba02ff11da"
+container.size.255	281
+container.sha.255	"773ec0138d1ec587cda96ef674dba87a9b0ce3c77f1f7d79fb3cfb1a92bd3035"
+container.unwrap.255	"c9241bc45a34a7e4028b10346f6edc6336c11c4e2484dff4e4cff74a003b6da1"
+container.size.65532	65558
+container.sha.65532	"c0b2e30a810796017c005e060276ec4c9952a933592f30fb97463716510be766"
+container.unwrap.65532	"b386917489b2405a6eec8ef5c42a9ac8cb26c0cca94560ec6bb37be54312a681"
+container.size.65533	65559
+container.sha.65533	"ea41abcf6425910c6a8c299bde4d16ca97752da1e0edfda033f3e014944339c5"
+container.unwrap.65533	"828df83ed2882ff83ad41f26dcefb673abc82b24505c18b8896d4060e92eaac6"
+container.size.65534	65564
+container.sha.65534	"8448f86de83bf71e41b22a8f3091681e2a5cf620be5e7a2e63e82d422b619bf1"
+container.unwrap.65534	"0534fe61c34507d747652a9ef32ec9c3d8ae1f8a07fffaefc1d105200323c363"
+container.size.200000	200038
+container.sha.200000	"0ba1660eb1d1d760909cab4be1aee8da309ab04afa32b2306ad9a7fc1ddd3ea0"
+container.unwrap.200000	"8f9d1bf454d63cd9fc6edbe8f3f2331cc1f9b195c7ec90533717bf243ae966c7"
+container.wrap.small	bytes:ffd8ffe000104a46494600010100000100010000fffe0005010203ffd9
+container.unwrap.bad	null
+crypto.blob	bytes:6465666768696a6b6c6d6e6f2f74b2021c8776f35b063689fa15069c2bac726ff318e798d755cf5cad8f2deb6b7f2ea0e0d5
+crypto.decrypt.ok	"golden media plaintext"
+crypto.decrypt.wrongkey	null
+crypto.decrypt.short	null
+crypto.decrypt.badkey	null
+crypto.sha.empty	"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+crypto.roundtrip	"abc"
+crypto.blob.size	128
+b64.vectors	["","AA==","AAE=","AAEC","AAUKDxQZHiMoLTI3PEFGS1BVWl9kaW5zeH2Ch4yRlpugpaqvtLm+w8jN0tfc4ebr","AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+"]

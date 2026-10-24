@@ -103,7 +103,7 @@ class IncomingMessageHandler(context: Context) {
         // Group members who aren't your contacts send group packets straight to you: the creator's roster
         // vouches for them, so these are handled without ever creating a contact.
         if (contact == null) {
-            val opened = if (SmsMessageParser.isEncryptedMessage(payload.body)) InnerEnvelope.open(appContext, payload.body) else payload.body
+            val opened = if (SmsMessageParser.isEncryptedMessage(payload.body)) AndroidInnerEnvelope.open(appContext, payload.body) else payload.body
             if (opened != null && com.relay.app.groups.GroupProtocol.isControl(opened)) {
                 com.relay.app.groups.SharedGroups.handle(appContext, envelope.senderPubkeyHex, null, opened)
                 return
@@ -128,7 +128,7 @@ class IncomingMessageHandler(context: Context) {
         }
         if (contact.trustLevel == ContactTrustLevel.BLOCKED) return
 
-        val body = if (SmsMessageParser.isEncryptedMessage(payload.body)) InnerEnvelope.open(appContext, payload.body) else payload.body
+        val body = if (SmsMessageParser.isEncryptedMessage(payload.body)) AndroidInnerEnvelope.open(appContext, payload.body) else payload.body
         if (body == null) {
             storeReceived(contact, "[Unable to decrypt message]", MessageType.TEXT, payload.id, now, now)
             notifyUpdated(contact.id)

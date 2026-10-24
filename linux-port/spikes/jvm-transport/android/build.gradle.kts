@@ -15,7 +15,7 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 val copyProductionCodec by tasks.registering(Sync::class) {
-    from(rootProject.projectDir.resolve("../../../app/src/main/java")) { include("com/relay/app/transport/RelayPayload.kt") }
+    from(rootProject.projectDir.resolve("../../../core/src/main/kotlin")) { include("com/relay/app/transport/RelayPayload.kt") }
     into(layout.buildDirectory.dir("generated/production-codec"))
 }
 tasks.named("preBuild") { dependsOn(copyProductionCodec) }

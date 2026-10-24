@@ -2,7 +2,7 @@
 id: WP03
 title: "Extract the shared `:core` JVM module"
 phase: L1
-lane: planned
+lane: doing
 depends_on: [WP01]
 specs: ["04 §1–2", "09 R1"]
 owned_files:

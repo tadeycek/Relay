@@ -1,0 +1,32 @@
+// Shared protocol code for the Android app and the Linux/macOS desktop client (WP03).
+// Pure Kotlin/JVM: no Android artifact and no android.* import may ever appear here.
+plugins {
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    kotlinOptions.jvmTarget = '17'
+}
+
+dependencies {
+    // Flow types appear in the public Transport interface.
+    api 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0'
+
+    // org.json: the Android platform provides it at runtime, so :app must not package a second copy;
+    // the desktop client supplies org.json:json itself. Tests use the same artifact :app's JVM tests already use.
+    // Mailbox media upload/download (same version :app already uses).
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    compileOnly 'org.json:json:20240303'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.json:json:20240303'
+    testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.0'
+    // Tests build real HPKE payloads to prove size limits; main code stays free of Tink (see KeyMaterial).
+    testImplementation 'com.google.crypto.tink:tink:1.24.0'
+}

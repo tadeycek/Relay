@@ -274,7 +274,7 @@ private fun LocationCard(message: Message, shape: Shape, onReply: (() -> Unit)?)
             )
         }
         if (!message.pinLabel.isNullOrBlank()) {
-            Text(text = message.pinLabel, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
+            Text(text = message.pinLabel!!, style = MaterialTheme.typography.bodyMedium, color = TextPrimary)
         }
         Text(
             text = "${"%.5f".format(Locale.US, lat)}, ${"%.5f".format(Locale.US, lng)}",

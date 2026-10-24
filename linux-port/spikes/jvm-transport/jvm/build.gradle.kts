@@ -5,7 +5,7 @@ sourceSets.main {
     java.srcDirs("../common")
 }
 kotlin.sourceSets.main {
-    kotlin.srcDirs("../common", rootProject.projectDir.resolve("../../../app/src/main/java"))
+    kotlin.srcDirs("../common", rootProject.projectDir.resolve("../../../core/src/main/kotlin"))
     kotlin.include("relay/spike/**", "Interop.kt", "com/relay/app/transport/RelayPayload.kt")
 }
 dependencies {

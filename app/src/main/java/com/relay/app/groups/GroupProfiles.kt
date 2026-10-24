@@ -61,7 +61,7 @@ object GroupProfiles {
                     for (member in state.members.filter { it.key != own }) {
                         val friend = repo.findByNostrPubkeySync(member.key) ?: continue
                         val revision = context.getSharedPreferences("profile_photo_state", Context.MODE_PRIVATE).getLong("name_received_${friend.id}", -1)
-                        if (revision >= 0 && friend.originalName != null) changed = save(db, id, member.key, ProfileNameBody.Update(revision, friend.originalName)) || changed
+                        if (revision >= 0 && friend.originalName != null) changed = save(db, id, member.key, ProfileNameBody.Update(revision, friend.originalName!!)) || changed
                     }
                 }
                 GroupAvatars.sync(context, id, state)

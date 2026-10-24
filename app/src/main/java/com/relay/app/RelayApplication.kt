@@ -12,6 +12,11 @@ import com.relay.app.sms.KeyRotationReceiver
 import com.relay.app.sms.PinExpiryReceiver
 
 class RelayApplication : Application(), coil.ImageLoaderFactory {
+    init {
+        // The shared :core module has no BuildConfig; hand it the build-time server URL before any component runs.
+        com.relay.app.transport.mailbox.MailboxConfig.install(BuildConfig.MAILBOX_URL)
+    }
+
     override fun newImageLoader(): coil.ImageLoader = coil.ImageLoader.Builder(this).components {
         if (android.os.Build.VERSION.SDK_INT >= 28) add(coil.decode.ImageDecoderDecoder.Factory())
         else add(coil.decode.GifDecoder.Factory())

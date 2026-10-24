@@ -10,7 +10,7 @@ import com.relay.app.data.repository.ContactRepository
 import com.relay.app.data.repository.MessageRepository
 import com.relay.app.groups.GroupDispatch
 import com.relay.app.groups.SharedGroups
-import com.relay.app.messaging.InnerEnvelope
+import com.relay.app.messaging.AndroidInnerEnvelope
 import com.relay.app.messaging.MessagingDb
 import com.relay.app.transport.Transports
 import com.relay.app.ui.screens.chat.ChatViewModel
@@ -86,7 +86,7 @@ class DeliveryRegressionTest {
                 GroupDispatch.dispatch(context, db, payload) { key, body ->
                     cryptoStarted.countDown()
                     check(releaseCrypto.await(10, TimeUnit.SECONDS))
-                    InnerEnvelope.seal(key, body)
+                    AndroidInnerEnvelope.seal(key, body)
                 }
             }
             assertTrue(cryptoStarted.await(5, TimeUnit.SECONDS))
@@ -135,7 +135,7 @@ class DeliveryRegressionTest {
 
     @Test fun anInvalidKnownKeyCannotSilentlyFallBackToTheUnsealedBody() {
         try {
-            InnerEnvelope.seal("invalid-key", "QA private body")
+            AndroidInnerEnvelope.seal("invalid-key", "QA private body")
             fail("An invalid known key must abort instead of returning the body")
         } catch (expected: IllegalStateException) {
             assertTrue(expected.message.orEmpty().contains("encrypt"))

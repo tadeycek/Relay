@@ -7,7 +7,7 @@ the log together.
 |---|---|---|---|---|
 | [WP01](wps/WP01-spike-jvm-transport.md) | L0 | Spike: JVM transport and crypto interop with a real phone | — | doing |
 | [WP02](wps/WP02-spike-webrtc-sfu-turn.md) | L0 | Spike: WebRTC Android↔Linux audio, Cloudflare TURN and SFU, signal sizes | — | doing |
-| [WP03](wps/WP03-core-module-extraction.md) | L1 | Extract the shared `:core` JVM module | WP01 | planned |
+| [WP03](wps/WP03-core-module-extraction.md) | L1 | Extract the shared `:core` JVM module | WP01 | doing |
 | [WP04](wps/WP04-server-device-cursors.md) | L1 | Server: per-device cursors, dormancy, per-device media confirmation | — | planned |
 | [WP05](wps/WP05-phone-linking-and-sync.md) | L1 | Phone: link a computer, link slot, sync channel, sent-copies | WP03, WP04 | planned |
 | [WP06](wps/WP06-desktop-shell-link-text.md) | L2 | Desktop shell: storage, secrets, linking, text messaging | WP03, WP05 | planned |
@@ -62,3 +62,4 @@ Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17)
 
 - 2026-10-23 UTC — WP01 `doing`: JVM + Android companion and local Worker verified; original-app/live-service gates open.
 - 2026-10-23 UTC — Planning set created on `feat/linux-port` from `main@af86743`. All WPs `planned`; nothing implemented.
+- 2026-10-23 UTC — WP03 `doing`: `:core` extracted (70 files moved), AC1–AC3 verified locally (329 → 198 core + 146 app + 15 new; 328 golden entries); AC4 two-emulator harness NOT RUN. Evidence: evidence/WP03.md. Uncommitted.

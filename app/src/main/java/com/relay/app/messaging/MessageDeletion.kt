@@ -102,17 +102,17 @@ object MessageDeletion {
                 if (message.msgId != null) {
                     val author = if (message.isSent) NostrIdentity.publicKeyHex(context) else
                         MessagingDb.get(context).readableDatabase.rawQuery("SELECT sender_key FROM group_messages WHERE group_id=? AND _id=?", arrayOf(group.toString(), message.id.toString())).use { if (it.moveToFirst()) it.getString(0) else null }
-                    if (author != null) tombstone(context, "group:$group", author, message.msgId)
+                    if (author != null) tombstone(context, "group:$group", author, message.msgId!!)
                 }
                 remove(context, "group_messages", "group_id=? AND _id=?", arrayOf(group.toString(), message.id.toString()))
                 GroupMessageNotifier.cancel(context, group); SharedGroups.notify(context, group)
             }
         } else {
             if (everyone) {
-                require(message.isSent && message.msgId != null && DeletionBody.validId(message.msgId))
+                require(message.isSent && message.msgId != null && DeletionBody.validId(message.msgId!!))
                 val contact = ContactRepository(MessagingDb.get(context)).getByIdSync(message.contactId) ?: error("Contact unavailable")
-                check(Outgoing.enqueue(context, contact, DeletionBody.format(message.msgId)) != null)
-                applyDirect(context, contact.id, NostrIdentity.publicKeyHex(context), message.msgId, true)
+                check(Outgoing.enqueue(context, contact, DeletionBody.format(message.msgId!!)) != null)
+                applyDirect(context, contact.id, NostrIdentity.publicKeyHex(context), message.msgId!!, true)
             } else synchronized(this) {
                 message.msgId?.let { event ->
                     val author = if (message.isSent) NostrIdentity.publicKeyHex(context) else ContactRepository(MessagingDb.get(context)).getByIdSync(message.contactId)?.nostrPubkey

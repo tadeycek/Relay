@@ -1,7 +1,5 @@
 package com.relay.app.transport.mailbox
 
-import android.content.Context
-import com.relay.app.transport.nostr.NostrIdentity
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -34,12 +32,12 @@ object MailboxMedia {
         HASH.matches(url.removePrefix(MailboxConfig.url + PATH))
 
     /** Stores [blob] (its SHA-256 is [sha256Hex]) for [recipients] and returns the reference URL. */
-    fun upload(context: Context, blob: ByteArray, sha256Hex: String, recipients: List<String>): String {
+    fun upload(signer: NostrSigner, blob: ByteArray, sha256Hex: String, recipients: List<String>): String {
         require(recipients.isNotEmpty()) { "Nobody to send the file to" }
         val url = urlFor(sha256Hex)
         val request = Request.Builder()
             .url(url)
-            .header("Authorization", MailboxAuth.header(NostrIdentity.keys(context), "PUT", url, blob))
+            .header("Authorization", MailboxAuth.header(signer, "PUT", url, blob))
             .header("x-relay-recipients", recipients.distinct().joinToString(","))
             .put(blob.toRequestBody(BINARY))
             .build()
@@ -50,11 +48,11 @@ object MailboxMedia {
     }
 
     /** The file's bytes if this install may have them and they match [sha256Hex]; null otherwise. */
-    fun download(context: Context, url: String, sha256Hex: String, maxBytes: Long): ByteArray? {
+    fun download(signer: NostrSigner, url: String, sha256Hex: String, maxBytes: Long): ByteArray? {
         if (!isOurs(url)) return null
         val request = Request.Builder()
             .url(url)
-            .header("Authorization", MailboxAuth.header(NostrIdentity.keys(context), "GET", url))
+            .header("Authorization", MailboxAuth.header(signer, "GET", url))
             .build()
         return http.newCall(request).execute().use { response ->
             val body = response.body ?: return null
@@ -69,12 +67,12 @@ object MailboxMedia {
      * Tells the server this phone has stored the file. Best effort: if it doesn't get through, the
      * server still deletes the file when its lifetime ends.
      */
-    fun confirm(context: Context, url: String) {
+    fun confirm(signer: NostrSigner, url: String) {
         if (!isOurs(url)) return
         runCatching {
             val request = Request.Builder()
                 .url(url)
-                .header("Authorization", MailboxAuth.header(NostrIdentity.keys(context), "DELETE", url))
+                .header("Authorization", MailboxAuth.header(signer, "DELETE", url))
                 .delete()
                 .build()
             http.newCall(request).execute().close()

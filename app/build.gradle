@@ -70,6 +70,8 @@ android {
 def composeBom = '2024.04.01'
 
 dependencies {
+    // Pure protocol code shared with the desktop client (WP03).
+    implementation project(':core')
     implementation platform("androidx.compose:compose-bom:${composeBom}")
     implementation 'androidx.compose.ui:ui'
     implementation 'androidx.compose.ui:ui-tooling-preview'

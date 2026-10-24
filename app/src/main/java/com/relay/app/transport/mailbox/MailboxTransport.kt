@@ -184,7 +184,7 @@ class MailboxTransport(
         val outcome = try {
             val request = Request.Builder()
                 .url(url)
-                .header("Authorization", MailboxAuth.header(identity(), "POST", url, body))
+                .header("Authorization", MailboxAuth.header(AndroidNostrSigner(identity), "POST", url, body))
                 .post(body.toRequestBody(JSON))
                 .build()
             http.newCall(request).execute().use { MailboxProtocol.sendOutcome(it.code, it.body?.string().orEmpty()) }
@@ -215,7 +215,7 @@ class MailboxTransport(
             val ws = try {
                 val request = Request.Builder()
                     .url(socketUrl)
-                    .header("Authorization", MailboxAuth.header(identity(), "GET", socketUrl))
+                    .header("Authorization", MailboxAuth.header(AndroidNostrSigner(identity), "GET", socketUrl))
                     .build()
                 http.newWebSocket(request, Listener(gen, ended) { failures.set(0) })
             } catch (e: Exception) {

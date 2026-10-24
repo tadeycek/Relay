@@ -51,7 +51,7 @@ object GroupMedia {
                 if (changed == 0) file.delete() // A deletion arrived during the download.
             }
             // Stored on this phone, so the server may forget it once every member has it.
-            com.relay.app.transport.mailbox.MailboxMedia.confirm(context, ref.url)
+            com.relay.app.transport.mailbox.MailboxMedia.confirm(com.relay.app.transport.mailbox.AndroidNostrSigner { com.relay.app.transport.nostr.NostrIdentity.keys(context) }, ref.url)
             SharedGroups.notify(context, group)
         } catch (_: Exception) { file?.delete() } finally { slots.release(); active.remove(token) }
     }

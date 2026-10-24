@@ -23,6 +23,10 @@ def run(args, **kw):
     return subprocess.run([str(x) for x in args],check=True,**kw)
 
 
+def main_package_installed(package_list: str) -> bool:
+    return f'package:{PACKAGE}' in package_list.splitlines()
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--serial',default='emulator-5554')
@@ -35,7 +39,7 @@ def main():
     sdk=Path(os.environ.get('ANDROID_HOME',Path.home()/'Android/Sdk'))
     adb=[str(sdk/'platform-tools/adb'),'-s',args.serial]
     installed=subprocess.check_output([*adb,'shell','pm','list','packages',PACKAGE],text=True)
-    if 'package:'+PACKAGE in installed:
+    if main_package_installed(installed):
         marker=subprocess.run([*adb,'exec-out','run-as',PACKAGE,'cat','files/jvm-ui-owned'],capture_output=True)
         if not args.reset_owned_fixture or marker.returncode or marker.stdout!=MARKER:
             parser.error('Refusing installed Relay app; only --reset-owned-fixture with exact harness ownership marker permits reset')
@@ -103,6 +107,11 @@ def main():
                     run([*adb,'exec-out','run-as',PACKAGE,'cat','files/jvm-ui/'+name],stdout=f)
             print('PASS actual app UI and production transport/outbox interop; fixture evidence:',private)
         finally:
+            # Instrumentation's failure artifacts live in app-private storage; pull before stop.
+            for name in ('failure.png', 'failure.xml'):
+                result=subprocess.run([*adb,'exec-out','run-as',PACKAGE,'cat','files/jvm-ui/'+name],capture_output=True)
+                if result.returncode==0 and result.stdout:
+                    (private/name).write_bytes(result.stdout)
             if instrument.poll() is None:
                 instrument.terminate()
                 try:instrument.wait(timeout=5)

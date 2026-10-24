@@ -66,7 +66,7 @@ object GroupDispatch {
     }
 
     internal fun dispatch(context: Context, db: RelayDbHelper, payload: String,
-        sealBody: (String?, String) -> String = com.relay.app.messaging.InnerEnvelope::seal) {
+        sealBody: (String?, String) -> String = com.relay.app.messaging.AndroidInnerEnvelope::seal) {
         val row = readJob(db, payload) ?: return
         val before = ContactRepository(db).findByNostrPubkeySync(row.recipient)
         val innerKey = before?.publicKey ?: row.inner

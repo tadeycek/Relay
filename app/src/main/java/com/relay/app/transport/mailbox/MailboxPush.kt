@@ -54,7 +54,7 @@ object MailboxPush {
             val body = JSONObject().put("v", 1).put("token", token).toString().toByteArray(Charsets.UTF_8)
             val request = Request.Builder()
                 .url(url)
-                .header("Authorization", MailboxAuth.header(NostrIdentity.keys(context), "POST", url, body))
+                .header("Authorization", MailboxAuth.header(AndroidNostrSigner { NostrIdentity.keys(context) }, "POST", url, body))
                 .post(body.toRequestBody(JSON))
                 .build()
             http.newCall(request).execute().use {

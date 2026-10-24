@@ -15,6 +15,18 @@ spec.loader.exec_module(harness)
 
 
 class AppUiGuards(unittest.TestCase):
+    def test_only_exact_main_package_counts_as_installed(self):
+        self.assertFalse(harness.main_package_installed('package:com.relay.app.test\n'))
+        self.assertTrue(harness.main_package_installed('package:com.relay.app.test\npackage:com.relay.app\n'))
+
+    def test_production_codec_source_path_exists_after_extraction(self):
+        path=Path(__file__).resolve().parents[3]/'core/src/main/kotlin/com/relay/app/transport/RelayPayload.kt'
+        self.assertTrue(path.is_file())
+        jvm=(Path(__file__).with_name('jvm')/'build.gradle.kts').read_text()
+        android=(Path(__file__).with_name('android')/'build.gradle.kts').read_text()
+        self.assertIn('core/src/main/kotlin',jvm)
+        self.assertIn('core/src/main/kotlin',android)
+
     def reject(self,args,marker):
         commands=[]
         def output(cmd,**kw):

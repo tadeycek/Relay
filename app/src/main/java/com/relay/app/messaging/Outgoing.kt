@@ -41,7 +41,7 @@ object Outgoing {
     /** Prepares an encrypted entry without acquiring a database writer transaction. */
     fun prepareTo(recipient: String, innerKey: String?, relayHints: List<String>, contactId: Long?,
         plainBody: String, payloadId: String = PayloadCodec.newId(),
-        sealBody: (String?, String) -> String = InnerEnvelope::seal): OutboxEntry {
+        sealBody: (String?, String) -> String = AndroidInnerEnvelope::seal): OutboxEntry {
         val now = System.currentTimeMillis()
         val body = sealBody(innerKey, plainBody)
         require(body.length <= PayloadCodec.MAX_BODY_LENGTH) { "Message is too large; shorten it and try again" }
