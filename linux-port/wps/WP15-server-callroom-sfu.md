@@ -2,7 +2,7 @@
 id: WP15
 title: "Server: CallRoom Durable Object and SFU proxy"
 phase: L4
-lane: planned
+lane: doing
 depends_on: [WP02, WP11]
 specs: ["05 §5", "07 §1–5", "LP-D11, LP-D12, LP-D13"]
 owned_files:
@@ -45,3 +45,5 @@ Rooms with capability-token auth, participant/track directory and a safe proxy t
 Write `linux-port/evidence/WP15.md`: exact commands, numbers parsed from reports, versions/digests of new
 dependencies, and a **Not run** section (real phone, Mac, live provider, etc.). Touching files outside `owned_files` is a
 scope decision — note it in the evidence and the PR.
+
+<!-- 2026-10-24 UTC: WP15 moved to doing; implementation/evidence incomplete, release gates remain open. -->

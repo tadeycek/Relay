@@ -2,7 +2,7 @@
 id: WP13
 title: "Android: 1:1 calls (WebRTC, Telecom, FCM ring)"
 phase: L3
-lane: planned
+lane: doing
 depends_on: [WP11, WP12]
 specs: ["06 §1, §4", "02 §C", "09 R6, Q1, Q2"]
 owned_files:
@@ -47,3 +47,5 @@ Phone can place and receive E2EE voice calls, including when asleep.
 Write `linux-port/evidence/WP13.md`: exact commands, numbers parsed from reports, versions/digests of new
 dependencies, and a **Not run** section (real phone, Mac, live provider, etc.). Touching files outside `owned_files` is a
 scope decision — note it in the evidence and the PR.
+
+<!-- 2026-10-24 UTC: WP13 moved to doing; implementation/evidence incomplete, release gates remain open. -->

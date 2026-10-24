@@ -2,7 +2,7 @@
 id: WP11
 title: "Server: TURN credentials, urgent wake, signal size"
 phase: L3
-lane: planned
+lane: doing
 depends_on: [WP02, WP04]
 specs: ["05 §5", "06 §3"]
 owned_files:
@@ -43,3 +43,5 @@ Everything the 1:1 call clients need from the server.
 Write `linux-port/evidence/WP11.md`: exact commands, numbers parsed from reports, versions/digests of new
 dependencies, and a **Not run** section (real phone, Mac, live provider, etc.). Touching files outside `owned_files` is a
 scope decision — note it in the evidence and the PR.
+
+<!-- 2026-10-24 UTC: WP11 moved to doing; implementation/evidence incomplete, release gates remain open. -->

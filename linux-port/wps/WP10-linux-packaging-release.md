@@ -2,7 +2,7 @@
 id: WP10
 title: "Linux packaging and desktop release"
 phase: L2
-lane: planned
+lane: doing
 depends_on: [WP06, WP07, WP08, WP09]
 specs: ["LP-D15", "09 R11, R14", "rebuild/DISTRIBUTION.md"]
 owned_files:
@@ -43,3 +43,5 @@ Installable `.deb` and AppImage for x86_64 with checksums, provenance and licenc
 Write `linux-port/evidence/WP10.md`: exact commands, numbers parsed from reports, versions/digests of new
 dependencies, and a **Not run** section (real phone, Mac, live provider, etc.). Touching files outside `owned_files` is a
 scope decision — note it in the evidence and the PR.
+
+<!-- 2026-10-24 UTC: WP10 moved to doing; implementation/evidence incomplete, release gates remain open. -->

@@ -2,7 +2,7 @@
 id: WP07
 title: "Desktop: groups, profiles, Discord-style UI completion"
 phase: L2
-lane: planned
+lane: doing
 depends_on: [WP06]
 specs: ["04 §3", "01 goal 3"]
 owned_files:
@@ -39,3 +39,5 @@ Groups (v2 direct delivery), profile names/photos and the full desktop interacti
 Write `linux-port/evidence/WP07.md`: exact commands, numbers parsed from reports, versions/digests of new
 dependencies, and a **Not run** section (real phone, Mac, live provider, etc.). Touching files outside `owned_files` is a
 scope decision — note it in the evidence and the PR.
+
+<!-- 2026-10-24 UTC: WP07 moved to doing; implementation/evidence incomplete, release gates remain open. -->

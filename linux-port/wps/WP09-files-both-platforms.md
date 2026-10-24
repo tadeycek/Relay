@@ -2,7 +2,7 @@
 id: WP09
 title: "Files on phone and desktop (`TYPE:FILE`, up to 100 MiB)"
 phase: L2
-lane: planned
+lane: doing
 depends_on: [WP03, WP04, WP06]
 specs: ["04 §6", "05 §2", "LP-D07", "09 R10, R13"]
 owned_files:
@@ -47,3 +47,5 @@ Send any file, phone↔desktop↔phone, streamed in ≤25 MiB encrypted parts, w
 Write `linux-port/evidence/WP09.md`: exact commands, numbers parsed from reports, versions/digests of new
 dependencies, and a **Not run** section (real phone, Mac, live provider, etc.). Touching files outside `owned_files` is a
 scope decision — note it in the evidence and the PR.
+
+<!-- 2026-10-24 UTC: WP09 moved to doing; implementation/evidence incomplete, release gates remain open. -->

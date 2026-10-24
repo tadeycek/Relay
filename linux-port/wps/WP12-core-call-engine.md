@@ -2,7 +2,7 @@
 id: WP12
 title: "`:core` 1:1 call engine and `TYPE:CALL` codec"
 phase: L3
-lane: planned
+lane: doing
 depends_on: [WP03]
 specs: ["05 §6", "06 §2–3", "LP-D09, LP-D10"]
 owned_files:
@@ -39,3 +39,5 @@ Platform-free state machine and signalling that both clients drive.
 Write `linux-port/evidence/WP12.md`: exact commands, numbers parsed from reports, versions/digests of new
 dependencies, and a **Not run** section (real phone, Mac, live provider, etc.). Touching files outside `owned_files` is a
 scope decision — note it in the evidence and the PR.
+
+<!-- 2026-10-24 UTC: WP12 moved to doing; implementation/evidence incomplete, release gates remain open. -->
