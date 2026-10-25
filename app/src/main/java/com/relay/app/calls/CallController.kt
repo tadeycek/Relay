@@ -71,6 +71,8 @@ object CallController {
     @Volatile private var teardown: CallTeardown? = null
     @Volatile private var teardownCallId: String? = null
     private var audioFocus: AudioFocusRequest? = null
+    /** True while the microphone is muted by the audio-focus rule (not by the user). Serial dispatcher only. */
+    private var autoMuted = false
     private var proximity: PowerManager.WakeLock? = null
 
     /** True when a call is live (any state except idle/ended). Drives the in-call entry points. */
@@ -172,7 +174,10 @@ object CallController {
     }
 
     fun setMuted(context: Context, muted: Boolean) {
-        dispatcher.execute { core?.setMuted(muted) }
+        dispatcher.execute {
+            autoMuted = false // a user choice always wins over the focus rule
+            core?.setMuted(muted)
+        }
         _muted.value = muted
     }
 
@@ -233,7 +238,7 @@ object CallController {
             CallController.main.post {
                 CallController.callId = callId
                 CallController.ringtone?.start(incoming)
-                CallForegroundService.start(app, callId, CallController.displayName())
+                CallForegroundService.start(app, callId, CallController.displayName(), ServiceStage.RINGING)
                 if (incoming) {
                     val name = CallController.displayName()
                     runCatching {
@@ -251,8 +256,7 @@ object CallController {
 
         override fun stateChanged(state: CallState) {
             // Still on the serial dispatcher: a contact lookup here never touches the main thread.
-            val name = (state as? CallState.RingingIn)?.call?.peer?.let { CallController.lookupName(app, it) }
-                ?: (state as? CallState.RingingOut)?.call?.peer?.let { CallController.lookupName(app, it) }
+            val name = CallPeer.of(state)?.let { CallController.lookupName(app, it) }
             val model = CallUiModelFactory.from(
                 state = state,
                 muted = CallController._muted.value,
@@ -279,11 +283,11 @@ object CallController {
             is CallState.RingingIn -> Unit
             is CallState.RingingOut -> Unit
             is CallState.Connecting -> {
-                CallForegroundService.start(app, state.call.id, name)
+                CallForegroundService.start(app, state.call.id, name, ServiceStage.IN_CALL)
                 takeAudio(app)
             }
             is CallState.Active -> {
-                CallForegroundService.start(app, state.call.id, name)
+                CallForegroundService.start(app, state.call.id, name, ServiceStage.IN_CALL)
                 takeAudio(app)
                 applyRoute(app)
                 holdProximity(app)
@@ -305,7 +309,36 @@ object CallController {
     // ---- platform glue --------------------------------------------------------------------------
 
     private fun takeAudio(app: Context) {
-        if (audioFocus == null) audioFocus = CallAudio.take(app)
+        if (audioFocus == null) audioFocus = CallAudio.take(app, ::onAudioFocusChange)
+    }
+
+    /** Applies [CallFocusPolicy] (documented there) on the serial dispatcher; the platform calls this on main. */
+    private fun onAudioFocusChange(change: Int) {
+        val event = CallFocusPolicy.eventFor(change) ?: return
+        dispatcher.execute {
+            val state = currentState()
+            val live = state is CallState.Connecting || state is CallState.Active
+            when (CallFocusPolicy.decide(event, live, autoMuted)) {
+                FocusAction.MUTE_UNTIL_REGAINED -> if (!_muted.value) {
+                    autoMuted = true
+                    core?.setMuted(true)
+                    _muted.value = true
+                }
+                FocusAction.MUTE_UNTIL_USER_UNMUTES -> {
+                    autoMuted = false
+                    if (!_muted.value) {
+                        core?.setMuted(true)
+                        _muted.value = true
+                    }
+                }
+                FocusAction.UNMUTE -> {
+                    autoMuted = false
+                    core?.setMuted(false)
+                    _muted.value = false
+                }
+                FocusAction.NONE -> Unit
+            }
+        }
     }
 
     private fun applyRoute(app: Context) {
@@ -342,6 +375,7 @@ object CallController {
             "audio" to {
                 app?.let { CallAudio.release(it, audioFocus) }
                 audioFocus = null
+                autoMuted = false
             },
             "proximity" to { releaseProximity() },
             "service" to {
@@ -369,8 +403,7 @@ object CallController {
     }
 
     private fun displayName(): String? =
-        (currentState() as? CallState.RingingIn)?.call?.peer?.let { appContext?.let { ctx -> lookupName(ctx, it) } }
-            ?: (currentState() as? CallState.RingingOut)?.call?.peer?.let { appContext?.let { ctx -> lookupName(ctx, it) } }
+        CallPeer.of(currentState())?.let { peerKey -> appContext?.let { ctx -> lookupName(ctx, peerKey) } }
 
     private fun lookupName(context: Context, pubkey: String): String? = try {
         ContactRepository(MessagingDb.get(context)).findByNostrPubkeySync(pubkey)?.name

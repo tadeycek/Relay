@@ -21,8 +21,9 @@ object CallAudio {
     }
 
     /**
-     * Bluetooth wins when it is connected, then the user's speaker choice, then wired, then earpiece.
-     * A wired headset is never overridden by the speaker toggle: it is what the user plugged in.
+     * Order of precedence: a connected Bluetooth headset always wins; otherwise an explicit speaker choice
+     * wins over a wired headset (the toggle is the user's deliberate override); with the speaker off a wired
+     * headset is used, and the earpiece is the fallback.
      */
     fun routeFor(speakerOn: Boolean, bluetooth: Boolean, wired: Boolean): CallRoute = when {
         bluetooth -> CallRoute.BLUETOOTH
@@ -32,7 +33,7 @@ object CallAudio {
     }
 
     /** Acquires call audio focus and puts the device into communication mode. Returns the focus handle. */
-    fun take(context: Context): AudioFocusRequest? = try {
+    fun take(context: Context, onFocusChange: (Int) -> Unit = {}): AudioFocusRequest? = try {
         val manager = context.getSystemService(AudioManager::class.java) ?: return null
         val attributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
@@ -41,7 +42,7 @@ object CallAudio {
         val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
             .setAudioAttributes(attributes)
             .setAcceptsDelayedFocusGain(false)
-            .setOnAudioFocusChangeListener { }
+            .setOnAudioFocusChangeListener { change -> onFocusChange(change) }
             .build()
         manager.requestAudioFocus(request)
         manager.mode = AudioManager.MODE_IN_COMMUNICATION

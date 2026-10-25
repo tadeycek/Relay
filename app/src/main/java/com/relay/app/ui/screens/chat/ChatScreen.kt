@@ -219,11 +219,10 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                 contact = contact,
                 onBack = { navController.popBackStack() },
                 actions = {
-                    val callTarget = contact?.takeIf { it.isDeleted.not() && it.nostrPubkey != null }
+                    val callTarget = contact?.takeIf { com.relay.app.calls.CallEligibility.canCall(it) }
+                    val placeCall = com.relay.app.calls.rememberOutgoingCall()
                     if (callTarget != null) {
-                        IconButton(onClick = {
-                            com.relay.app.calls.CallController.placeCall(context, callTarget.nostrPubkey!!, callTarget.name)
-                        }) {
+                        IconButton(onClick = { placeCall(callTarget.nostrPubkey!!, callTarget.name) }) {
                             Icon(
                                 androidx.compose.material.icons.Icons.Outlined.Call,
                                 contentDescription = "Call",

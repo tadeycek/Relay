@@ -1,17 +1,20 @@
 package com.relay.app.calls
 
+import android.Manifest
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
+import androidx.core.content.ContextCompat
 
 /**
- * Keeps the process alive for the duration of a call with the `phoneCall` + `microphone` foreground
- * types (WP13 step 2).
+ * Keeps the process alive for the duration of a call (WP13 step 2). It starts as `phoneCall` while ringing
+ * and is re-entered as `phoneCall|microphone` after accept; the choice is [CallServicePolicy]'s.
  *
  * Scope note (recorded in `linux-port/evidence/WP13.md`): this pass does **not** register a
  * `ConnectionService`/`CallsManager` self-managed call through `androidx.core:core-telecom`. The
@@ -28,14 +31,22 @@ class CallForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val callId = intent?.getStringExtra(EXTRA_CALL_ID)
         val name = intent?.getStringExtra(EXTRA_PEER_NAME)
+        val stage = if (intent?.getStringExtra(EXTRA_STAGE) == STAGE_IN_CALL) ServiceStage.IN_CALL else ServiceStage.RINGING
         val notification = CallNotifier.ongoing(this, name, callId ?: "")
-        val started = if (Build.VERSION.SDK_INT >= 29) {
+        val micGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        val types = CallServicePolicy.typesFor(Build.VERSION.SDK_INT, stage, micGranted).fold(0) { acc, t ->
+            acc or when (t) {
+                FgsType.PHONE_CALL -> ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
+                FgsType.MICROPHONE -> ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+        }
+        val started = if (types != 0) {
             try {
-                startForeground(CallNotifier.NOTIFICATION_ID, notification, FOREGROUND_TYPES)
+                startForeground(CallNotifier.NOTIFICATION_ID, notification, types)
                 true
             } catch (e: Exception) {
-                // RECORD_AUDIO not granted yet: run as a data-sync-less call service without the mic type.
-                Log.w(TAG, "couldn't start with the microphone type: ${e.message}")
+                // Android 14 can refuse the microphone type from the background: keep running as phoneCall.
+                Log.w(TAG, "couldn't start with types=$types: ${e.message}")
                 runCatching {
                     startForeground(CallNotifier.NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL)
                 }.isSuccess
@@ -67,20 +78,18 @@ class CallForegroundService : Service() {
     companion object {
         const val EXTRA_CALL_ID = "call_id"
         const val EXTRA_PEER_NAME = "peer_name"
+        const val EXTRA_STAGE = "stage"
+        const val STAGE_RINGING = "ringing"
+        const val STAGE_IN_CALL = "in_call"
         private const val TAG = "RelayCallService"
         private const val MAX_MS = 2 * 60 * 60 * 1000L
 
-        private val FOREGROUND_TYPES: Int = if (Build.VERSION.SDK_INT >= 30) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
-        } else {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL
-        }
-
         /** Never throws: Android may refuse a background foreground-service start, and ringing still works. */
-        fun start(context: Context, callId: String, peerName: String?) {
+        fun start(context: Context, callId: String, peerName: String?, stage: ServiceStage) {
             val intent = Intent(context, CallForegroundService::class.java)
                 .putExtra(EXTRA_CALL_ID, callId)
                 .putExtra(EXTRA_PEER_NAME, peerName)
+                .putExtra(EXTRA_STAGE, if (stage == ServiceStage.IN_CALL) STAGE_IN_CALL else STAGE_RINGING)
             try {
                 if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
             } catch (e: Exception) {
