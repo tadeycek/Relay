@@ -78,6 +78,27 @@ def inventory(root, destination):
     print(json.dumps({k: v for k, v in data.items() if k.endswith('_count')}, indent=2))
 
 
+def webrtc_notices(stage, destination):
+    """Copy the licence texts bundled in the webrtc-java native jar, byte for byte, without editing them."""
+    stage, destination = Path(stage), Path(destination)
+    jars = sorted((stage / 'lib/app').glob('webrtc-java-*-linux-x86_64-*.jar'))
+    if len(jars) != 1:
+        raise ValueError(f'expected exactly one webrtc-java linux-x86_64 native jar, found {len(jars)}')
+    prefix = 'META-INF/licenses/'
+    count = 0
+    with zipfile.ZipFile(jars[0]) as jar:
+        for info in jar.infolist():
+            if info.is_dir() or not info.filename.startswith(prefix):
+                continue
+            target = destination / info.filename[len(prefix):]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(jar.read(info))
+            count += 1
+    if count == 0:
+        raise ValueError('native jar carries no META-INF/licenses entries')
+    print(f'webrtc-notices: {count} licence files copied from {jars[0].name}')
+
+
 def audit(root):
     root = Path(root)
     forbidden = (b'/home/tadej/', b'/.private/', b'RELAY_WORKER_DIR=', b'XDG_CONFIG_HOME=')
@@ -110,6 +131,6 @@ def audit(root):
 if __name__ == '__main__':
     try:
         command, *args = sys.argv[1:]
-        {'filter-nostr': filter_nostr, 'inventory': inventory, 'audit': audit}[command](*args)
+        {'filter-nostr': filter_nostr, 'inventory': inventory, 'audit': audit, 'webrtc-notices': webrtc_notices}[command](*args)
     except (ValueError, KeyError, TypeError) as exc:
         sys.exit(str(exc))

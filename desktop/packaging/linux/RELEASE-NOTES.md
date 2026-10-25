@@ -1,5 +1,7 @@
 # Relay Linux 0.1.0 development package — NOT A RELEASE
 
+> **Superseded figures:** the bullets below describe the first snapshot. Current rebuild (c1e8b28 working tree, includes WP07/WP08/WP14 foundation and webrtc-java): `.deb` 104,340,624 B `eb131f35a9c82d9086f5171ae3dddf704bbb8213901030e4ab0300125287e5cb`; AppImage 112,355,832 B `42d511a3e4c32cb3922e17b961ef8944b97769dd5647cb1c1c91d0c308148972`. Known open defect: on Fedora the AppImage in extract-and-run mode crashes (launcher SIGSEGV for long extraction paths); FUSE mode works. See `linux-port/evidence/WP10.md`.
+
 Two local x86_64 development artifacts were built from a copied, pre-existing Compose app image. They have **not** been published. The image predates WP07's pending blocker fixes and WP08 media implementation. No version was bumped.
 
 - `.deb`: `relay_0.1.0_amd64.deb`, 93,121,024 bytes, SHA-256 `1f34a36fb7fcd9171692e943e565c47e561a839d854a6b46`.

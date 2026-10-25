@@ -46,6 +46,34 @@ class PackagingTests(unittest.TestCase):
             run = subprocess.run([sys.executable, str(TOOL), 'audit', str(root)], capture_output=True)
             self.assertNotEqual(run.returncode, 0)
 
+    def test_webrtc_native_notices_are_copied_byte_for_byte_from_the_native_jar(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            app = root / 'stage/lib/app'
+            app.mkdir(parents=True)
+            texts = {'META-INF/licenses/webrtc/LICENSE.md': b'bsd text\r\n', 'META-INF/licenses/webrtc/PATENTS': b'patents',
+                     'META-INF/licenses/libva/COPYING': b'mit'}
+            with zipfile.ZipFile(app / 'webrtc-java-0.20.0-linux-x86_64-abc.jar', 'w') as jar:
+                jar.writestr('libwebrtc-java-linux-x86_64.so', b'elf')
+                for name, data in texts.items():
+                    jar.writestr(name, data)
+            dest = root / 'stage/lib/licenses/webrtc-java-native'
+            subprocess.run([sys.executable, str(TOOL), 'webrtc-notices', str(root / 'stage'), str(dest)], check=True)
+            for name, data in texts.items():
+                self.assertEqual((dest / name.removeprefix('META-INF/licenses/')).read_bytes(), data)
+
+    def test_webrtc_notices_fail_when_native_jar_is_missing_or_has_no_licence_text(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            app = root / 'stage/lib/app'
+            app.mkdir(parents=True)
+            run = subprocess.run([sys.executable, str(TOOL), 'webrtc-notices', str(root / 'stage'), str(root / 'out')], capture_output=True)
+            self.assertNotEqual(run.returncode, 0)
+            with zipfile.ZipFile(app / 'webrtc-java-0.20.0-linux-x86_64-abc.jar', 'w') as jar:
+                jar.writestr('libwebrtc-java-linux-x86_64.so', b'elf')
+            run = subprocess.run([sys.executable, str(TOOL), 'webrtc-notices', str(root / 'stage'), str(root / 'out')], capture_output=True)
+            self.assertNotEqual(run.returncode, 0)
+
 
 if __name__ == '__main__':
     unittest.main()

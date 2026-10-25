@@ -11,11 +11,11 @@ Every application JAR below is read from the staged image; an embedded text path
 | `lib/app/atomicfu-jvm-0.23.2-5e4f88ed1c37222d791f5dcadf481498.jar` | `101ff43ff563fca167af5ade98c3b69bf569010eab745013b84d8955034d3b3c` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/collection-jvm-1.4.0-3f0597ec99a52ecdbf6f3962c5dc77a.jar` | `d5cf7b72647c7995071588fe870450ff9c8f127f253d2d4851e161b800f67ae0` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/core-3.5.4-23cc13611f7f222b9988220fa28a115.jar` | `71de5d89341b5fcf5dd89da7f44e84d825d0e084cdf3ec77c9abe26b0f0ceb13` | 0 | none | Unresolved exact component/native source obligations |
-| `lib/app/core-35405f6a80d473b7d7b75ef95642369.jar` | `99b7b9a14802a772ecdf612f06c322565c31a7a02b2efdf5327c054174f51b0c` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/core-common-2.2.0-2212d240dfe1e8a7598ee117ccc316d.jar` | `65308a06b1c00ee186cb9e19321383f043b993813f1522c47f4a3e3303bdba41` | 0 | none | Unresolved exact component/native source obligations |
+| `lib/app/core-e2dfb324e556d21c833cb81125eb2e50.jar` | `f53bc335bd30f04927d5ce10d6c9419751c5b097dd2108a2991bc57a0ab1c9ba` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/dbus-java-core-4.2.1-55fe3a385012be8a8c6ccb4735fc988.jar` | `3a7b9fd543a1be94de99009c36ac1803f08d6d12357706c8f5040855315469d1` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/dbus-java-transport-native-unixsocket-4.2.1-1a6385aabb32b3fd1b22c6de59f71831.jar` | `bb67de9bd08148123b918458efc78055146bd5ae1538487cf4a018dd0f644837` | 0 | none | Unresolved exact component/native source obligations |
-| `lib/app/desktop-0.1.0-d45ed2b291d4d77fed86d67c4a06064.jar` | `aa1364042400a53e35ae839539dcd552b82874292e96852522cdd434364ea406` | 0 | none | Unresolved exact component/native source obligations |
+| `lib/app/desktop-0.1.0-dc58d24b74289887e24d2f4cb11dc39.jar` | `ba7d830933a522055aa96b8657d8bbd313348e418632c221510c3f7e930b76b0` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/desktop-jvm-1.7.3-de424e1ca627c3ee7de0f1f65430b2c5.jar` | `62c816073195cc0119dc1d66b178544bdb772ef8bee4879954528c6798b17ebe` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/error_prone_annotations-2.41.0-75e3b25da8b8a2136463c4674f5e49bf.jar` | `a56e782b5b50811ac204073a355a21d915a2107fce13ec711331ad036f660fcc` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/foundation-desktop-1.7.3-4dbe5e38e559448051b0edf6263c1e5c.jar` | `e1dc2e97eca6acf5bb16fc587b7d92b09c89e3b7cec0589ea169a970d1c9fe48` | 0 | none | Unresolved exact component/native source obligations |
@@ -50,7 +50,7 @@ Every application JAR below is read from the staged image; an embedded text path
 | `lib/app/runtime-saveable-desktop-1.7.3-682605976c053c6e295e37eb69ebb5f.jar` | `4306363be90eaabe74b900db4c32ed1f15c7548e5b30a7093c4ee40c436b9b8c` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/secret-service-1.8.1-jdk17-b157ea0b5eca4edb50f82e2a518896.jar` | `03ba2ecda8aad358a917d236de854fd746f6e6ccd9a74b62f7c524773330a346` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/skiko-awt-0.8.18-a19fd5d37c7330965054a0a732d09b18.jar` | `637f5de1a208f1368ac51b5a286a4827cec828cd62dda332dc3400b8543e243d` | 0 | none | Unresolved exact component/native source obligations |
-| `lib/app/skiko-awt-runtime-linux-x64-0.8.18-d863f924539f388539c75c0c7262f3f.jar` | `fe753366585a2364c7f464a85156f03d7da7d95a132fdb8961638ab38ac5e84e` | 0 | none | Unresolved exact component/native source obligations |
+| `lib/app/skiko-awt-runtime-linux-x64-0.8.18-8d7a93cfb1dc13d905ff458e8c7a163.jar` | `b09c397d2458fe73753a71f82a3ea51f375457aa04e70470973369c717d726e4` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/slf4j-api-2.0.7-403dffa46cdd2e3c82da19df4f394a4c.jar` | `5d6298b93a1905c32cda6478808ac14c2d4a47e91535e53c41f7feeb85d946f4` | 0 | `META-INF/LICENSE.txt` | Unresolved exact component/native source obligations |
 | `lib/app/sqlite-jdbc-3.50.1.0-c24f1ed3855b9954e3af766f1bba6c6.jar` | `384b880bdaf0a23a2b32f20aaecdcaad68938962bb55fdcfacb495265fa0dc81` | 24 | `META-INF/maven/io.github.willena/sqlite-jdbc/LICENSE.zentus`, `META-INF/maven/io.github.willena/sqlite-jdbc/LICENSE` | Unresolved exact component/native source obligations |
 | `lib/app/tink-1.24.0-ffc7b90f028495e9892eea93949120.jar` | `463bb0cddc8131379c4f87d8185a0314f651286c28e52a8dea5df206d8a3e175` | 0 | none | Unresolved exact component/native source obligations |
@@ -61,9 +61,25 @@ Every application JAR below is read from the staged image; an embedded text path
 | `lib/app/ui-tooling-preview-desktop-1.7.3-f86e811916e9fcecb72a5e1ce6eac638.jar` | `c5cfad0b125e978d915f8b4c38630bc5d548e59fe8a0e838c0cc84283c605943` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/ui-unit-desktop-1.7.3-4d19fde85b276f26591df697b9b883c.jar` | `598b52e257ed674145694b9790a7383a90fed2ec7154ba09ace4aa983c65b1a2` | 0 | none | Unresolved exact component/native source obligations |
 | `lib/app/ui-util-desktop-1.7.3-5472e6dd5d146c395d508cf67df34db.jar` | `161dcc73b929da61cee50045e96fb02f1633c36f18a2ef38b5c2c44c38606b52` | 0 | none | Unresolved exact component/native source obligations |
+| `lib/app/webrtc-java-0.20.0-c733343250561533a49e1cd7316842b3.jar` | `7c2b8349fd1a628b7ced59106ab4dd3314dd0a0e0944ea0e740f84ac9c4ff349` | 0 | none | Unresolved exact component/native source obligations |
+| `lib/app/webrtc-java-0.20.0-linux-x86_64-713d19632b38d241756291b12d0f4.jar` | `b2f58cf5e8d27d0488ab3c5ab6e03261549850c92ed1e73527a138510df43137` | 1 | `META-INF/licenses/`, `META-INF/licenses/libva/`, `META-INF/licenses/nvdec/`, `META-INF/licenses/nvenc/`, `META-INF/licenses/webrtc/`, `META-INF/licenses/libva/COPYING`, `META-INF/licenses/nvdec/LICENSE`, `META-INF/licenses/nvenc/LICENSE`, `META-INF/licenses/webrtc/LICENSE.md`, `META-INF/licenses/webrtc/PATENTS` | Unresolved exact component/native source obligations |
 | `lib/runtime/lib/jrt-fs.jar` | `45fc41e80103af6ac9e9dd1403c9228271b77a9719f262e96a800486b9646952` | 0 | none | Unresolved exact component/native source obligations |
 
-Standalone `.so`: 25 (exact paths in `archive-inventory.json`).
-OpenJDK legal files: 52 (exact paths in `archive-inventory.json`; original texts retained in app image).
+Standalone `.so`: 27 (exact paths in `archive-inventory.json`).
+OpenJDK legal files: 64 (exact paths in `archive-inventory.json`; original texts retained in app image).
 AppImage type2 runtime: source commit fedfad51acc2860b2916a1eef32ba4a500ff31ef; LGPL libfuse and corresponding-source obligations NOT CLEARED.
 Skiko/Skia and SQLite Multiple Ciphers native sources and notices NOT CLEARED.
+
+## webrtc-java 0.20.0 native (NEW since the first WP10 inventory)
+
+`lib/app/webrtc-java-0.20.0-linux-x86_64-713d19632b38d241756291b12d0f4.jar` (SHA-256 `b2f58cf5e8d27d0488ab3c5ab6e03261549850c92ed1e73527a138510df43137`) carries one native, `libwebrtc-java-linux-x86_64.so` (26,295,984 bytes; the JAR holds no other binary, no JNI side libraries — the JNI glue is inside that single `.so`). The JAR also carries these licence texts, copied **byte for byte** by `package_helpers.py webrtc-notices` into the app image at `lib/licenses/webrtc-java-native/` (so they ship in both the `.deb` and the AppImage) and mirrored for review under `desktop/packaging/linux/licenses/webrtc-java-native/`:
+
+| Shipped file | Bytes | SHA-256 | Heading/first line of the text itself |
+|---|---:|---|---|
+| `webrtc/LICENSE.md` | 130,043 | `3637ae45fdfb8e1d4eb30ca9e5f107c99e8a39b6c5b1e9068e853e4c308bd24b` | `# webrtc` / "Copyright (c) 2011, The WebRTC project authors." (BSD-style text, followed by the other third-party notices that file bundles) |
+| `webrtc/PATENTS` | 1,388 | `01462e2068d1a04c2274f3389773014c14ed9bc3446b28303543bd3e3c064145` | "Additional IP Rights Grant (Patents)" |
+| `libva/COPYING` | 1,130 | `c86a782ee845b52472dae9b9d79fb915d333628ac0efe49cdce63644814931de` | permission notice naming Precision Insight (text as shipped upstream) |
+| `nvdec/LICENSE` | 4,188 | `e9c43d83c592dd15c84453cef9e04378a8ff49c17315ed90f8e30e212269eafc` | FFmpeg nv-codec-headers (tag n12.0.16.1, compile-time headers only) per-file permission notices |
+| `nvenc/LICENSE` | 1,188 | `bfba0824ea00059f55c24b110214c1fa14a5952873e5987e1fbb0b9a0e08fb0f` | NVIDIA Video Codec SDK `nvEncodeAPI.h`, "Copyright (c) 2010-2022 NVIDIA Corporation" (as printed in the text) |
+
+**Not resolved:** the `webrtc-java` wrapper JAR (`webrtc-java-0.20.0-c733….jar`, SHA-256 `7c2b8349fd1a628b7ced59106ab4dd3314dd0a0e0944ea0e740f84ac9c4ff349`) and its POM declare **no licence and ship no licence file**; the wrapper's own licence text therefore cannot be taken from the archive and has not been guessed or added. Corresponding-source/offer obligations for the bundled libwebrtc, and whether the five texts above are the complete set for everything compiled into the 26 MB `.so`, are not established. The native itself is byte-identical to the Gradle-cache artifact. AC3 stays open.

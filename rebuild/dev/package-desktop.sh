@@ -37,6 +37,8 @@ mapfile -t NOSTR < <(find "$OUTPUT/stage" -type f -name 'nostr-sdk-kmp-jvm-*.jar
 python3 "$ASSETS/package_helpers.py" filter-nostr "${NOSTR[0]}" "$OUTPUT/nostr-filtered.jar" "$OUTPUT/nostr-removed-entries.txt" | tee "$OUTPUT/nostr-filter-report.json"
 mv "$OUTPUT/nostr-filtered.jar" "${NOSTR[0]}"
 cp "$ASSETS/relay.png" "$OUTPUT/stage/lib/relay.png"
+# Licence texts of the webrtc-java native (libwebrtc, libva, NVIDIA headers) are taken verbatim from its jar.
+python3 "$ASSETS/package_helpers.py" webrtc-notices "$OUTPUT/stage" "$OUTPUT/stage/lib/licenses/webrtc-java-native"
 python3 "$ASSETS/package_helpers.py" inventory "$OUTPUT/stage" "$OUTPUT/archive-inventory.json"
 python3 "$ASSETS/package_helpers.py" audit "$OUTPUT/stage"
 # jpackage accepts the staged app image directly. No dpkg install on the host.

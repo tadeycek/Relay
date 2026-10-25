@@ -31,6 +31,18 @@ def check(output):
         with zipfile.ZipFile(nostr[0]) as jar:
             natives = [n for n in jar.namelist() if Path(n).name in ('libnostr_sdk_ffi.so', 'libnostr_sdk_ffi.dylib', 'nostr_sdk_ffi.dll')]
             assert natives == ['linux-x86-64/libnostr_sdk_ffi.so'], natives
+        # webrtc-java native: jar present, its licence texts shipped verbatim, jlink modules cover the call/media/DB/dbus code
+        wjar = [j for j in jars if j.name.startswith('webrtc-java-') and '-linux-x86_64-' in j.name]
+        assert len(wjar) == 1, wjar
+        with zipfile.ZipFile(wjar[0]) as jar:
+            texts = [n for n in jar.namelist() if n.startswith('META-INF/licenses/') and not n.endswith('/')]
+            assert texts, 'native jar has no licence texts'
+            for name in texts:
+                shipped = root / 'lib/licenses/webrtc-java-native' / name[len('META-INF/licenses/'):]
+                assert shipped.read_bytes() == jar.read(name), name
+        modules = (root / 'lib/runtime/release').read_text()
+        for module in ('java.sql', 'java.transaction.xa', 'jdk.crypto.ec', 'jdk.security.auth', 'java.desktop'):
+            assert module in modules.split('MODULES="')[1].split('"')[0].split(), module
         inv = json.loads((output / 'archive-inventory.json').read_text())
         assert len(jars) == inv['jar_count']
         assert len(list(root.rglob('*.so'))) == inv['standalone_so_count']

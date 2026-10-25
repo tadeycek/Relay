@@ -75,14 +75,19 @@ compose.desktop {
         mainClass = "com.relay.app.desktop.MainKt"
 
         nativeDistributions {
-            targetFormats(TargetFormat.Deb, TargetFormat.AppImage)
+            targetFormats(TargetFormat.Deb)
             packageName = "relay"
             packageVersion = "0.1.0"
             description = "Relay desktop client"
             vendor = "Relay"
             // jpackage's suggested module set misses java.sql even though DesktopMessageStore uses
             // JDBC directly; without it the packaged app dies with NoClassDefFoundError.
-            modules("java.sql")
+            modules("java.sql", "java.transaction.xa", "jdk.security.auth")
+            linux {
+                iconFile.set(project.file("packaging/linux/relay.png"))
+                shortcut = true
+                menuGroup = "Network"
+            }
         }
     }
 }

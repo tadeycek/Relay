@@ -57,17 +57,17 @@
       "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
     },
     {
-      "jar": "lib/app/core-35405f6a80d473b7d7b75ef95642369.jar",
-      "sha256": "99b7b9a14802a772ecdf612f06c322565c31a7a02b2efdf5327c054174f51b0c",
-      "bytes": 607674,
+      "jar": "lib/app/core-common-2.2.0-2212d240dfe1e8a7598ee117ccc316d.jar",
+      "sha256": "65308a06b1c00ee186cb9e19321383f043b993813f1522c47f4a3e3303bdba41",
+      "bytes": 11657,
       "embedded_natives": [],
       "embedded_license_entries": [],
       "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
     },
     {
-      "jar": "lib/app/core-common-2.2.0-2212d240dfe1e8a7598ee117ccc316d.jar",
-      "sha256": "65308a06b1c00ee186cb9e19321383f043b993813f1522c47f4a3e3303bdba41",
-      "bytes": 11657,
+      "jar": "lib/app/core-e2dfb324e556d21c833cb81125eb2e50.jar",
+      "sha256": "f53bc335bd30f04927d5ce10d6c9419751c5b097dd2108a2991bc57a0ab1c9ba",
+      "bytes": 677147,
       "embedded_natives": [],
       "embedded_license_entries": [],
       "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
@@ -89,9 +89,9 @@
       "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
     },
     {
-      "jar": "lib/app/desktop-0.1.0-d45ed2b291d4d77fed86d67c4a06064.jar",
-      "sha256": "aa1364042400a53e35ae839539dcd552b82874292e96852522cdd434364ea406",
-      "bytes": 786331,
+      "jar": "lib/app/desktop-0.1.0-dc58d24b74289887e24d2f4cb11dc39.jar",
+      "sha256": "ba7d830933a522055aa96b8657d8bbd313348e418632c221510c3f7e930b76b0",
+      "bytes": 948453,
       "embedded_natives": [],
       "embedded_license_entries": [],
       "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
@@ -413,8 +413,8 @@
       "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
     },
     {
-      "jar": "lib/app/skiko-awt-runtime-linux-x64-0.8.18-d863f924539f388539c75c0c7262f3f.jar",
-      "sha256": "fe753366585a2364c7f464a85156f03d7da7d95a132fdb8961638ab38ac5e84e",
+      "jar": "lib/app/skiko-awt-runtime-linux-x64-0.8.18-8d7a93cfb1dc13d905ff458e8c7a163.jar",
+      "sha256": "b09c397d2458fe73753a71f82a3ea51f375457aa04e70470973369c717d726e4",
       "bytes": 293,
       "embedded_natives": [],
       "embedded_license_entries": [],
@@ -531,6 +531,35 @@
       "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
     },
     {
+      "jar": "lib/app/webrtc-java-0.20.0-c733343250561533a49e1cd7316842b3.jar",
+      "sha256": "7c2b8349fd1a628b7ced59106ab4dd3314dd0a0e0944ea0e740f84ac9c4ff349",
+      "bytes": 190128,
+      "embedded_natives": [],
+      "embedded_license_entries": [],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
+      "jar": "lib/app/webrtc-java-0.20.0-linux-x86_64-713d19632b38d241756291b12d0f4.jar",
+      "sha256": "b2f58cf5e8d27d0488ab3c5ab6e03261549850c92ed1e73527a138510df43137",
+      "bytes": 10426924,
+      "embedded_natives": [
+        "libwebrtc-java-linux-x86_64.so"
+      ],
+      "embedded_license_entries": [
+        "META-INF/licenses/",
+        "META-INF/licenses/libva/",
+        "META-INF/licenses/nvdec/",
+        "META-INF/licenses/nvenc/",
+        "META-INF/licenses/webrtc/",
+        "META-INF/licenses/libva/COPYING",
+        "META-INF/licenses/nvdec/LICENSE",
+        "META-INF/licenses/nvenc/LICENSE",
+        "META-INF/licenses/webrtc/LICENSE.md",
+        "META-INF/licenses/webrtc/PATENTS"
+      ],
+      "license_conclusion": "UNRESOLVED: verify exact POM and bundled native sources"
+    },
+    {
       "jar": "lib/runtime/lib/jrt-fs.jar",
       "sha256": "45fc41e80103af6ac9e9dd1403c9228271b77a9719f262e96a800486b9646952",
       "bytes": 110124,
@@ -547,6 +576,8 @@
     "lib/runtime/lib/libawt_xawt.so",
     "lib/runtime/lib/libfontmanager.so",
     "lib/runtime/lib/libfreetype.so",
+    "lib/runtime/lib/libj2gss.so",
+    "lib/runtime/lib/libjaas.so",
     "lib/runtime/lib/libjava.so",
     "lib/runtime/lib/libjavajpeg.so",
     "lib/runtime/lib/libjawt.so",
@@ -599,9 +630,18 @@
     "lib/runtime/legal/java.logging/ADDITIONAL_LICENSE_INFO",
     "lib/runtime/legal/java.logging/ASSEMBLY_EXCEPTION",
     "lib/runtime/legal/java.logging/LICENSE",
+    "lib/runtime/legal/java.naming/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.naming/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.naming/LICENSE",
     "lib/runtime/legal/java.prefs/ADDITIONAL_LICENSE_INFO",
     "lib/runtime/legal/java.prefs/ASSEMBLY_EXCEPTION",
     "lib/runtime/legal/java.prefs/LICENSE",
+    "lib/runtime/legal/java.security.jgss/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.security.jgss/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.security.jgss/LICENSE",
+    "lib/runtime/legal/java.security.sasl/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/java.security.sasl/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/java.security.sasl/LICENSE",
     "lib/runtime/legal/java.sql/ADDITIONAL_LICENSE_INFO",
     "lib/runtime/legal/java.sql/ASSEMBLY_EXCEPTION",
     "lib/runtime/legal/java.sql/LICENSE",
@@ -618,10 +658,13 @@
     "lib/runtime/legal/java.xml/xerces.md",
     "lib/runtime/legal/jdk.crypto.ec/ADDITIONAL_LICENSE_INFO",
     "lib/runtime/legal/jdk.crypto.ec/ASSEMBLY_EXCEPTION",
-    "lib/runtime/legal/jdk.crypto.ec/LICENSE"
+    "lib/runtime/legal/jdk.crypto.ec/LICENSE",
+    "lib/runtime/legal/jdk.security.auth/ADDITIONAL_LICENSE_INFO",
+    "lib/runtime/legal/jdk.security.auth/ASSEMBLY_EXCEPTION",
+    "lib/runtime/legal/jdk.security.auth/LICENSE"
   ],
-  "jar_count": 58,
-  "embedded_native_count": 52,
-  "standalone_so_count": 25,
-  "runtime_legal_count": 52
+  "jar_count": 60,
+  "embedded_native_count": 53,
+  "standalone_so_count": 27,
+  "runtime_legal_count": 64
 }
