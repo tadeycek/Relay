@@ -39,6 +39,10 @@ interface ChatReads {
     fun setDraft(conversationId: String, text: String)
     fun meta(name: String): String?
     fun setMeta(name: String, value: String)
+    /** WP14: the conversation is a direct, call-eligible contact. */
+    fun callAvailable(conversationId: String): Boolean = false
+    /** WP14: local call-log rows for a conversation (never derived from message text). */
+    fun callRecords(conversationId: String): List<DesktopCallRecord> = emptyList()
 }
 
 class EngineChatReads(private val engine: DesktopEngine) : ChatReads {
@@ -61,6 +65,8 @@ class EngineChatReads(private val engine: DesktopEngine) : ChatReads {
     override fun setDraft(conversationId: String, text: String) { store.setConversationDraft(conversationId, text) }
     override fun meta(name: String) = store.meta(name)
     override fun setMeta(name: String, value: String) { store.setMeta(name, value) }
+    override fun callAvailable(conversationId: String) = engine.canCall(conversationId)
+    override fun callRecords(conversationId: String) = store.callRecords(conversationId)
 }
 
 /**
@@ -196,6 +202,8 @@ class DesktopChat(
                 },
                 avatarOf = { key -> profiles[key]?.avatar },
                 now = now(),
+                calls = if (item.isGroup) emptyList() else reads.callRecords(item.id),
+                contactName = item.title,
             )
         }.orEmpty()
 
@@ -218,6 +226,7 @@ class DesktopChat(
             offline = status == TransportStatus.STOPPED,
             canSend = current != null,
             error = error,
+            canCall = current != null && !current.isGroup && reads.callAvailable(current.id),
         )
     }
 

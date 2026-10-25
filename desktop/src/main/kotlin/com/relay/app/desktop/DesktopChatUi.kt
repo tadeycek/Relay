@@ -74,6 +74,12 @@ data class ChatActions(
     val attach: () -> Unit = {},
     /** Opens the photo/video picker (WP08). */
     val attachMedia: () -> Unit = {},
+    /** WP14 call commands. */
+    val startCall: () -> Unit = {},
+    val acceptCall: () -> Unit = {},
+    val declineCall: () -> Unit = {},
+    val hangUp: () -> Unit = {},
+    val toggleMute: (Boolean) -> Unit = {},
 )
 
 // Discord's own density, not its logo or typeface: a dark three-pane messenger.
@@ -119,6 +125,11 @@ fun ChatScreen(
     actions: ChatActions,
     modifier: Modifier = Modifier,
     engine: DesktopEngine? = null,
+    call: DesktopCallUi = DesktopCallUi(),
+    /** False when the host window shows the ring card in its own always-on-top window instead. */
+    showRing: Boolean = true,
+    callClock: () -> Long = System::currentTimeMillis,
+    callTicks: Boolean = true,
 ) {
     var quickSwitcher by remember { mutableStateOf(false) }
     var showMembers by remember { mutableStateOf(true) }
@@ -161,7 +172,9 @@ fun ChatScreen(
             GuildRail(state, onSettings = { dialog = ChatDialog.Settings })
             ConversationList(state, actions, modifier = Modifier.width(280.dp), onQuickSwitcher = { quickSwitcher = true })
             Column(Modifier.weight(1f).fillMaxHeight().background(MainColor)) {
-                ThreadHeader(state, showMembers, onToggleMembers = { showMembers = !showMembers })
+                ThreadHeader(state, showMembers, onToggleMembers = { showMembers = !showMembers }, call = call, onCall = actions.startCall)
+                if (call.stage != DesktopCallStage.IDLE && call.stage != DesktopCallStage.RINGING_IN) CallBar(call, actions, callClock, callTicks)
+                else if (call.stage == DesktopCallStage.IDLE) call.notice?.let { CallNotice(it) }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
                     if (state.selected == null) {
                         EmptyPane("No conversation selected", "Pick a chat on the left, or press Ctrl+K to search.")
@@ -203,6 +216,9 @@ fun ChatScreen(
             }
         }
 
+        if (showRing && call.stage == DesktopCallStage.RINGING_IN) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { RingCard(call, actions) }
+        }
         if (quickSwitcher) {
             QuickSwitcher(state, actions, onClose = { quickSwitcher = false })
         }
@@ -315,7 +331,7 @@ private fun RailRow(item: RailItem, selected: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun ThreadHeader(state: ChatUiState, showMembers: Boolean, onToggleMembers: () -> Unit) {
+private fun ThreadHeader(state: ChatUiState, showMembers: Boolean, onToggleMembers: () -> Unit, call: DesktopCallUi = DesktopCallUi(), onCall: () -> Unit = {}) {
     Row(
         Modifier.fillMaxWidth().height(56.dp).background(HeaderColor).padding(horizontal = 18.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -327,6 +343,12 @@ private fun ThreadHeader(state: ChatUiState, showMembers: Boolean, onToggleMembe
         Spacer(Modifier.width(8.dp))
         Text(state.selected?.subtitle.orEmpty(), color = MutedColor, fontSize = 11.sp)
         Spacer(Modifier.weight(1f))
+        if (state.canCall && state.selected?.isGroup != true) {
+            OutlinedButton(onClick = onCall, enabled = !call.live, modifier = Modifier.testTag("call-button")) {
+                Text("Call", color = if (call.live) MutedColor else TextColor, fontSize = 12.sp)
+            }
+            Spacer(Modifier.width(12.dp))
+        }
         Text(state.status, color = if (state.offline) Color(0xFFED4245) else Color(0xFF3BA55D), fontSize = 11.sp, modifier = Modifier.testTag("status-label"))
         if (state.selected?.isGroup == true) {
             Spacer(Modifier.width(10.dp))
@@ -350,6 +372,7 @@ private fun MessageList(state: ChatUiState, listState: androidx.compose.foundati
 
 @Composable
 private fun MessageRow(row: ThreadRow, engine: DesktopEngine? = null) {
+    if (row.callLog) { CallLogNote(row); return }
     Column(Modifier.fillMaxWidth().padding(top = if (row.showHeader) 10.dp else 2.dp)) {
         if (row.showHeader) {
             Row(verticalAlignment = Alignment.CenterVertically) {

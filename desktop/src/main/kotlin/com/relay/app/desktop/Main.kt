@@ -33,6 +33,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -100,21 +101,47 @@ fun main(args: Array<String>) {
     // The UI owns engine lifetime (a completed link replaces the keys and the transport).
     engine.close()
 
+    Runtime.getRuntime().addShutdownHook(CallLifecycle.shutdownHook({ CallLifecycle.engine.getAndSet(null) }, boundMs = 4_000))
     application {
+        val windowState = androidx.compose.ui.window.rememberWindowState(size = androidx.compose.ui.unit.DpSize(900.dp, 800.dp))
         // The link card (QR + code + status + actions) is ~700 px tall; the default 800x600 window clipped
         // and squeezed its action buttons until their labels vanished. Size and floor are explicit.
         Window(
-            onCloseRequest = { exitApplication() },
+            // A live call keeps running when the window is closed: the host belongs to the engine, so the window is only
+            // minimised. Quitting with no call (or after it ends) really exits.
+            onCloseRequest = { if (CallLifecycle.live()) windowState.isMinimized = true else exitApplication() },
             title = "Relay",
-            state = androidx.compose.ui.window.rememberWindowState(size = androidx.compose.ui.unit.DpSize(900.dp, 800.dp)),
+            state = windowState,
         ) {
             window.minimumSize = java.awt.Dimension(760, 740)
             DisposableEffect(window) { installFileDrop(window); onDispose { window.dropTarget = null } }
             RelayTheme {
-                Root(paths, options.mailboxUrl, options.peerInnerKeys, options.initialPeer, options.showChatUi, options.seedDemoMedia)
+                Root(paths, options.mailboxUrl, options.peerInnerKeys, options.initialPeer, options.showChatUi, options.seedDemoMedia, options.callDemo)
             }
         }
     }
+    // App exit: hang up, flush the hang-up, cancel TURN/timers, close the peer, THEN stop the transport (DesktopEngine.stop order).
+    CallLifecycle.engine.getAndSet(null)?.close()
+    kotlin.system.exitProcess(0)
+}
+
+/** Lets the window close handler and the exit path reach the engine that owns the call host. */
+internal object CallLifecycle {
+    val engine = java.util.concurrent.atomic.AtomicReference<DesktopEngine?>(null)
+    fun live(): Boolean = engine.get()?.callState?.value?.live == true
+
+    /**
+     * JVM shutdown hook (SIGTERM, window-manager kill, logout): runs the same hang-up path as a normal exit. [take] hands
+     * out the engine at most once, so a normal exit and the hook never both close it. The close runs on its own daemon
+     * thread and the hook waits at most [boundMs], so a stuck close can never keep the JVM from exiting.
+     */
+    fun shutdownHook(take: () -> AutoCloseable?, boundMs: Long): Thread = Thread({
+        val target = take()
+        if (target != null) {
+            val closer = Thread({ runCatching { target.close() } }, "relay-call-shutdown-close").apply { isDaemon = true; start() }
+            runCatching { closer.join(boundMs) }
+        }
+    }, "relay-call-shutdown-hook")
 }
 
 internal data class Args(
@@ -131,6 +158,8 @@ internal data class Args(
     val showChatUi: Boolean = false,
     /** WP08 diagnostics: receive a demo photo and video through the real path from an in-memory server. */
     val seedDemoMedia: String? = null,
+    /** WP14 diagnostics: render the Call button, an in-call bar and a call-log row without a call (UI render only). */
+    val callDemo: Boolean = false,
 ) {
     companion object {
         fun parse(args: Array<String>): Args {
@@ -141,6 +170,7 @@ internal data class Args(
             var printIdentity = false
             var showChatUi = false
             var seedDemoMedia: String? = null
+            var callDemo = false
             var sendTestMessage = false
             var sendTo: String? = null
             var sendToInner: String? = null
@@ -162,6 +192,7 @@ internal data class Args(
                     "--seed-demo-media" -> seedDemoMedia = args.getOrNull(++i)
                     "--print-identity" -> printIdentity = true
                     "--show-chat-ui" -> showChatUi = true
+                    "--demo-call" -> callDemo = true
                     "--send-test-message" -> {
                         sendTestMessage = true
                         sendTo = args.getOrNull(++i)
@@ -171,7 +202,7 @@ internal data class Args(
                         println(
                             "usage: relay-desktop [--mailbox-url URL] [--peer HEX] " +
                                 "[--peer-inner-key BASE64 PEER] [--config-dir DIR] [--data-dir DIR] " +
-                                "[--print-identity] [--show-chat-ui] [--send-test-message PUBKEY INNERKEY]",
+                                "[--print-identity] [--show-chat-ui] [--demo-call] [--send-test-message PUBKEY INNERKEY]",
                         )
                         kotlin.system.exitProcess(0)
                     }
@@ -186,7 +217,8 @@ internal data class Args(
                 }
             }
             require(seedDemoMedia == null || showChatUi) { "--seed-demo-media requires --show-chat-ui" }
-            return Args(mailboxUrl, initialPeer, configDir, dataDir, peerKeys, printIdentity, sendTestMessage, sendTo, sendToInner, showChatUi, seedDemoMedia)
+            require(!callDemo || showChatUi) { "--demo-call requires --show-chat-ui" }
+            return Args(mailboxUrl, initialPeer, configDir, dataDir, peerKeys, printIdentity, sendTestMessage, sendTo, sendToInner, showChatUi, seedDemoMedia, callDemo)
         }
     }
 }
@@ -212,17 +244,20 @@ private fun RelayTheme(content: @Composable () -> Unit) {
  * ([generation] increments) and the transport picks up the device-auth key and `?device=<id>`.
  */
 @Composable
-private fun Root(paths: DesktopPaths, mailboxUrl: String, peerInnerKeys: Map<String, String>, initialPeer: String?, showChatUi: Boolean = false, seedDemoMedia: String? = null) {
+private fun Root(paths: DesktopPaths, mailboxUrl: String, peerInnerKeys: Map<String, String>, initialPeer: String?, showChatUi: Boolean = false, seedDemoMedia: String? = null, callDemo: Boolean = false) {
     var generation by remember { mutableStateOf(0) }
     val loopback = remember { if (seedDemoMedia != null) LoopbackMediaTransport() else null }
     val engine = remember(generation) {
         DesktopEngine.create(paths, mailboxUrl, peerInnerKeys, enableFileSendForTests = System.getProperty("relay.files.send.testOptIn") == "true",
             enableMediaSend = System.getProperty("relay.media.send.testOptIn") == "true", mediaTransport = loopback).also { if (mailboxUrl.isNotBlank()) it.start() }
     }
-    DisposableEffect(engine) { onDispose { engine.close() } }
+    DisposableEffect(engine) {
+        CallLifecycle.engine.set(engine)
+        onDispose { CallLifecycle.engine.compareAndSet(engine, null); engine.close() }
+    }
 
     if (showChatUi || engine.isLinked()) {
-        App(engine, initialPeer, seedDemoMedia, loopback)
+        App(engine, initialPeer, seedDemoMedia, loopback, callDemo)
     } else {
         LinkScreen(engine, mailboxUrl, onLinked = { generation++ })
     }
@@ -430,7 +465,7 @@ private fun copyToClipboard(text: String) {
 // ---- conversations -----------------------------------------------------------------------------
 
 @Composable
-private fun App(engine: DesktopEngine, initialPeer: String?, seedDemoMedia: String? = null, loopback: LoopbackMediaTransport? = null) {
+private fun App(engine: DesktopEngine, initialPeer: String?, seedDemoMedia: String? = null, loopback: LoopbackMediaTransport? = null, callDemo: Boolean = false) {
     val scope = rememberCoroutineScope()
     val controller = remember(engine) { DesktopChat(engine, scope) }
     LaunchedEffect(engine) { controller.start() }
@@ -444,6 +479,12 @@ private fun App(engine: DesktopEngine, initialPeer: String?, seedDemoMedia: Stri
             controller.select(peer)
         }
     }
+
+    LaunchedEffect(engine, callDemo) {
+        if (callDemo) runCatching { DesktopCallDemo.seed(engine) }.onSuccess { controller.select(DesktopCallDemo.PEER) }
+    }
+    val realCall by engine.callState.collectAsState()
+    val call = if (callDemo) DesktopCallDemo.ui() else realCall
 
     // Select the requested peer on launch (linking flow).
     LaunchedEffect(initialPeer) {
@@ -490,11 +531,32 @@ private fun App(engine: DesktopEngine, initialPeer: String?, seedDemoMedia: Stri
                 if (peer != null) {
                     desktopFileDialog(false)?.let { DesktopFileDrops.paths.trySend(it) }
                 }
-            }
+            },
+            // Calls block on the serial call host (native audio on open), so never on the UI thread.
+            startCall = {
+                val peer = controller.state.value.selected?.id
+                if (peer != null) scope.launch(kotlinx.coroutines.Dispatchers.IO) { engine.startCall(peer)?.let { controller.reportError(it) } }
+            },
+            acceptCall = { scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.acceptCall() } } },
+            declineCall = { scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.declineCall() } } },
+            hangUp = { scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.hangUpCall() } } },
+            toggleMute = { muted -> scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.muteCall(muted) } } },
         )
     }
 
-    ChatScreen(state = state, actions = actions, engine = engine)
+    ChatScreen(state = state, actions = actions, engine = engine, call = call, showRing = false)
+    // The ring lives in its own always-on-top window of THIS app, so it shows even when the main window is minimised.
+    if (call.stage == DesktopCallStage.RINGING_IN) {
+        androidx.compose.ui.window.Window(
+            onCloseRequest = { actions.declineCall() },
+            title = "Incoming call",
+            alwaysOnTop = true,
+            resizable = false,
+            state = androidx.compose.ui.window.rememberWindowState(size = androidx.compose.ui.unit.DpSize(380.dp, 300.dp)),
+        ) {
+            RelayTheme { Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background), contentAlignment = Alignment.Center) { RingCard(call, actions) } }
+        }
+    }
 }
 
 @Composable

@@ -44,6 +44,9 @@ class DesktopEngine(
     val files: DesktopFiles? = null,
     /** WP08 photos and videos. Receiving is always on when set; sending is gated inside the controller. */
     val media: DesktopMedia? = null,
+    /** WP14 1:1 calls. Null without a linked device and a mailbox; incoming call packets are then dropped, never shown as chat. */
+    val calls: DesktopCallService? = null,
+    private val callsLinked: () -> Boolean = { linkKeys?.linkedDevice() != null },
 ) : AutoCloseable {
 
     private val _revision = MutableStateFlow(0L)
@@ -77,7 +80,25 @@ class DesktopEngine(
     val status: StateFlow<TransportStatus> get() = transport.status
 
     private var collector: Job? = null
-    init { media?.onChange = { _revision.value++ } }
+    init { media?.onChange = { _revision.value++ }; calls?.onChange = { _revision.value++ } }
+
+    private val idleCall = MutableStateFlow(DesktopCallUi()).asStateFlow()
+    /** What the call UI renders. The host behind it lives with the engine, not with any window. */
+    val callState: StateFlow<DesktopCallUi> get() = calls?.state ?: idleCall
+
+    /** Direct conversation with a QR-verified, non-blocked, non-deleted contact. Independent of link/online state, which [startCall] reports honestly. */
+    fun canCall(conversationId: String): Boolean =
+        !isGroupConversation(conversationId) && store.contacts().any { it.nostrPubkey == conversationId && DesktopCallEligibility.isEligible(it) }
+
+    /** Null = the call started ringing; otherwise the reason it was refused. Blocking: call off the UI thread. */
+    fun startCall(peer: String): String? {
+        DesktopCallGuard.startBlock(callsLinked(), calls != null, status.value, canCall(peer), isGroupConversation(peer))?.let { return it }
+        return calls!!.start(peer)
+    }
+    fun acceptCall() { calls?.accept() }
+    fun declineCall() { calls?.decline() }
+    fun hangUpCall() { calls?.hangUp() }
+    fun muteCall(muted: Boolean) { calls?.setMuted(muted) }
     private var fileWorker: Job? = null
 
     private val sync: DesktopSyncService? =
@@ -288,6 +309,8 @@ class DesktopEngine(
     }
 
     suspend fun stop() {
+        // Calls first: hang up, flush the hang-up signal, cancel TURN/timers, close the peer. Only then the transport.
+        calls?.let { service -> runCatching { kotlinx.coroutines.withContext(Dispatchers.IO) { service.close() } } }
         fileWorker?.cancel(); fileWorker = null
         sync?.stop()
         collector?.cancel()
@@ -334,17 +357,14 @@ class DesktopEngine(
             val identity = DesktopIdentity(paths, secrets, linkKeys = linkKeys)
             val keyMaterial = DesktopKeyMaterial(paths, secrets)
             val store = DesktopMessageStore(paths.databaseFile, secrets)
-            val transport: Transport = if (mailboxUrl.isBlank()) {
-                OfflineTransport()
-            } else {
-                DesktopMailboxTransport(
-                    baseUrl = mailboxUrl,
-                    keys = identity.keys(),
-                    signer = identity.signer(),
-                    rawStore = store,
-                    device = linkKeys.deviceAuth(),
-                )
-            }
+            val mailbox = if (mailboxUrl.isBlank()) null else DesktopMailboxTransport(
+                baseUrl = mailboxUrl,
+                keys = identity.keys(),
+                signer = identity.signer(),
+                rawStore = store,
+                device = linkKeys.deviceAuth(),
+            )
+            val transport: Transport = mailbox ?: OfflineTransport()
             val device = linkKeys.deviceAuth()
             var publisher: SentSyncPublisher? = null
             var applier: SentSyncApplier? = null
@@ -363,8 +383,18 @@ class DesktopEngine(
                     knownConversation = { store.conversation(it) != null },
                 )
             }
+            // Calls exist only for a linked device on a real mailbox: signing and the TURN fetch need the enrolled key.
+            val calls = if (mailbox != null && device != null) DesktopCallService(
+                selfPubkey = identity.publicKeyHex(),
+                deviceId = device.deviceId,
+                link = mailbox,
+                isAllowedPeer = DesktopCallEligibility.senderFilter(identity.publicKeyHex()) { store.contacts() },
+                record = { store.recordCall(it) },
+                nameOf = { key -> store.profile(key)?.name?.takeIf { it.isNotBlank() } ?: store.contacts().firstOrNull { it.nostrPubkey == key }?.name ?: (key.take(8) + "…") },
+            ) else null
             return DesktopEngine(
                 identity, keyMaterial, store, transport, peerInnerKeys,
+                calls = calls,
                 linkKeys = linkKeys, syncPublisher = publisher, syncApplier = applier,
                 files = if (mailboxUrl.startsWith("https://")) DesktopFiles(paths.databaseFile.parent.resolve("files"), store,
                     DesktopFileMediaClient(com.relay.app.transport.mailbox.MailboxMedia.Client(

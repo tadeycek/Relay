@@ -37,6 +37,8 @@ data class ThreadRow(
     /** A valid `TYPE:MEDIA` reference: the thread renders a media bubble instead of [text]. */
     val media: Boolean = false,
     val caption: String? = null,
+    /** A local call-log note (WP14). Only [DesktopUi.buildThread] sets it, from the call-log table, never from message text. */
+    val callLog: Boolean = false,
 )
 
 data class MemberRow(val key: String, val name: String, val isOwner: Boolean, val isSelf: Boolean, val avatar: ByteArray?)
@@ -56,6 +58,8 @@ data class ChatUiState(
     val offline: Boolean = false,
     val canSend: Boolean = false,
     val error: String? = null,
+    /** The selected conversation is a direct, eligible contact: the header shows a Call button (WP14). */
+    val canCall: Boolean = false,
 )
 
 /**
@@ -140,11 +144,21 @@ object DesktopUi {
         nameOf: (String) -> String,
         avatarOf: (String) -> ByteArray?,
         now: Long,
+        calls: List<DesktopCallRecord> = emptyList(),
+        contactName: String = "",
     ): List<ThreadRow> {
         val sorted = messages.sortedBy { it.ts }
-        val rows = ArrayList<ThreadRow>(sorted.size)
+        val rows = ArrayList<ThreadRow>(sorted.size + calls.size)
         var previous: DesktopMessage? = null
+        val pendingCalls = ArrayDeque(calls.sortedBy { it.atMs })
+        fun callRow(call: DesktopCallRecord) = ThreadRow(
+            // ":" is outside DELIVERY_ID ([A-Za-z0-9_-]), so no remote message id can ever equal a call-row key.
+            id = "call:log:${call.callId}", text = DesktopCallLog.label(call, contactName), senderKey = call.peer,
+            senderName = contactName, outgoing = !call.incoming, time = clockLabel(call.atMs, now), showHeader = false,
+            avatar = null, unsupported = false, callLog = true,
+        )
         for (message in sorted) {
+            while (pendingCalls.isNotEmpty() && pendingCalls.first().atMs <= message.ts) { rows += callRow(pendingCalls.removeFirst()); previous = null }
             val sameSender = previous != null && previous.sender == message.sender && previous.outgoing == message.outgoing
             val closeInTime = previous != null && message.ts - previous.ts <= GROUP_WINDOW_MS
             val sameDay = previous != null && dayLabel(previous.ts, now) == dayLabel(message.ts, now)
@@ -165,7 +179,19 @@ object DesktopUi {
             )
             previous = message
         }
-        return rows
+        while (pendingCalls.isNotEmpty()) rows += callRow(pendingCalls.removeFirst())
+        return uniqueKeys(rows)
+    }
+
+    /** LazyColumn keys must be unique or Compose throws on every composition; guarantee it whatever the inputs. */
+    private fun uniqueKeys(rows: List<ThreadRow>): List<ThreadRow> {
+        val seen = HashSet<String>(rows.size * 2)
+        return rows.map { row ->
+            var id = row.id
+            var n = 2
+            while (!seen.add(id)) id = "${row.id}#${n++}"
+            if (id == row.id) row else row.copy(id = id)
+        }
     }
 
     fun filterRail(items: List<RailItem>, query: String): List<RailItem> {

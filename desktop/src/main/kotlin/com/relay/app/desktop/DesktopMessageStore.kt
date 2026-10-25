@@ -70,6 +70,7 @@ class DesktopMessageStore(
         migrate()
         ensureGroupHiddenColumn()
         createSyncTables()
+        createCallTables()
         connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS file_transfers(id TEXT PRIMARY KEY, record TEXT NOT NULL)") }
         connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS file_sync_refs(wire TEXT PRIMARY KEY, file_id TEXT NOT NULL, media TEXT NOT NULL)") }
         connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS media_transfers(id TEXT PRIMARY KEY, record TEXT NOT NULL)") }
@@ -247,6 +248,66 @@ class DesktopMessageStore(
      * written by earlier builds open unchanged and the schema stays at version 2. The table and the
      * sync cursor (`meta` row `sync.cursor`) live in the same encrypted database as the messages.
      */
+    /**
+     * WP14 call log. A separate table, written only by [recordCall] from the local call host: a remote message can
+     * never become a call row because call rows are not messages. Additive (`IF NOT EXISTS`), no `user_version` bump.
+     */
+    private fun createCallTables() {
+        synchronized(lock) {
+            connection.createStatement().use { st ->
+                st.execute(
+                    "CREATE TABLE IF NOT EXISTS call_log(call_id TEXT PRIMARY KEY, peer TEXT NOT NULL, incoming INTEGER NOT NULL, " +
+                        "outcome TEXT NOT NULL, reason TEXT, duration_ms INTEGER NOT NULL, at_ms INTEGER NOT NULL)",
+                )
+            }
+        }
+    }
+
+    /** Stores one local call event once per call id. Returns false for a duplicate; throws on a malformed record. */
+    fun recordCall(record: DesktopCallRecord): Boolean = synchronized(lock) {
+        require(DesktopCallLog.valid(record)) { "Malformed call record" }
+        connection.autoCommit = false
+        try {
+            connection.prepareStatement("INSERT INTO conversations(id, peer, title, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO NOTHING").use { ps ->
+                ps.setString(1, record.peer); ps.setString(2, record.peer); ps.setString(3, record.peer); ps.setLong(4, record.atMs); ps.executeUpdate()
+            }
+            val inserted = connection.prepareStatement(
+                "INSERT OR IGNORE INTO call_log(call_id, peer, incoming, outcome, reason, duration_ms, at_ms) VALUES(?,?,?,?,?,?,?)",
+            ).use { ps ->
+                ps.setString(1, record.callId); ps.setString(2, record.peer); ps.setInt(3, if (record.incoming) 1 else 0)
+                ps.setString(4, record.outcome.name); ps.setString(5, record.reason); ps.setLong(6, record.durationMs); ps.setLong(7, record.atMs)
+                ps.executeUpdate() == 1
+            }
+            if (inserted) connection.prepareStatement("UPDATE conversations SET updated_at = MAX(updated_at, ?) WHERE id = ?").use { ps ->
+                ps.setLong(1, record.atMs); ps.setString(2, record.peer); ps.executeUpdate()
+            }
+            connection.commit()
+            secureFiles()
+            inserted
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    fun callRecords(peer: String, limit: Int = 200): List<DesktopCallRecord> = synchronized(lock) {
+        connection.prepareStatement(
+            "SELECT call_id, peer, incoming, outcome, reason, duration_ms, at_ms FROM call_log WHERE peer = ? ORDER BY at_ms DESC LIMIT ?",
+        ).use { ps ->
+            ps.setString(1, peer); ps.setInt(2, limit)
+            ps.executeQuery().use { rs ->
+                buildList {
+                    while (rs.next()) {
+                        val outcome = com.relay.app.call.CallOutcome.entries.firstOrNull { it.name == rs.getString(4) } ?: continue
+                        add(DesktopCallRecord(rs.getString(1), rs.getString(2), rs.getInt(3) == 1, outcome, rs.getString(5), rs.getLong(6), rs.getLong(7)))
+                    }
+                }.reversed()
+            }
+        }
+    }
+
     private fun createSyncTables() {
         synchronized(lock) {
             connection.createStatement().use { st ->
