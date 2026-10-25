@@ -111,7 +111,7 @@ fun main(args: Array<String>) {
             window.minimumSize = java.awt.Dimension(760, 740)
             DisposableEffect(window) { installFileDrop(window); onDispose { window.dropTarget = null } }
             RelayTheme {
-                Root(paths, options.mailboxUrl, options.peerInnerKeys, options.initialPeer, options.showChatUi)
+                Root(paths, options.mailboxUrl, options.peerInnerKeys, options.initialPeer, options.showChatUi, options.seedDemoMedia)
             }
         }
     }
@@ -129,6 +129,8 @@ internal data class Args(
     val sendToInner: String? = null,
     /** WP07 diagnostics: render the chat UI without a linked phone. */
     val showChatUi: Boolean = false,
+    /** WP08 diagnostics: receive a demo photo and video through the real path from an in-memory server. */
+    val seedDemoMedia: String? = null,
 ) {
     companion object {
         fun parse(args: Array<String>): Args {
@@ -138,6 +140,7 @@ internal data class Args(
             var dataDir: String? = null
             var printIdentity = false
             var showChatUi = false
+            var seedDemoMedia: String? = null
             var sendTestMessage = false
             var sendTo: String? = null
             var sendToInner: String? = null
@@ -155,6 +158,8 @@ internal data class Args(
                         if (peer != null && value.isNotEmpty()) peerKeys[peer] = value
                     }
                     "--enable-file-send-for-tests" -> System.setProperty("relay.files.send.testOptIn", "true")
+                    "--enable-media-send-for-tests" -> System.setProperty("relay.media.send.testOptIn", "true")
+                    "--seed-demo-media" -> seedDemoMedia = args.getOrNull(++i)
                     "--print-identity" -> printIdentity = true
                     "--show-chat-ui" -> showChatUi = true
                     "--send-test-message" -> {
@@ -180,7 +185,8 @@ internal data class Args(
                     "--show-chat-ui requires explicit --config-dir and --data-dir (it never uses the default profile)"
                 }
             }
-            return Args(mailboxUrl, initialPeer, configDir, dataDir, peerKeys, printIdentity, sendTestMessage, sendTo, sendToInner, showChatUi)
+            require(seedDemoMedia == null || showChatUi) { "--seed-demo-media requires --show-chat-ui" }
+            return Args(mailboxUrl, initialPeer, configDir, dataDir, peerKeys, printIdentity, sendTestMessage, sendTo, sendToInner, showChatUi, seedDemoMedia)
         }
     }
 }
@@ -206,15 +212,17 @@ private fun RelayTheme(content: @Composable () -> Unit) {
  * ([generation] increments) and the transport picks up the device-auth key and `?device=<id>`.
  */
 @Composable
-private fun Root(paths: DesktopPaths, mailboxUrl: String, peerInnerKeys: Map<String, String>, initialPeer: String?, showChatUi: Boolean = false) {
+private fun Root(paths: DesktopPaths, mailboxUrl: String, peerInnerKeys: Map<String, String>, initialPeer: String?, showChatUi: Boolean = false, seedDemoMedia: String? = null) {
     var generation by remember { mutableStateOf(0) }
+    val loopback = remember { if (seedDemoMedia != null) LoopbackMediaTransport() else null }
     val engine = remember(generation) {
-        DesktopEngine.create(paths, mailboxUrl, peerInnerKeys, enableFileSendForTests = System.getProperty("relay.files.send.testOptIn") == "true").also { if (mailboxUrl.isNotBlank()) it.start() }
+        DesktopEngine.create(paths, mailboxUrl, peerInnerKeys, enableFileSendForTests = System.getProperty("relay.files.send.testOptIn") == "true",
+            enableMediaSend = System.getProperty("relay.media.send.testOptIn") == "true", mediaTransport = loopback).also { if (mailboxUrl.isNotBlank()) it.start() }
     }
     DisposableEffect(engine) { onDispose { engine.close() } }
 
     if (showChatUi || engine.isLinked()) {
-        App(engine, initialPeer)
+        App(engine, initialPeer, seedDemoMedia, loopback)
     } else {
         LinkScreen(engine, mailboxUrl, onLinked = { generation++ })
     }
@@ -422,12 +430,20 @@ private fun copyToClipboard(text: String) {
 // ---- conversations -----------------------------------------------------------------------------
 
 @Composable
-private fun App(engine: DesktopEngine, initialPeer: String?) {
+private fun App(engine: DesktopEngine, initialPeer: String?, seedDemoMedia: String? = null, loopback: LoopbackMediaTransport? = null) {
     val scope = rememberCoroutineScope()
     val controller = remember(engine) { DesktopChat(engine, scope) }
     LaunchedEffect(engine) { controller.start() }
     var state by remember { mutableStateOf(ChatUiState()) }
     LaunchedEffect(controller) { controller.state.collect { state = it } }
+
+    LaunchedEffect(engine, seedDemoMedia) {
+        if (seedDemoMedia != null && loopback != null) {
+            val peer = "d".repeat(64)
+            runCatching { DesktopMediaDemo.seed(engine, loopback, peer, Path.of(seedDemoMedia)) }
+            controller.select(peer)
+        }
+    }
 
     // Select the requested peer on launch (linking flow).
     LaunchedEffect(initialPeer) {
@@ -442,9 +458,10 @@ private fun App(engine: DesktopEngine, initialPeer: String?) {
             val peer = controller.state.value.selected?.id
             if (peer == null) continue
             try {
-                engine.sendFile(peer, path)
+                if (MediaBubbleModel.isMediaFile(path)) engine.sendMedia(peer, path) else engine.sendFile(peer, path)
                 controller.refresh()
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                controller.reportError(e.message ?: "Could not send that file")
                 // The controller surfaces the error in its own state if it needs to; dropping a file
                 // when no conversation is selected is ignored.
             }
@@ -459,6 +476,15 @@ private fun App(engine: DesktopEngine, initialPeer: String?) {
             setOwnName = { controller.setOwnName(it) },
             setOwnAvatar = { controller.setOwnAvatar(it) },
             dismissError = { controller.dismissError() },
+            attachMedia = {
+                val peer = controller.state.value.selected?.id
+                when {
+                    peer == null -> controller.reportError("Select a conversation before attaching a photo or video")
+                    engine.media?.sendEnabled != true -> controller.reportError("Photo and video sending is disabled (receiving remains available)")
+                    peer.startsWith("group:") -> controller.reportError("Photo and video sending to groups is not available; use a direct chat")
+                    else -> desktopMediaDialog()?.let { DesktopFileDrops.paths.trySend(it) }
+                }
+            },
             attach = {
                 val peer = controller.state.value.selected?.id
                 if (peer != null) {

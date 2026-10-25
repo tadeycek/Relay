@@ -34,6 +34,9 @@ data class ThreadRow(
     val showHeader: Boolean,
     val avatar: ByteArray?,
     val unsupported: Boolean,
+    /** A valid `TYPE:MEDIA` reference: the thread renders a media bubble instead of [text]. */
+    val media: Boolean = false,
+    val caption: String? = null,
 )
 
 data class MemberRow(val key: String, val name: String, val isOwner: Boolean, val isSelf: Boolean, val avatar: ByteArray?)
@@ -63,6 +66,8 @@ object DesktopUi {
 
     const val UNSUPPORTED = "Unsupported message — update Relay to read this"
     const val FILE = "File attachment"
+    const val PHOTO = "Photo"
+    const val VIDEO = "Video"
 
     /**
      * What a stored body should show. Control bodies (profiles, group rosters, call signalling) are
@@ -72,6 +77,7 @@ object DesktopUi {
     fun displayText(body: String): String = when {
         body.isBlank() -> ""
         body.startsWith("TYPE:FILE|") -> FILE
+        body.startsWith("TYPE:MEDIA|") -> com.relay.app.media.MediaBody.parse(body)?.let { if (it.isVideo) VIDEO else PHOTO } ?: UNSUPPORTED
         body.startsWith("TYPE:") -> if (isControlBody(body)) "" else UNSUPPORTED
         else -> body
     }
@@ -154,6 +160,8 @@ object DesktopUi {
                 showHeader = header,
                 avatar = avatarOf(message.sender),
                 unsupported = text == UNSUPPORTED,
+                media = text == PHOTO || text == VIDEO,
+                caption = if (text == PHOTO || text == VIDEO) com.relay.app.media.MediaBody.parse(message.body)?.caption else null,
             )
             previous = message
         }

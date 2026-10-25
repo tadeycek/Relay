@@ -2,7 +2,7 @@
 id: WP14
 title: "Desktop: 1:1 calls"
 phase: L3
-lane: planned
+lane: doing
 depends_on: [WP06, WP12]
 specs: ["06 §5"]
 owned_files:

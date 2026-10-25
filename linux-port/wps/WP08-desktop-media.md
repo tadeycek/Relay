@@ -2,7 +2,7 @@
 id: WP08
 title: "Desktop: photos and videos"
 phase: L2
-lane: planned
+lane: doing
 depends_on: [WP06]
 specs: ["04 §3 Media viewing", "09 R14"]
 owned_files:

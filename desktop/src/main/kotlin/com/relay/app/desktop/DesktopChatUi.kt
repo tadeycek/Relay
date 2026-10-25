@@ -72,6 +72,8 @@ data class ChatActions(
     val setOwnAvatar: (ByteArray?) -> Unit = {},
     val dismissError: () -> Unit = {},
     val attach: () -> Unit = {},
+    /** Opens the photo/video picker (WP08). */
+    val attachMedia: () -> Unit = {},
 )
 
 // Discord's own density, not its logo or typeface: a dark three-pane messenger.
@@ -184,7 +186,7 @@ fun ChatScreen(
                         color = MutedColor, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
                     )
                 }
-                Composer(state, field, composerFocus, onField = { next ->
+                Composer(state, field, composerFocus, onAttach = actions.attachMedia, onField = { next ->
                     val changed = next.text != field.text
                     field = next
                     if (changed) actions.draftChanged(next.text)
@@ -342,12 +344,12 @@ private fun MessageList(state: ChatUiState, listState: androidx.compose.foundati
         state = listState,
         modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 10.dp).testTag("message-list"),
     ) {
-        items(state.thread, key = { it.id }) { row -> MessageRow(row) }
+        items(state.thread, key = { it.id }) { row -> MessageRow(row, engine) }
     }
 }
 
 @Composable
-private fun MessageRow(row: ThreadRow) {
+private fun MessageRow(row: ThreadRow, engine: DesktopEngine? = null) {
     Column(Modifier.fillMaxWidth().padding(top = if (row.showHeader) 10.dp else 2.dp)) {
         if (row.showHeader) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -366,7 +368,8 @@ private fun MessageRow(row: ThreadRow) {
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier.fillMaxWidth(0.75f).testTag("message-${row.id}"),
             ) {
-                Text(
+                if (row.media && engine != null) MediaBubble(engine, row.id, row.outgoing, row.caption)
+                else Text(
                     row.text.ifEmpty { "(empty message)" },
                     color = if (row.outgoing) Color.White else TextColor,
                     fontSize = 13.sp,
@@ -378,11 +381,12 @@ private fun MessageRow(row: ThreadRow) {
 }
 
 @Composable
-private fun Composer(state: ChatUiState, field: TextFieldValue, focus: FocusRequester, onField: (TextFieldValue) -> Unit, onSend: () -> Unit) {
+private fun Composer(state: ChatUiState, field: TextFieldValue, focus: FocusRequester, onAttach: () -> Unit, onField: (TextFieldValue) -> Unit, onSend: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().background(MainColor).padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.Bottom,
     ) {
+        TextButton(onClick = onAttach, enabled = state.canSend && state.selected?.isGroup != true, modifier = Modifier.testTag("attach-media")) { Text("Photo/video", fontSize = 11.sp) }
         OutlinedTextField(
             value = field,
             onValueChange = onField,

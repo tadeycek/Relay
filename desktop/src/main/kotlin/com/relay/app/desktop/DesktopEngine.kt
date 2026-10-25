@@ -42,6 +42,8 @@ class DesktopEngine(
     private val syncApplier: SentSyncApplier? = null,
     syncIntervalMs: Long = 15_000,
     val files: DesktopFiles? = null,
+    /** WP08 photos and videos. Receiving is always on when set; sending is gated inside the controller. */
+    val media: DesktopMedia? = null,
 ) : AutoCloseable {
 
     private val _revision = MutableStateFlow(0L)
@@ -75,6 +77,7 @@ class DesktopEngine(
     val status: StateFlow<TransportStatus> get() = transport.status
 
     private var collector: Job? = null
+    init { media?.onChange = { _revision.value++ } }
     private var fileWorker: Job? = null
 
     private val sync: DesktopSyncService? =
@@ -102,9 +105,14 @@ class DesktopEngine(
             }
         }
         runCatching { files?.sweep() }
+        runCatching { media?.sweep(); media?.purgeExpired() }
         sync?.start()
         fileWorker = scope.launch { while (kotlinx.coroutines.currentCoroutineContext().isActive) {
             files?.let { _ -> store.fileRecords().filter { it.state !in listOf("COMPLETE", "CANCELLED", "DELETED", "UNSUPPORTED") }.forEach { retryFile(it.id) } }
+            media?.let { m ->
+                runCatching { m.purgeExpired() }
+                store.mediaRecords().filter { it.state !in MEDIA_SETTLED && !(it.state == "FAILED" && it.permanent) }.forEach { retryMedia(it.id) }
+            }
             kotlinx.coroutines.delay(15_000)
         } }
     }
@@ -171,6 +179,33 @@ class DesktopEngine(
         _revision.value++
     }
 
+    /** Picks a photo/video, encrypts it privately, shows the bubble, then uploads and sends in the background of this call. */
+    suspend fun sendMedia(peer: String, source: java.nio.file.Path, caption: String = ""): String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        val controller = media ?: error("Media transport unavailable")
+        require(!recipientKey(peer).isNullOrBlank()) { "Import the contact encryption key from your phone before sending photos" }
+        val record = controller.prepare(peer, source, caption)
+        _revision.value++
+        retryMedia(record.id)
+        record.id
+    }
+
+    /** Runs or resumes one photo/video transfer (download, upload, send, SENT grant, confirm). */
+    suspend fun retryMedia(id: String) = kotlinx.coroutines.withContext(Dispatchers.IO) {
+        media?.run(id, send = { r, refs ->
+            val key = recipientKey(r.peer) ?: return@run SendResult.Failed("Contact encryption key missing", false)
+            val sealed = InnerEnvelope.seal(keyMaterial, key, r.body)
+            if (sealed == null) SendResult.Failed("Cannot encrypt media reference", false)
+            else transport.sendWithMedia(r.peer, RelayPayload(r.id, r.ts, sealed), refs)
+        }, sentCopy = { r ->
+            if (syncPublisher != null) {
+                store.queueMediaSync(r.id, syncPublisher.buildWires(r.peer, RelayPayload(r.id, r.ts, r.body)), listOf(
+                    com.relay.app.media.MediaBody.parse(r.body)!!.sha256Hex))
+                syncPublisher.flush()
+            } else if (linkedDevice() == null) store.mediaRecord(r.id)?.let { store.saveMedia(it.copy(syncPublished = true)) }
+        })
+        _revision.value++
+    }
+
     fun messages(peerHex: String): List<DesktopMessage> = store.messages(peerHex)
 
     fun conversations(): List<DesktopConversation> = store.conversations()
@@ -233,6 +268,11 @@ class DesktopEngine(
                 envelope.onHandled?.invoke(); _revision.value++; scope.launch { retryFile(payload.id) }; return
             }
         }
+        if (text.startsWith("TYPE:MEDIA|") && media != null) {
+            if (media.accept(DesktopMessage(payload.id, envelope.senderPubkeyHex, envelope.senderPubkeyHex, text, payload.ts, false))) {
+                envelope.onHandled?.invoke(); _revision.value++; scope.launch { retryMedia(payload.id) }; return
+            }
+        }
         store.insertMessage(
             DesktopMessage(
                 id = payload.id,
@@ -272,6 +312,8 @@ class DesktopEngine(
     }
 
     companion object {
+        private val MEDIA_SETTLED = setOf("COMPLETE", "CANCELLED", "DELETED", "UNSUPPORTED")
+
         /**
          * Builds the production desktop stack for [mailboxUrl] with the given XDG paths.
          *
@@ -283,6 +325,9 @@ class DesktopEngine(
             mailboxUrl: String,
             peerInnerKeys: Map<String, String> = emptyMap(),
             enableFileSendForTests: Boolean = false,
+            enableMediaSend: Boolean = false,
+            /** Test/diagnostic seam: replaces the mailbox media client. */
+            mediaTransport: DesktopMediaTransport? = null,
         ): DesktopEngine {
             val secrets = SecretStores.open(paths)
             val linkKeys = DesktopLinkKeys(paths, secrets)
@@ -325,6 +370,11 @@ class DesktopEngine(
                     DesktopFileMediaClient(com.relay.app.transport.mailbox.MailboxMedia.Client(
                         com.relay.app.transport.mailbox.MailboxMedia.RequestContext(device?.signer ?: identity.signer(), device?.deviceId), mailboxUrl)),
                     identity.publicKeyHex(), sendEnabled = enableFileSendForTests) else null,
+                media = DesktopMedia(paths.databaseFile.parent.resolve("media"), store,
+                    mediaTransport ?: if (mailboxUrl.startsWith("https://")) DesktopMediaClient(com.relay.app.transport.mailbox.MailboxMedia.Client(
+                        com.relay.app.transport.mailbox.MailboxMedia.RequestContext(device?.signer ?: identity.signer(), device?.deviceId), mailboxUrl))
+                    else OfflineMediaTransport,
+                    identity.publicKeyHex(), sendEnabled = enableMediaSend),
             )
         }
     }

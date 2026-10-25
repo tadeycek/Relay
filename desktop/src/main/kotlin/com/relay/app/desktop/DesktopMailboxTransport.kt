@@ -165,8 +165,13 @@ class DesktopMailboxTransport(
                     .post(bytes.toRequestBody(JSON))
                     .build()
                 http.newCall(request).execute().use { response ->
-                    when (val outcome = MailboxProtocol.sendOutcome(response.code, response.body?.string().orEmpty())) {
-                        MailboxProtocol.Outcome.Stored -> SendResult.Sent(1)
+                    val reply = response.body?.string().orEmpty()
+                    when (val outcome = MailboxProtocol.sendOutcome(response.code, reply)) {
+                        MailboxProtocol.Outcome.Stored -> {
+                            if (mediaDigests.isNotEmpty() && !mediaGrantAccepted(reply, mediaDigests))
+                                SendResult.Failed("Media grant absent or unavailable; use a new delivery after re-upload (same id cannot repair it)", retryable = false)
+                            else SendResult.Sent(1)
+                        }
                         MailboxProtocol.Outcome.NotOnMailbox -> SendResult.Failed("Recipient is not on the mailbox", retryable = false)
                         is MailboxProtocol.Outcome.Retry -> SendResult.Failed(outcome.reason, retryable = true)
                         is MailboxProtocol.Outcome.Rejected -> SendResult.Failed(outcome.reason, retryable = false)
@@ -314,6 +319,15 @@ class DesktopMailboxTransport(
     companion object {
         private val JSON = "application/json".toMediaType()
         private const val NOT_ALLOWED_RETRY_MS = 5L * 60 * 1000
+
+        /** A stored delivery is not proof of its blob grant. Missing/duplicate/gone fail closed. */
+        internal fun mediaGrantAccepted(reply: String, digests: List<String>): Boolean = try {
+            val results = org.json.JSONObject(reply).getJSONArray("media")
+            results.length() == digests.size && digests.indices.all { i ->
+                val item = results.getJSONObject(i)
+                item.getString("hash") == digests[i] && item.getString("status") in setOf("attached", "pending")
+            }
+        } catch (_: Exception) { false }
 
         fun backoffMs(failures: Int): Long = when {
             failures <= 1 -> 1_000

@@ -2,7 +2,7 @@
 id: WP16
 title: "Group voice on phone and desktop"
 phase: L4
-lane: planned
+lane: doing
 depends_on: [WP13, WP14, WP15]
 specs: ["07 §2–5, §7"]
 owned_files:

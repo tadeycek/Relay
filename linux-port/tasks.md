@@ -12,15 +12,15 @@ the log together.
 | [WP05](wps/WP05-phone-linking-and-sync.md) | L1 | Phone: link a computer, link slot, sync channel, sent-copies | WP03, WP04 | doing |
 | [WP06](wps/WP06-desktop-shell-link-text.md) | L2 | Desktop shell: storage, secrets, linking, text messaging | WP03, WP05 | doing |
 | [WP07](wps/WP07-desktop-groups-and-ui.md) | L2 | Desktop: groups, profiles, Discord-style UI completion | WP06 | doing |
-| [WP08](wps/WP08-desktop-media.md) | L2 | Desktop: photos and videos | WP06 | planned |
+| [WP08](wps/WP08-desktop-media.md) | L2 | Desktop: photos and videos | WP06 | doing |
 | [WP09](wps/WP09-files-both-platforms.md) | L2 | Files on phone and desktop (`TYPE:FILE`, up to 100 MiB) | WP03, WP04, WP06 | doing |
 | [WP10](wps/WP10-linux-packaging-release.md) | L2 | Linux packaging and desktop release | WP06, WP07, WP08, WP09 | doing |
 | [WP11](wps/WP11-server-call-support.md) | L3 | Server: TURN credentials, urgent wake, signal size | WP02, WP04 | doing |
 | [WP12](wps/WP12-core-call-engine.md) | L3 | `:core` 1:1 call engine and `TYPE:CALL` codec | WP03 | doing |
 | [WP13](wps/WP13-android-1on1-calls.md) | L3 | Android: 1:1 calls (WebRTC, Telecom, FCM ring) | WP11, WP12 | doing |
-| [WP14](wps/WP14-desktop-1on1-calls.md) | L3 | Desktop: 1:1 calls | WP06, WP12 | planned |
+| [WP14](wps/WP14-desktop-1on1-calls.md) | L3 | Desktop: 1:1 calls | WP06, WP12 | doing |
 | [WP15](wps/WP15-server-callroom-sfu.md) | L4 | Server: CallRoom Durable Object and SFU proxy | WP02, WP11 | doing |
-| [WP16](wps/WP16-group-call-clients.md) | L4 | Group voice on phone and desktop | WP13, WP14, WP15 | planned |
+| [WP16](wps/WP16-group-call-clients.md) | L4 | Group voice on phone and desktop | WP13, WP14, WP15 | doing |
 | [WP17](wps/WP17-group-call-e2ee.md) | L4 | Group call E2EE (frame encryption) — gated | WP16 | planned |
 | [WP18](wps/WP18-macos-unsigned-dmg.md) | L2 | macOS unsigned `.dmg` (Apple Silicon) | WP06, WP10 | planned |
 

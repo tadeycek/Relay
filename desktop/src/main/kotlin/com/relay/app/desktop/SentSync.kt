@@ -44,7 +44,7 @@ sealed interface SyncHttpResult<out T> {
     data class Retry(val reason: String) : SyncHttpResult<Nothing>
 
     /** Permanent for this request (bad request, conflict, too large). Retrying the same bytes cannot help. */
-    data class Rejected(val reason: String) : SyncHttpResult<Nothing>
+    data class Rejected(val reason: String, val final: Boolean = false) : SyncHttpResult<Nothing>
 }
 
 /** One assembled event as `GET /v1/sync` returns it. [dataBase64] is the body bytes. */
@@ -128,6 +128,25 @@ object SyncWire {
         sha256Hex("relay-sent:$payloadId".toByteArray(Charsets.UTF_8)).substring(0, 32)
 
     fun serverId(wire: String): String = sha256Hex(wire.toByteArray(Charsets.UTF_8)).substring(0, 32)
+
+    /**
+     * Judges a 2xx `POST /v1/sync` reply for a file SENT copy: a published event is not proof of the
+     * blob grant (PROTOCOL.md "Own SENT media grants"). Null = every requested digest is `attached` or
+     * `pending` (the durable outbox retries it). Anything else, including a missing array, is a reason to
+     * fail closed; a same-id retry would answer `duplicate` and can never repair a `gone` grant.
+     * A reply that says `complete:false` belongs to a non-final part and carries no grant list.
+     */
+    fun checkMediaReply(requested: List<String>, reply: JSONObject): String? {
+        if (requested.isEmpty() || reply.optBoolean("complete", true).not()) return null
+        val array = reply.optJSONArray("media") ?: return "media grant status missing from the reply"
+        if (array.length() != requested.size) return "media grant list does not match the request"
+        for (i in requested.indices) {
+            val item = array.optJSONObject(i) ?: return "media grant status unreadable"
+            if (item.optString("hash") != requested[i]) return "media grant hash mismatch"
+            if (item.optString("status") !in setOf("attached", "pending")) return "media grant ${item.optString("status")}"
+        }
+        return null
+    }
 
     fun envelope(wire: String, revision: Long, now: Long, mediaDigests: List<String> = emptyList()): String {
         val bytes = wire.toByteArray(Charsets.UTF_8)
@@ -244,8 +263,9 @@ class SentSyncPublisher(
                 is SyncHttpResult.Rejected -> {
                     // A file copy gets ONE retry with a fresh expiry, then it is dropped: a permanently
                     // rejected file must never block the text copies queued behind it (it used to break
-                    // the whole lane forever). The file keeps syncPublished = false.
-                    if (entry.mediaDigests.isNotEmpty() && entry.attempts == 0) {
+                    // the whole lane forever). The file keeps syncPublished = false. A `final` rejection
+                    // (event stored but its grant is gone) is never retried: the same id answers duplicate.
+                    if (entry.mediaDigests.isNotEmpty() && entry.attempts == 0 && !result.final) {
                         store.outboxAttempt(entry.id)
                         continue
                     }

@@ -16,15 +16,16 @@ Status: **planning documents plus partial implementation on `feat/linux-port`.**
 | WP03 | `doing` | `:core` extracted (`2a161d3`), 328-vector golden corpus byte-identical, 198 core + 146 app tests, single-emulator UI smoke green. Two-emulator AC4 not run |
 | WP04 | `doing` | Per-device cursors and media confirmation; authenticated send-time media grants implemented locally; deployment/pilot not run |
 | WP05–WP06 | `doing` | Device authorization, phone linking, sent-copy sync, encrypted desktop text; device/retention/keyring gates open |
-| WP07 | `doing` | Three-pane desktop/groups/profiles implemented locally; security fixes and phone roster-sync AC2 open |
-| WP08 | `planned` | Desktop photos/videos not implemented |
+| WP07 | `doing` | Three-pane desktop/groups/profiles and phone→desktop roster self-sync (`1966fc6`); real phone/three-emulator AC1 unrun |
+| WP08 | `doing` | Desktop photo/video send, receive, journal and local-Worker proof implemented; real Android↔desktop AC1, live service and UI click-through unrun; independent review pending |
 | WP09 | `doing` | 100 MiB file code on phone and desktop (`c3b6aa8`); real phone and memory gates open |
 | WP10 | `doing` | Linux packaging being built; clean-system release gates open |
 | WP11–WP12 | `doing` | Server call support and shared call engine committed (`294e31d`); live/device gates open |
-| WP13 | `doing` | Android 1:1 call host implemented locally, review fixes in progress; real-device criteria unrun |
-| WP14 | `planned` | Desktop 1:1 call host not implemented |
-| WP15 | `doing` | Server group-call room/SFU proxy implemented locally; security re-review open |
-| WP16–WP18 | `planned` | Group clients, E2EE and macOS distribution not implemented |
+| WP13 | `doing` | Android 1:1 call host (`c931910`) passed JVM/build checks; physical-phone criteria and urgent-call binding gate open |
+| WP14 | `doing` | Desktop call-host/native-peer foundation with generated-audio test; mailbox, UI, real phone and physical-audio gates open; independent review pending |
+| WP15 | `doing` | Server group-call room/SFU proxy (`645c710`) verified locally; live SFU and group-specific signed-roster gate open |
+| WP16 | `doing` | Shared group-call codec/engine foundation in `:core`; Android/desktop hosts, signed-roster server gate, live SFU and E2EE open; independent review pending |
+| WP17–WP18 | `planned` | Frame E2EE and macOS distribution not implemented |
 
 Nothing is deployed and nothing is merged into `main`. Group-call audio stays readable by the SFU until WP17.
 

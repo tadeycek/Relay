@@ -302,6 +302,12 @@ class DesktopChat(
         }
     }
 
+    /** Surfaces a user-readable problem from an action the controller does not own (attach, drop). */
+    fun reportError(message: String) {
+        error = message
+        refresh()
+    }
+
     fun dismissError() {
         error = null
         refresh()

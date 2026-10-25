@@ -19,6 +19,8 @@ import java.util.concurrent.TimeUnit
  *
  * Responses are read with a hard cap (a page is ≤ 64 KiB of event bytes, ≈ 90 KiB as base64 JSON).
  */
+internal class MediaGrantFailure(message: String) : Exception(message)
+
 class DesktopSyncHttp(
     baseUrl: String,
     private val signer: NostrSigner,
@@ -34,6 +36,9 @@ class DesktopSyncHttp(
 
     override suspend fun post(envelopeJson: String): SyncHttpResult<Boolean> =
         call("POST", "/v1/sync?device=$deviceId", envelopeJson.toByteArray(Charsets.UTF_8)) { json ->
+            val requested = JSONObject(envelopeJson).optJSONArray("media")?.let { a -> List(a.length()) { a.getString(it) } }.orEmpty()
+            // A duplicate carries no grant list; the first publication was judged when it happened.
+            SyncWire.checkMediaReply(requested, json).takeIf { !json.optBoolean("duplicate", false) }?.let { throw MediaGrantFailure(it) }
             json.optBoolean("duplicate", false)
         }
 
@@ -76,7 +81,7 @@ class DesktopSyncHttp(
                 val text = String(bytes, Charsets.UTF_8)
                 if (response.code in 200..299) {
                     runCatching { SyncHttpResult.Ok(parse(JSONObject(text))) }
-                        .getOrElse { SyncHttpResult.Rejected("unreadable response") }
+                        .getOrElse { if (it is MediaGrantFailure) SyncHttpResult.Rejected(it.message ?: "media grant failed", final = true) else SyncHttpResult.Rejected("unreadable response") }
                 } else {
                     classify(response.code, text)
                 }

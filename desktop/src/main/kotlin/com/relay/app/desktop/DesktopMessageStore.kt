@@ -72,6 +72,7 @@ class DesktopMessageStore(
         createSyncTables()
         connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS file_transfers(id TEXT PRIMARY KEY, record TEXT NOT NULL)") }
         connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS file_sync_refs(wire TEXT PRIMARY KEY, file_id TEXT NOT NULL, media TEXT NOT NULL)") }
+        connection.createStatement().use { it.execute("CREATE TABLE IF NOT EXISTS media_transfers(id TEXT PRIMARY KEY, record TEXT NOT NULL)") }
         secureFiles()
     }
 
@@ -120,6 +121,7 @@ class DesktopMessageStore(
     /** Inserts [message] once by payload id. Returns true when this call inserted it. */
     fun insertMessage(message: DesktopMessage): Boolean = synchronized(lock) {
         registerFile(message)
+        registerMedia(message)
         // Never retitle an existing conversation: the rail title is owned by the contact import or the
         // group roster, and a message arriving must not replace "Jane" or "Design" with a raw id.
         connection.prepareStatement("INSERT INTO conversations(id, peer, title, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO NOTHING").use { ps ->
@@ -316,7 +318,11 @@ class DesktopMessageStore(
 
     fun refreshFileSyncPublication() = synchronized(lock) {
         connection.createStatement().use { st -> st.executeQuery("SELECT DISTINCT f.file_id FROM file_sync_refs f WHERE NOT EXISTS (SELECT 1 FROM file_sync_refs r JOIN sync_outbox o ON o.wire=r.wire WHERE r.file_id=f.file_id)").use { rs ->
-            while (rs.next()) fileRecord(rs.getString(1))?.let { saveFile(it.copy(syncPublished = true)) }
+            while (rs.next()) {
+                val id = rs.getString(1)
+                fileRecord(id)?.let { saveFile(it.copy(syncPublished = true)) }
+                mediaRecord(id)?.let { saveMedia(it.copy(syncPublished = true)) }
+            }
         } }
     }
 
@@ -458,6 +464,94 @@ class DesktopMessageStore(
         secureFiles()
     }
 
+
+    // ---- WP08 photos and videos ----------------------------------------------------------------
+
+    /** Encrypted media journal. The media key lives in `body`, so it never leaves this database. */
+    fun mediaRecord(id: String): DesktopMediaRecord? = synchronized(lock) {
+        connection.prepareStatement("SELECT record FROM media_transfers WHERE id=?").use { ps ->
+            ps.setString(1, id)
+            ps.executeQuery().use { rs -> if (rs.next()) DesktopMediaRecord.decode(rs.getString(1)) else null }
+        }
+    }
+
+    fun mediaRecords(): List<DesktopMediaRecord> = synchronized(lock) {
+        connection.createStatement().use { st -> st.executeQuery("SELECT record FROM media_transfers").use { rs ->
+            buildList { while (rs.next()) add(DesktopMediaRecord.decode(rs.getString(1))) }
+        } }
+    }
+
+    fun saveMedia(record: DesktopMediaRecord) = synchronized(lock) {
+        connection.prepareStatement("INSERT INTO media_transfers(id,record) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET record=excluded.record").use { ps ->
+            ps.setString(1, record.id); ps.setString(2, record.encode()); ps.executeUpdate()
+        }
+        secureFiles()
+    }
+
+    /** A received/synced TYPE:MEDIA row gets its journal entry before the cursor can pass it. */
+    private fun registerMedia(message: DesktopMessage) {
+        if (!message.body.startsWith("TYPE:MEDIA|") || message.conversationId.startsWith("group:")) return
+        if (com.relay.app.media.MediaBody.parse(message.body) == null || mediaRecord(message.id) != null) return
+        saveMedia(DesktopMediaRecord(message.id, message.conversationId, message.sender, message.ts, message.outgoing, message.body, "QUEUED"))
+    }
+
+    /** Outgoing media: the journal row and the visible bubble commit together or not at all. */
+    fun saveMediaWithMessage(record: DesktopMediaRecord, message: DesktopMessage) = synchronized(lock) {
+        // Never retitle an existing conversation (ensureConversation would overwrite a contact's name).
+        connection.prepareStatement("INSERT INTO conversations(id, peer, title, updated_at) VALUES(?, ?, ?, ?) ON CONFLICT(id) DO NOTHING").use { ps ->
+            ps.setString(1, message.conversationId); ps.setString(2, message.conversationId); ps.setString(3, message.conversationId); ps.setLong(4, message.ts); ps.executeUpdate()
+        }
+        connection.autoCommit = false
+        try {
+            saveMedia(record)
+            insertMessageRow(message)
+            connection.commit()
+            secureFiles()
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    /** Replaces a deleted bubble's body so the key and server reference are gone but replay cannot re-insert it. */
+    fun tombstoneMessage(id: String, text: String) = synchronized(lock) {
+        connection.prepareStatement("UPDATE messages SET body=? WHERE id=?").use { ps -> ps.setString(1, text); ps.setString(2, id); ps.executeUpdate() }
+        secureFiles()
+    }
+
+    fun deleteMessage(id: String): Boolean = synchronized(lock) {
+        val removed = connection.prepareStatement("DELETE FROM messages WHERE id=?").use { ps -> ps.setString(1, id); ps.executeUpdate() > 0 }
+        connection.prepareStatement("DELETE FROM media_transfers WHERE id=?").use { ps -> ps.setString(1, id); ps.executeUpdate() }
+        connection.prepareStatement("DELETE FROM file_sync_refs WHERE file_id=?").use { ps -> ps.setString(1, id); ps.executeUpdate() }
+        secureFiles()
+        removed
+    }
+
+    fun messageExists(id: String): Boolean = synchronized(lock) {
+        connection.prepareStatement("SELECT 1 FROM messages WHERE id=?").use { ps -> ps.setString(1, id); ps.executeQuery().use { it.next() } }
+    }
+
+    /** [now] is injectable so tests can age a queued copy without waiting. */
+    fun queueMediaSync(id: String, wires: List<String>, media: List<String>, now: Long = System.currentTimeMillis()) = synchronized(lock) {
+        val record = mediaRecord(id) ?: error("missing media")
+        if (record.syncQueued) return@synchronized
+        require(wires.isNotEmpty()) { "No SENT copy" }
+        connection.autoCommit = false
+        try {
+            connection.prepareStatement("INSERT INTO sync_outbox(wire,created_at) VALUES(?,?)").use { ps ->
+                for (wire in wires) { ps.setString(1, wire); ps.setLong(2, now); ps.executeUpdate() }
+            }
+            connection.prepareStatement("INSERT OR IGNORE INTO file_sync_refs(wire,file_id,media) VALUES(?,?,?)").use { ps ->
+                for (wire in wires) { ps.setString(1, wire); ps.setString(2, id); ps.setString(3, org.json.JSONArray(media).toString()); ps.executeUpdate() }
+            }
+            saveMedia(record.copy(syncQueued = true))
+            connection.commit()
+        } catch (e: Exception) { runCatching { connection.rollback() }; throw e }
+        finally { connection.autoCommit = true }
+    }
+
     /** File row exists before a message/cursor can become visible. Replay repairs either crash boundary. */
     private fun registerFile(message: DesktopMessage) {
         if (!message.body.startsWith("TYPE:FILE|") || message.conversationId.startsWith("group:")) return
@@ -489,6 +583,7 @@ class DesktopMessageStore(
 
     private fun insertMessageRow(message: DesktopMessage): Boolean {
         registerFile(message)
+        registerMedia(message)
         val inserted = connection.prepareStatement(
             "INSERT OR IGNORE INTO messages(id, conversation_id, sender, body, ts, outgoing) VALUES(?, ?, ?, ?, ?, ?)",
         ).use { ps ->

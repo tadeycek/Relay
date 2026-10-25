@@ -168,7 +168,7 @@ class DesktopFilesTest {
     @Test fun `media transport retry replays durable exact body refs and enrolled signature`() = runBlocking<Unit> {
         val server = okhttp3.mockwebserver.MockWebServer()
         server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(503).setBody("{}"))
-        server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(200).setBody("""{"v":1,"results":[{"status":"stored","seq":1}]}"""))
+        server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(200).setBody("""{"v":1,"results":[{"status":"stored","seq":1}],"media":[{"hash":"${"e".repeat(64)}","status":"attached"}]}"""))
         server.start()
         try { store("wire").use { s ->
             val keys = rust.nostr.sdk.Keys.generate(); val auth = rust.nostr.sdk.Keys.generate(); val refs = listOf("e".repeat(64))
@@ -185,6 +185,21 @@ class DesktopFilesTest {
             assertEquals("/v1/send?device=${device.deviceId}", a.path)
             val tags = authJson.getJSONArray("tags"); val payloadTag = (0 until tags.length()).map { tags.getJSONArray(it) }.single { it.getString(0) == "payload" }.getString(1)
             assertEquals(SyncWire.sha256Hex(first.toByteArray()), payloadTag)
+        } } finally { server.shutdown() }
+    }
+    @Test fun `stored delivery with gone media fails permanently rather than replaying the id`() = runBlocking<Unit> {
+        val server = okhttp3.mockwebserver.MockWebServer()
+        val hash = "e".repeat(64)
+        server.enqueue(okhttp3.mockwebserver.MockResponse().setBody("""{"v":1,"results":[{"status":"stored","seq":1}],"media":[{"hash":"$hash","status":"gone"}]}"""))
+        server.start()
+        try { store("gone-media-reply").use { s ->
+            val keys = rust.nostr.sdk.Keys.generate(); val t = DesktopMailboxTransport(server.url("/").toString(), keys, DesktopNostrSigner(keys), s)
+            val recipient = rust.nostr.sdk.Keys.generate().publicKey().toHex()
+            val result = t.sendWithMedia(recipient, RelayPayload("gone-media-delivery", 1, "sealed"), listOf(hash))
+            assertTrue(result is SendResult.Failed)
+            assertFalse((result as SendResult.Failed).retryable)
+            assertTrue(result.reason.contains("media", ignoreCase = true))
+            assertEquals(1, server.requestCount)
         } } finally { server.shutdown() }
     }
     @Test fun `invalid media refs fail permanently without any network`() = runBlocking<Unit> {
