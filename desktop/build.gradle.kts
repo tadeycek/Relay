@@ -34,6 +34,10 @@ dependencies {
     // Dispatchers.Main on the AWT event thread.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.0")
 
+    // WP02-proven API + Linux native classifier; POM has a classifier self-dependency.
+    implementation("dev.onvoid.webrtc:webrtc-java:0.20.0") { isTransitive = false }
+    runtimeOnly("dev.onvoid.webrtc:webrtc-java:0.20.0:linux-x86_64") { isTransitive = false }
+
     // :core declares org.json compileOnly (the Android platform provides it); the desktop supplies it.
     implementation("org.json:json:20240303")
 
