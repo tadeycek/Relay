@@ -137,7 +137,8 @@ if (System.getProperty("os.name").startsWith("Mac")) {
             check(process.waitFor() == 0) { "macOS nostr native filtering failed" }
         }
     }
-    tasks.named("packageDmg") { dependsOn(filterMacNostrNative) }
+    // Compose registers native package tasks after this script's configuration phase.
+    tasks.matching { it.name == "packageDmg" }.configureEach { dependsOn(filterMacNostrNative) }
 }
 
 tasks.withType<Test>().configureEach {
