@@ -103,6 +103,9 @@ compose.desktop {
             // JDBC directly; without it the packaged app dies with NoClassDefFoundError.
             modules("java.sql", "java.transaction.xa", "jdk.security.auth")
             macOS {
+                // Apple package/build versions require MAJOR > 0; the project's 0.1.0
+                // remains the prerelease version until an actual release is cut.
+                packageVersion = "1.0.0"
                 bundleID = "com.relay.app.desktop"
                 iconFile.set(project.file("packaging/macos/relay.icns"))
                 infoPlist {
