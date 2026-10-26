@@ -2,7 +2,7 @@
 id: WP18
 title: "macOS unsigned `.dmg` (Apple Silicon)"
 phase: L2
-lane: planned
+lane: doing
 depends_on: [WP06, WP10]
 specs: ["LP-D17", "02 §B macOS", "09 R12, Q6"]
 owned_files:

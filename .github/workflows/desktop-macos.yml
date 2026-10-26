@@ -1,0 +1,127 @@
+name: Desktop macOS Apple Silicon DMG
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'desktop-v*'
+
+permissions:
+  contents: read
+
+jobs:
+  dmg:
+    # Public-repo standard macos-15 is an M1 arm64 runner; no macos-15-arm64 label exists.
+    runs-on: macos-15
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          architecture: aarch64
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Verify runner and dependency provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          java -version
+          mkdir -p "$RUNNER_TEMP/relay-build" "$RUNNER_TEMP/relay-tmp" "$RUNNER_TEMP/relay-artifact"
+          printf '%s\n' "gradle.beforeProject { p -> p.layout.buildDirectory.set(new File(System.getenv('RUNNER_TEMP'), 'relay-build/' + (p.path == ':' ? 'root' : p.path.substring(1).replace(':', '/')))) }" > "$RUNNER_TEMP/relay-build-dir.gradle"
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s desktop/packaging/macos -p 'test_*.py' -v
+          # createDistributable resolves the actual runtime jars; later packageDmg filters its app image.
+          ./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" -I "$RUNNER_TEMP/relay-build-dir.gradle" --project-cache-dir "$RUNNER_TEMP/relay-gradle-project-cache" :desktop:createDistributable
+          python3 - <<'PY'
+          from pathlib import Path
+          home = Path.home() / '.gradle/caches/modules-2/files-2.1'
+          specs = [('org.rust-nostr/nostr-sdk-kmp-jvm/0.44.8', 'nostr-sdk-kmp-jvm.jar'), ('dev.onvoid.webrtc/webrtc-java/0.20.0', 'webrtc-java-0.20.0-macos-aarch64.jar')]
+          paths = []
+          for directory, name in specs:
+              matches = list((home / directory).rglob(name))
+              if len(matches) != 1:
+                  raise SystemExit(f'Expected one resolved {name}; found {len(matches)}')
+              paths.append(str(matches[0]))
+          Path(__import__('os').environ['RUNNER_TEMP'], 'upstream-jars.txt').write_text('\n'.join(paths) + '\n')
+          PY
+          mapfile -t upstream < "$RUNNER_TEMP/upstream-jars.txt"
+          python3 desktop/packaging/macos/package_helpers.py audit-upstream "${upstream[0]}" "${upstream[1]}"
+        env:
+          TMPDIR: ${{ runner.temp }}/relay-tmp
+      - name: Test and package DMG
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon -Dorg.gradle.java.home="$JAVA_HOME" -I "$RUNNER_TEMP/relay-build-dir.gradle" --project-cache-dir "$RUNNER_TEMP/relay-gradle-project-cache" :desktop:test :desktop:packageDmg
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'relay-build/desktop/compose/binaries/main'
+          files = list(root.rglob('*.dmg'))
+          if len(files) != 1:
+              raise SystemExit(f'Expected exactly one DMG, found {len(files)}')
+          Path(os.environ['RUNNER_TEMP'], 'dmg-path.txt').write_text(str(files[0]))
+          PY
+        env:
+          TMPDIR: ${{ runner.temp }}/relay-tmp
+      - name: Inspect mounted DMG and partial identity preflight (not DB/Keychain)
+        shell: bash
+        run: |
+          set -euo pipefail
+          dmg="$(cat "$RUNNER_TEMP/dmg-path.txt")"
+          mountpoint="$RUNNER_TEMP/relay-mounted"
+          mkdir -p "$mountpoint" "$RUNNER_TEMP/relay-smoke/config" "$RUNNER_TEMP/relay-smoke/data"
+          hdiutil attach -readonly -nobrowse -mountpoint "$mountpoint" "$dmg"
+          trap 'hdiutil detach "$mountpoint"' EXIT
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'relay-mounted'
+          apps = list(root.glob('*.app'))
+          if len(apps) != 1:
+              raise SystemExit(f'Expected one app in DMG, found {len(apps)}')
+          Path(os.environ['RUNNER_TEMP'], 'app-path.txt').write_text(str(apps[0]))
+          PY
+          app="$(cat "$RUNNER_TEMP/app-path.txt")"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" = com.relay.app.desktop
+          /usr/libexec/PlistBuddy -c 'Print :NSMicrophoneUsageDescription' "$app/Contents/Info.plist"
+          python3 desktop/packaging/macos/package_helpers.py audit-app "$app"
+          # Capture codesign output AND status without assuming signing state before a Mac run.
+          set +e
+          codesign -dv --verbose=4 "$app" > "$RUNNER_TEMP/relay-artifact/codesign-dv.txt" 2>&1
+          dv_status=$?
+          codesign --verify --verbose=2 "$app" > "$RUNNER_TEMP/relay-artifact/codesign-verify.txt" 2>&1
+          verify_status=$?
+          set -e
+          printf 'codesign -dv exit=%s\ncodesign --verify exit=%s\n' "$dv_status" "$verify_status" > "$RUNNER_TEMP/relay-artifact/signing-status.txt"
+          # Writes status even on failure; the always() upload retains raw diagnostics.
+          python3 desktop/packaging/macos/signing_helpers.py "$RUNNER_TEMP/relay-artifact" "$dv_status" "$verify_status"
+          cat "$RUNNER_TEMP/relay-artifact/signing-status.txt" "$RUNNER_TEMP/relay-artifact/codesign-dv.txt" "$RUNNER_TEMP/relay-artifact/codesign-verify.txt"
+          RELAY_APP="$app" python3 - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          app = Path(os.environ['RELAY_APP'])
+          launchers = [p for p in (app / 'Contents/MacOS').iterdir() if p.is_file() and os.access(p, os.X_OK)]
+          if len(launchers) != 1:
+              raise SystemExit(f'Expected one executable launcher; found {len(launchers)}')
+          tmp = Path(os.environ['RUNNER_TEMP']) / 'relay-smoke'
+          result = subprocess.run([str(launchers[0]), '--print-identity', '--config-dir', str(tmp / 'config'), '--data-dir', str(tmp / 'data')],
+                                  capture_output=True, text=True, timeout=35, env={**os.environ, 'RELAY_MAILBOX_URL': ''})
+          # Public keys are intentionally not printed into CI logs.
+          if result.returncode or 'pubkey=' not in result.stdout or 'inner=' not in result.stdout:
+              raise SystemExit(f'bounded --print-identity diagnostic failed: exit={result.returncode}; output withheld')
+          print('bounded --print-identity diagnostic: exit=0, identity fields present (not a DB/Keychain self-test)')
+          PY
+          cp "$dmg" "$RUNNER_TEMP/relay-artifact/"
+          (cd "$RUNNER_TEMP/relay-artifact" && shasum -a 256 ./*.dmg > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
+        env:
+          TMPDIR: ${{ runner.temp }}/relay-tmp
+      - name: Upload DMG, checksum and signing diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relay-macos-arm64-${{ github.run_id }}
+          path: ${{ runner.temp }}/relay-artifact/
+          if-no-files-found: warn
+          retention-days: 14

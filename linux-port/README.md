@@ -25,7 +25,8 @@ Status: **planning documents plus partial implementation on `feat/linux-port`.**
 | WP14 | `doing` | Desktop call-host/native-peer foundation with generated-audio test; mailbox, UI, real phone and physical-audio gates open; independent review pending |
 | WP15 | `doing` | Server group-call room/SFU proxy (`645c710`) verified locally; live SFU and group-specific signed-roster gate open |
 | WP16 | `doing` | Shared group-call codec/engine foundation in `:core`; Android/desktop hosts, signed-roster server gate, live SFU and E2EE open; independent review pending |
-| WP17–WP18 | `planned` | Frame E2EE and macOS distribution not implemented |
+| WP17 | `planned` | Frame E2EE not implemented; WP02 proved only synthetic frame interop, not replay safety or key distribution |
+| WP18 | `doing` | Apple Silicon DMG CI/config prepared; no macOS runner or real-Mac result yet |
 
 Nothing is deployed and nothing is merged into `main`. Group-call audio stays readable by the SFU until WP17.
 

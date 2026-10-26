@@ -22,9 +22,9 @@ the log together.
 | [WP15](wps/WP15-server-callroom-sfu.md) | L4 | Server: CallRoom Durable Object and SFU proxy | WP02, WP11 | doing |
 | [WP16](wps/WP16-group-call-clients.md) | L4 | Group voice on phone and desktop | WP13, WP14, WP15 | doing |
 | [WP17](wps/WP17-group-call-e2ee.md) | L4 | Group call E2EE (frame encryption) — gated | WP16 | planned |
-| [WP18](wps/WP18-macos-unsigned-dmg.md) | L2 | macOS unsigned `.dmg` (Apple Silicon) | WP06, WP10 | planned |
+| [WP18](wps/WP18-macos-unsigned-dmg.md) | L2 | macOS unsigned `.dmg` (Apple Silicon) | WP06, WP10 | doing |
 
-Totals: 18 work packages, 80 acceptance criteria, 17 decisions (LP-D01–LP-D17), 14 risks, 6 open questions.
+Totals: 18 work packages, 80 acceptance criteria, 18 decisions (LP-D01–LP-D18), 14 risks, 6 open questions.
 
 ## Current evidence
 

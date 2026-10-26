@@ -1,5 +1,5 @@
 // Relay desktop client (WP06): Compose Multiplatform on the shared :core protocol module.
-// Kotlin 2.0.21 / JVM target 17, matching :app and :core. Linux x86_64 is the first target.
+// Kotlin 2.0.21 / JVM target 17, matching :app and :core. Linux x86_64 and macOS arm64.
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
@@ -25,6 +25,22 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
+// Host classifier is resolved at configuration time, but unsupported hosts only fail when
+// invoking a native launcher/distribution task, not when configuring unrelated tasks.
+val nativeDesktopClassifier = when {
+    System.getProperty("os.name").startsWith("Mac") && System.getProperty("os.arch") == "aarch64" -> "macos-aarch64"
+    System.getProperty("os.name").startsWith("Linux") && System.getProperty("os.arch") == "amd64" -> "linux-x86_64"
+    else -> null
+}
+if (nativeDesktopClassifier == null) {
+    gradle.taskGraph.whenReady {
+        if (allTasks.any { it.project.path == ":desktop" && (it.name == "run" || it.name == "runDistributable" ||
+                it.name == "createDistributable" || it.name.startsWith("package")) }) {
+            error("Relay desktop native distribution requires Linux x86_64 or macOS Apple Silicon")
+        }
+    }
+}
+
 dependencies {
     implementation(project(":core"))
 
@@ -34,9 +50,11 @@ dependencies {
     // Dispatchers.Main on the AWT event thread.
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.8.0")
 
-    // WP02-proven API + Linux native classifier; POM has a classifier self-dependency.
+    // WP02 API + host-native classifier; POM has a classifier self-dependency.
     implementation("dev.onvoid.webrtc:webrtc-java:0.20.0") { isTransitive = false }
-    runtimeOnly("dev.onvoid.webrtc:webrtc-java:0.20.0:linux-x86_64") { isTransitive = false }
+    if (nativeDesktopClassifier != null) {
+        runtimeOnly("dev.onvoid.webrtc:webrtc-java:0.20.0:$nativeDesktopClassifier") { isTransitive = false }
+    }
 
     // :core declares org.json compileOnly (the Android platform provides it); the desktop supplies it.
     implementation("org.json:json:20240303")
@@ -75,7 +93,8 @@ compose.desktop {
         mainClass = "com.relay.app.desktop.MainKt"
 
         nativeDistributions {
-            targetFormats(TargetFormat.Deb)
+            if (nativeDesktopClassifier == "macos-aarch64") targetFormats(TargetFormat.Dmg)
+            if (nativeDesktopClassifier == "linux-x86_64") targetFormats(TargetFormat.Deb)
             packageName = "relay"
             packageVersion = "0.1.0"
             description = "Relay desktop client"
@@ -83,6 +102,14 @@ compose.desktop {
             // jpackage's suggested module set misses java.sql even though DesktopMessageStore uses
             // JDBC directly; without it the packaged app dies with NoClassDefFoundError.
             modules("java.sql", "java.transaction.xa", "jdk.security.auth")
+            macOS {
+                bundleID = "com.relay.app.desktop"
+                iconFile.set(project.file("packaging/macos/relay.icns"))
+                infoPlist {
+                    extraKeysRawXml = "<key>NSMicrophoneUsageDescription</key><string>Relay uses the microphone for voice calls you choose to join.</string>"
+                }
+                // No Developer ID, provisioning profile or notarization configured.
+            }
             linux {
                 iconFile.set(project.file("packaging/linux/relay.png"))
                 shortcut = true
@@ -90,6 +117,27 @@ compose.desktop {
             }
         }
     }
+}
+
+// Compose's packageDmg consumes the createDistributable app image. Prune a COPY of
+// the upstream jar in that image between these tasks, never the Gradle cache jar.
+if (System.getProperty("os.name").startsWith("Mac")) {
+    val filterMacNostrNative = tasks.register("filterMacNostrNative") {
+        dependsOn("createDistributable")
+        doLast {
+            val source = configurations.getByName("runtimeClasspath").resolvedConfiguration.resolvedArtifacts
+                .single { it.moduleVersion.id.group == "org.rust-nostr" && it.name == "nostr-sdk-kmp-jvm" }.file
+            val appImage = layout.buildDirectory.dir("compose/binaries/main/app").get().asFile
+            val staged = appImage.walkTopDown().filter {
+                it.isFile && it.name.startsWith("nostr-sdk-kmp-jvm-") && it.extension == "jar"
+            }.toList().single()
+            val command = listOf("python3", project.file("packaging/macos/package_helpers.py").absolutePath,
+                "filter-nostr", source.absolutePath, staged.absolutePath)
+            val process = ProcessBuilder(command).inheritIO().start()
+            check(process.waitFor() == 0) { "macOS nostr native filtering failed" }
+        }
+    }
+    tasks.named("packageDmg") { dependsOn(filterMacNostrNative) }
 }
 
 tasks.withType<Test>().configureEach {
