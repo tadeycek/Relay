@@ -12,7 +12,7 @@ const LINK_ROUTE = /^\/v1\/link\/[0-9a-f]{64}$/;
 const SYNC_ID_ROUTE = /^\/v1\/sync\/[0-9a-f]{8,64}$/;
 /** WP15: the room is part of the path (or the create body); the CallRoom object owns everything else. */
 const CALL_ROOMS = "/v1/call/rooms";
-const CALL_ROOM_ROUTE = /^\/v1\/call\/rooms\/([0-9a-f]{32})(?:\/(ws|end|sfu\/[a-z-]+))?$/;
+const CALL_ROOM_ROUTE = /^\/v1\/call\/rooms\/([0-9a-f]{32})(?:\/(ws|end|roster|rotate|sfu\/[a-z-]+))?$/;
 const CALL_ROOM_ID = /^[0-9a-f]{32}$/;
 
 /**
@@ -41,7 +41,7 @@ export default {
     const limits = limitsFrom(env as unknown as Record<string, unknown>);
     const length = Number(request.headers.get("Content-Length") ?? "0");
     // One byte of slack on the link path so the mailbox returns the precise error code for the boundary.
-    const callCap = callCreate || (callRoom && callRoom[2] === "end")
+    const callCap = callCreate || (callRoom && (callRoom[2] === "end" || callRoom[2] === "roster" || callRoom[2] === "rotate"))
       ? limits.maxCallRequestBytes
       : callRoom && callRoom[2]?.startsWith("sfu/")
         ? limits.maxSfuRequestBytes

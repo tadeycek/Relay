@@ -682,7 +682,8 @@ secret as **64 lowercase hex characters**, sends `secretHash` = lowercase hex SH
 bytes of that 64-hex *text* when creating the room, and sends the 64-hex value E2E to the group.
 The server stores only the hash. A join presents the raw secret in the query; the room hashes it and
 compares in constant time. The server never learns the group roster; it only sees which server members
-connect. Every request also resolves the signer to an enrolled device and checks current membership
+connect **for an unrostered (legacy) room; a roster-bound room additionally knows its frozen member list, see
+"Roster-bound rooms (G5)" below, which supersedes this sentence**. Every request also resolves the signer to an enrolled device and checks current membership
 (the Mailbox's G1 device authorization); a revoked device gets `401 auth_revoked` and a non-member
 `403 not_allowed`. **The pid reconnect path also calls `callAuth` on every rejoin**, so a device revoked
 after the initial join cannot reuse its old pid. Heartbeats recheck at most once per 12 s; an active-room
@@ -698,10 +699,12 @@ Hashing the decoded 32 bytes instead is **not** this contract.
 
 | Request | Auth | Effect |
 |---|---|---|
-| `POST /v1/call/rooms` `{"v":1,"room":"<32hex>","secretHash":"<64hex>"}` | NIP-98 member/device | Creates the room. `{"v":1,"created":true}`. Idempotent for the same hash; a different hash for the same room is `409 room_exists`. |
-| `GET /v1/call/rooms/<room>[?device=<id>]` | NIP-98 member/device | `200 {"v":1,"room":"…","participants":<n>,"createdAt":<ms>}` while the room lives; `404 not_found` after teardown. The only accepted query parameter is `device`. |
-| `GET /v1/call/rooms/<room>/ws?secret=<64hex>[&device=<id>][&pid=<16hex>]` | NIP-98 member/device + secret | The room control socket. `426 upgrade_required` without `Upgrade: websocket`; `400 bad_request` for an unknown query parameter or malformed `room`/`secret`/`pid`; `403 forbidden` for a wrong secret; `404 not_found` for an unknown room; `409 room_full` at the cap; `429 rate_limited` above the join budget. |
+| `POST /v1/call/rooms` `{"v":1,"room":"<32hex>","secretHash":"<64hex>"[,"group":"<uuid>","revision":<n>,"rosterHash":"<64hex>","members":["<64hex>",…]]}` | NIP-98 member/device | Creates the room. Legacy (no roster fields): `{"v":1,"created":true}`. Roster-bound: `{"v":1,"created":true,"rostered":true}`. Idempotent for the same hash **and** the same roster binding; anything else for the same room is `409 room_exists`. See G5 below for the roster rules and the `409 group_room_exists` / `409 stale_revision` / `403 not_in_roster` / `400 roster_required` answers. Both forms set the response header `x-relay-call-rostered: 1\|0`. |
+| `GET /v1/call/rooms/<room>[?device=<id>]` | NIP-98 member/device | `200 {"v":1,"room":"…","participants":<n>,"createdAt":<ms>}` while the room lives (a roster-bound room adds `"rostered":true,"revision":<n>,"rosterHash":"<64hex>"`); `404 not_found` after teardown, and for a roster-bound room also to an identity that is not (or no longer) in its frozen set. The only accepted query parameter is `device`. |
+| `GET /v1/call/rooms/<room>/ws?secret=<64hex>[&device=<id>][&pid=<16hex>]` | NIP-98 member/device + secret | The room control socket. `426 upgrade_required` without `Upgrade: websocket`; `400 bad_request` for an unknown query parameter or malformed `room`/`secret`/`pid`; `403 forbidden` for a wrong secret; `403 not_in_roster` for an identity outside the frozen set of a roster-bound room; `404 not_found` for an unknown room; `409 room_full` at the cap; `429 rate_limited` above the join budget. |
 | `POST /v1/call/rooms/<room>/end[?device=<id>]` | NIP-98 member/device + creator only | `{"v":1,"ended":true}` after telling every member `{"type":"end","by":<creator pubkey>}` and wiping the room. Any other member gets `403 forbidden`. |
+| `POST /v1/call/rooms/<room>/roster[?device=<id>]` `{"v":1,"remove":["<64hex>",…][,"secretHash":"<64hex>"]}` | NIP-98 member/device + creator only | G5 removal: `{"v":1,"removed":<n>}`. See below. |
+| `POST /v1/call/rooms/<room>/rotate[?device=<id>]` `{"v":1,"secretHash":"<64hex>"}` | NIP-98 member/device + creator only | G5 capability rotation: `{"v":1,"rotated":true}`. See below. |
 | `POST` or `PUT /v1/call/rooms/<room>/sfu/<op>[?device=<id>]` | NIP-98 member/device + an open room socket | Proxies the provider call. `<op>` is `sessions-new`, `tracks-new`, `renegotiate` or `tracks-close`. The caller may only touch its own provider session ids. |
 
 > The join secret travels in the WebSocket URL query string as the protocol specifies. It also appears
@@ -711,6 +714,119 @@ Hashing the decoded 32 bytes instead is **not** this contract.
 
 Every request except the WebSocket upgrade has a JSON body with `"v":1`; errors are the usual
 `{"v":1,"error":{"code":…,"retryable":bool}}`.
+
+### Roster-bound rooms (G5)
+
+G5 requires that group-call access is checked against the group roster, not only "enrolled server member +
+capability". **Metadata trade-off (supersedes "the server never learns the roster", LP-D12):** a roster-bound
+room makes the Worker see the frozen member pubkeys of that call (not the group name, avatar or labels) for
+the life of the room, and the Mailbox sees a hash of the group id, the revision, the live room id and the
+creator identity. The group id itself is never stored.
+
+**Create with a frozen roster.** Besides `room` and `secretHash`, the body carries all of:
+
+| Field | Rule |
+|---|---|
+| `group` | canonical lowercase UUID (36 chars), the group id |
+| `revision` | integer, 1 to 2^31-1 (`400 bad_request` above; a larger value could pin a group's slot for 24 h and cannot be superseded) |
+| `rosterHash` | 64 lowercase hex. The client's `GroupCallCodec.rosterHash(roster)` value. The server stores and republishes it but does **not** recompute it (it is not given the owner) |
+| `members` | 1 to 64 pubkeys, 64 lowercase hex each, **strictly ascending and unique** (rejected with `400 bad_request`, never repaired) |
+
+Giving some but not all of the four, or any malformed field, is `400 bad_request` and stores nothing. The
+creator's identity must be in `members` (`403 not_in_roster`) and, as always, a current server member with an
+enrolled, non-revoked device (`403 not_allowed` / `401 auth_revoked`). The room stores the member set, the
+revision, the roster hash and `sha256("relay-call-group-v1\n" + group)`; nothing else about the group.
+
+**Joins.** A join must satisfy NIP-98, device enrolment and the join secret **and** the signer's identity
+must be in the frozen member set (`403 not_in_roster`). The pid reconnect path applies the same check. Every
+frame, heartbeat and active-room alarm probe re-checks it, and so does the SFU proxy, so a removed identity
+cannot keep a socket or the provider surface even if the direct close was missed. A roster-bound room has no
+unrostered join path.
+
+**Legacy (unrostered) create.** A create without roster fields is accepted by default so deployed clients
+keep working, and the room is *unrostered*: any current server member with the secret may join, exactly as
+before (`x-relay-call-rostered: 0`; the existence body is unchanged). The Worker variable
+`ALLOW_UNROSTERED_CALLS="0"` makes the pilot refuse it with `400 roster_required`. Clients that send the
+roster must not fall back to a legacy create on any error; a retry for the same room id with different
+roster fields (or none) is `409 room_exists`.
+
+**One live room per (group, revision).** The shared Mailbox object holds one slot per group id hash:
+`{revision, room, creator}` (bounded: 256 slots by default, 24 h trust for an unreleased slot). The claim is
+one synchronous SQL step in that single object, so concurrent creates cannot both win.
+
+- Same group and revision, different room: `409` with body
+  `{"v":1,"error":{"code":"group_room_exists","retryable":false},"room":"<winner room id>"}`. The winner's
+  join secret (and its hash) is never disclosed. The loser stores nothing; the client should join the
+  winner's room using the secret the winner distributed (`group_start`).
+- A newer `revision` replaces the slot only when the new room's creator is in the **OLD room's** frozen roster
+  (the old creator or any member still listed there) as well as in its own newer set; otherwise `403
+  not_in_roster` and the old room stays live. A removed member of the old room cannot supersede it. The older
+  room is then told to end: its members get `{"type":"end","by":<creator>,"reason":"superseded"}` and
+  its sockets close 1000. An older `revision` than the live one is `409 stale_revision` (no room named).
+- The slot is released when the room is torn down for any reason (creator end, last leaver, grace alarm,
+  unjoined expiry, supersession). If a release is lost, the next create finds the owner room not live
+  (`roomLive` RPC) and takes the slot over by compare-and-swap; an owner that cannot be reached counts as
+  live (fail closed, `409 group_room_exists`). The takeover is refused while the slot is younger than 30 s
+  (the claim-to-insert gap: a winner that has claimed but not yet written its room row looks dead), answered
+  `409 group_room_exists` with `retryable: true`. A room counts as live while it is younger than the unjoined
+  TTL, while anyone is connected, **or** while any participant's `last_seen` is inside the reconnect grace.
+- **Per-identity cap:** one identity holds at most 4 live slots (`MAX_CALL_SLOTS_PER_IDENTITY`) in addition to
+  the 256 global cap. At the cap the creator's own oldest room that nobody ever joined is ended to make room;
+  if every one is joined, `429 rate_limited`. This stops one member filling the global table.
+- **Slot upkeep:** the room's alarm refreshes its slot at most every quarter of the 24 h TTL, so a call longer
+  than 24 h keeps it.
+
+**Before real clients ship: `ALLOW_UNROSTERED_CALLS` must be set to `"0"`.** It defaults to on only so the
+old pilot clients keep working; while on, a client can create an unrostered room that has none of the
+roster protections above. This is a deployment gate, not a default to keep.
+
+**Limits that remain without a signed roster (B1 residual, BLOCKED cross-layer gate).** The member list is
+still claimed by the creator and not verified by the server (no signed owner roster revision exists in the
+contract). Therefore: (1) any enrolled member who knows a group UUID can **squat** an unclaimed
+(group, revision) slot with a self-chosen set for up to the unjoined TTL (12 min) or until the creator ends
+it; (2) a member who was **ex-roster** in the real group but is listed in the live room's frozen set (or is the
+old creator) can still supersede that room with a higher revision; (3) the supersede check only proves
+membership in the old claimed set, not in the real group. Closing these needs the signed roster revision
+(WP02/WP16 contract), which this server work does not invent.
+
+**409 oracle.** `409 group_room_exists` answers any enrolled member, with the winning room id, whether a call
+exists for a group UUID they name (`409` vs `200`). The group UUID is a 122-bit value so this is not a
+guessing oracle for unknown groups, but anyone who holds a UUID learns that a call is live and its room id
+(never the secret). `403 not_in_roster` on a supersede likewise confirms a slot exists.
+
+**Removal.** `POST /v1/call/rooms/<room>/roster {"v":1,"remove":[…][,"secretHash":…]}` is creator-only. `remove`
+is 1 to 64 pubkeys, ascending and unique, each currently in the set and none the creator
+(`400 bad_request` otherwise; `409 roster_required` for an unrostered room; `403 forbidden` for a non-creator;
+`404` unknown room). The set can only shrink: additions need a newer revision's room. For each removed identity
+the Worker deletes it from the set, closes **all** its sockets with close code **4009** reason `removed`,
+marks its participants left (broadcast `left`; the existing cleanup path closes the provider track durably
+via `pending_track_close`, retried by the alarm) and refuses its rejoin. Removal is idempotent: an identity
+that was already removed is a no-op success (`removed` counts only newly removed identities; an identity that
+was never listed is still `400`). All removed sockets are closed before any provider call is awaited. The
+removed participant's **pulled (subscribed)** provider mids, recorded from `tracks-new` remote results (up to
+256 per participant), are closed on its session through the same bounded cleanup path with the same durable
+retry as its published mid. Teardown deletes the roster rows, so a same-id create after a deferred teardown
+cannot fail. The Cloudflare SFU has no
+session-delete call: a removed participant's provider *session* is not closed explicitly; its track is
+force-closed and the session lapses at the provider. An optional `secretHash` rotates the join capability in
+the same call (see below). The frozen `rosterHash` is **not** changed by removals; the live set is the frozen
+set minus removed identities. Ending the room (`/end`) revokes everyone.
+
+**Capability rotation.** `POST /v1/call/rooms/<room>/rotate {"v":1,"secretHash":"<64hex>"}` (creator only)
+replaces the stored hash. Existing sockets stay; new joins (and pid reconnects) need the new secret. Works on
+unrostered rooms too. Rotation does not by itself revoke an identity; use `roster` for that.
+
+**Bounds.** Participants stay capped at 17 (`409 room_full`); `pid` is 16 hex, provider session ids and
+mids match `[A-Za-z0-9_-]{1,256}` / `{1,64}`, 64 tracks per request, 16 KiB SDP, 8 KiB create/roster/rotate
+bodies. Malformed JSON, non-object, non-string `type`, wrongly typed `state` fields and binary frames get an
+`error` frame or a 4xx and never close or corrupt the room (regression-tested).
+
+**Not provided (honest limits).** The roster is *claimed by the creator*: the server has no signed owner
+roster, so a server member who knows a group UUID can claim a slot with a self-chosen member set (squatting
+a revision, or superseding with a higher revision they list themselves in). Only a signed roster revision
+(WP02/WP16 follow-up) closes that. Only the creator may remove members or rotate, so a group owner who did
+not start the call must have the creator's client act, or end the room. Roster-bound answers prove nothing
+about the E2EE of the call (WP17).
 
 ### Join and roster frames
 

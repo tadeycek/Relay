@@ -28,6 +28,7 @@ import {
   type ErrorCode,
   type InboxMessage,
   type Limits,
+  CALL_SLOT_TAKEOVER_GRACE_MS,
 } from "./protocol";
 
 /**
@@ -149,6 +150,14 @@ type AuthOk = Extract<AuthOutcome, { ok: true }>;
 export type CallAuthOutcome =
   | { ok: true; identity: string; device: string; member: boolean; revoked: boolean }
   | { ok: false; code: "auth_invalid" | "not_primary" | "unknown_device" };
+/** G5: the outcome of claiming the one live room slot of a group revision. */
+export type CallSlotOutcome =
+  | { ok: true; superseded: string | null }
+  | { ok: false; code: "conflict"; room: string }
+  | { ok: false; code: "stale_revision" }
+  | { ok: false; code: "newer"; room: string }
+  | { ok: false; code: "creator_full"; rooms: string[] }
+  | { ok: false; code: "full" };
 /** [urgent] is the WP11 call-invite flag: true only when the client sent `"urgent": true`. */
 type SizedDelivery = Delivery & { size: number; urgent: boolean };
 /** A send whose messages were queued together with their media grants (WP04-AC4). */
@@ -608,6 +617,60 @@ export class Mailbox extends DurableObject<Env> {
     if (!who) return { ok: false, code: "auth_invalid" };
     if (who.device !== device) return { ok: false, code: device === PRIMARY_DEVICE ? "not_primary" : "unknown_device" };
     return { ok: true, identity: who.identity, device: who.device, member: this.isMember(who.identity), revoked: who.revoked };
+  }
+
+  /**
+   * G5: atomic create-if-absent of the single live room of a group. One row per group (keyed by the hash
+   * of its id): the revision and room id that currently own the slot. The whole decision is one synchronous
+   * SQL sequence in this single object, so concurrent creators cannot both win. A newer revision replaces
+   * the row and names the superseded room so the caller can end it; an older one is refused.
+   */
+  async callSlotClaim(groupKey: string, revision: number, room: string, creator: string): Promise<CallSlotOutcome> {
+    const now = Date.now();
+    this.sql.exec("DELETE FROM call_slots WHERE claimed_at < ?", now - this.limits.callSlotTtlMs);
+    const row = this.sql.exec<{ revision: number; room: string }>("SELECT revision, room FROM call_slots WHERE group_key = ?", groupKey).toArray()[0];
+    if (row) {
+      if (revision < row.revision) return { ok: false, code: "stale_revision" };
+      if (revision === row.revision) return row.room === room ? { ok: true, superseded: null } : { ok: false, code: "conflict", room: row.room };
+      // B1: a newer revision never replaces the slot here; the new room first proves its creator is in the OLD
+      // room's frozen roster and then calls callSlotSupersede (compare-and-swap on the old room id).
+      return { ok: false, code: "newer", room: row.room };
+    }
+    const mine = this.sql.exec<{ room: string }>("SELECT room FROM call_slots WHERE creator = ? ORDER BY claimed_at ASC LIMIT ?", creator, this.limits.maxCallSlotsPerIdentity + 1).toArray();
+    if (mine.length >= this.limits.maxCallSlotsPerIdentity) return { ok: false, code: "creator_full", rooms: mine.map((r) => r.room) };
+    const n = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM call_slots").one().n;
+    if (n >= this.limits.maxCallSlots) return { ok: false, code: "full" };
+    this.sql.exec("INSERT INTO call_slots (group_key, revision, room, creator, claimed_at) VALUES (?, ?, ?, ?, ?)", groupKey, revision, room, creator, now);
+    return { ok: true, superseded: null };
+  }
+
+  /** G5/B1: replaces the slot of [oldRoom] with a higher revision. Compare-and-swap on the old room and a lower revision. */
+  async callSlotSupersede(groupKey: string, revision: number, oldRoom: string, room: string, creator: string): Promise<boolean> {
+    const cursor = this.sql.exec("UPDATE call_slots SET revision = ?, room = ?, creator = ?, claimed_at = ? WHERE group_key = ? AND room = ? AND revision < ?", revision, room, creator, Date.now(), groupKey, oldRoom, revision);
+    cursor.toArray();
+    return cursor.rowsWritten > 0;
+  }
+
+  /** G5: frees the slot, but only for the room that owns it, so a stale release cannot evict a newer room. */
+  async callSlotRelease(groupKey: string, room: string): Promise<void> {
+    this.sql.exec("DELETE FROM call_slots WHERE group_key = ? AND room = ?", groupKey, room);
+  }
+
+  /** G5/B3: a live room keeps its slot past the TTL; only the owning room refreshes it. */
+  async callSlotTouch(groupKey: string, room: string): Promise<void> {
+    this.sql.exec("UPDATE call_slots SET claimed_at = ? WHERE group_key = ? AND room = ?", Date.now(), groupKey, room);
+  }
+
+  /**
+   * G5/B3: replaces a slot whose room the caller proved dead. Compare-and-swap on the dead room id, and only
+   * once the slot is older than the grace: a winner that has claimed but not yet inserted its room row looks
+   * dead to a concurrent loser for a moment.
+   */
+  async callSlotTakeover(groupKey: string, revision: number, deadRoom: string, room: string, creator: string): Promise<boolean> {
+    const now = Date.now();
+    const cursor = this.sql.exec("UPDATE call_slots SET room = ?, creator = ?, claimed_at = ? WHERE group_key = ? AND room = ? AND revision = ? AND claimed_at <= ?", room, creator, now, groupKey, deadRoom, revision, now - CALL_SLOT_TAKEOVER_GRACE_MS);
+    cursor.toArray();
+    return cursor.rowsWritten > 0;
   }
 
   /** Shared, eviction-safe budget; resolve the signer rather than trusting a room-supplied identity. */
@@ -1846,6 +1909,7 @@ export class Mailbox extends DurableObject<Env> {
 
   private migrate(): void {
     this.sql.exec("CREATE TABLE IF NOT EXISTS call_create_budget (id INTEGER PRIMARY KEY AUTOINCREMENT, identity TEXT NOT NULL, at_ms INTEGER NOT NULL)");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS call_slots (group_key TEXT PRIMARY KEY, revision INTEGER NOT NULL, room TEXT NOT NULL, creator TEXT NOT NULL, claimed_at INTEGER NOT NULL) WITHOUT ROWID");
     this.sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const current = Number(this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'schema'")[0]?.value ?? 0);
     const steps: Array<() => void> = [

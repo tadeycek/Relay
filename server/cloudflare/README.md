@@ -21,7 +21,7 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 | `src/auth.ts` | NIP-98 request auth |
 | `src/push.ts` | Content-free Firebase wake-ups, service-account JWT signing and OAuth token caching |
 | `src/call.ts` | Call support (WP11): mints short-lived Cloudflare TURN credentials for `GET /v1/call/ice` from the `TURN_KEY_ID` / `TURN_API_TOKEN` secrets; bounded, no redirects, honest User-Agent, response sanitized. WP15: the bounded Cloudflare Realtime SFU proxy used by `CallRoom` |
-| `src/callroom.ts` | One Durable Object per active group call (WP15): capability-token auth, hibernatable participant sockets, roster events, SFU session ownership, per-session mutation serialisation and storage wipe when the room empties |
+| `src/callroom.ts` | One Durable Object per active group call (WP15): capability-token auth, hibernatable participant sockets, roster events, SFU session ownership, per-session mutation serialisation and storage wipe when the room empties. G5: frozen-roster binding, removal revocation and secret rotation; claims the per-group slot in the Mailbox |
 | `src/protocol.ts` | Limits, error codes, shared types |
 | `client/mailbox-client.ts` | Minimal client used by the tests and tools: signing, NIP-17 wrap and open |
 | `test/` | Vitest suites that run inside the Workers runtime (`@cloudflare/vitest-plugin`) |
@@ -162,8 +162,30 @@ the DO is the room. Wire shapes, errors, limits and the client contract are in
   same room/secret/pid within 30 s. If the room was already wiped the join returns `404 not_found`; the
   client falls back to the stored `group_start` and the banner self-clears after 10 minutes. The DO wipes
   provider tracks best-effort within a 3 s budget.
+- **G5 roster binding (WP15 follow-up).** `POST /v1/call/rooms` may also carry `group` (UUID), `revision`,
+  `rosterHash` and `members` (1 to 64 sorted, deduplicated 64-hex pubkeys). The creator must be in the set;
+  joins, reconnects, frames and the SFU proxy then require the signer's identity to be in the frozen set
+  (`403 not_in_roster`). The room stores only a hash of the group id, the revision, the roster hash and the
+  member pubkeys: no group name or avatar. This makes the Worker see the call's member pubkeys, which supersedes
+  the earlier "server never learns the roster" claim for roster-bound rooms (metadata trade-off, PROTOCOL.md).
+  Create without roster fields still works (old clients) and yields an *unrostered* room
+  (`x-relay-call-rostered: 0`); set the var `ALLOW_UNROSTERED_CALLS=0` to refuse it with `400 roster_required`.
+- **One live room per (group, revision):** the shared `Mailbox` object holds a bounded `call_slots` table
+  (256 rows, one per group-id hash). Concurrent creates: one wins, the others get `409 group_room_exists` with
+  the winner's room id and no secret. A newer revision supersedes (ends) the older room; an older one is
+  `409 stale_revision`. Teardown releases the slot; a lost release is repaired by a liveness check and
+  compare-and-swap takeover (refused while the slot is younger than 30 s). A newer revision (max 2^31-1)
+  supersedes only when its creator is in the OLD room's frozen roster; one identity holds at most 4 slots
+  (`MAX_CALL_SLOTS_PER_IDENTITY`, its own oldest unjoined room is evicted first); the room alarm refreshes its
+  slot so calls over 24 h keep it. A room stays live while any participant is inside the reconnect grace.
+- **Removal and rotation (creator only):** `POST /v1/call/rooms/<room>/roster {"v":1,"remove":[…]}` removes
+  identities from the set, closes their sockets `4009`, closes their published **and pulled** provider tracks through the existing
+  durable cleanup path (all sockets are closed first; removal is idempotent) and refuses their rejoin; `POST …/rotate {"v":1,"secretHash":…}` replaces the join
+  secret hash for new joins only. No signed roster exists yet: the member list is claimed by the creator (squat and ex-member supersede limits
+  and the `409` existence oracle are listed in PROTOCOL.md; **set `ALLOW_UNROSTERED_CALLS=0` before real clients
+  ship**).
 - Not deployed. No live SFU call was made from this code; the provider is faked in every test. See the
-  WP15 evidence for the Not run list.
+  WP15 and WP15-g5 evidence for the Not run lists.
 
 ## Linked devices (WP04)
 

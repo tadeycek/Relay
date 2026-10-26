@@ -38,6 +38,10 @@ export type ErrorCode =
   | "sync_limit"
   | "room_exists"
   | "room_full"
+  | "not_in_roster"
+  | "roster_required"
+  | "group_room_exists"
+  | "stale_revision"
   | "session_limit"
   | "track_exists"
   | "not_configured"
@@ -120,6 +124,11 @@ export interface Limits {
   sfuTimeoutMs: number;
   maxCallTracksPerRequest: number;
   maxCallSdpBytes: number;
+  /** G5: live group-call slots kept by the Mailbox (one per group), and how long an unreleased slot is trusted. */
+  maxCallSlots: number;
+  /** G5/B2: live call slots one identity may hold. */
+  maxCallSlotsPerIdentity: number;
+  callSlotTtlMs: number;
 }
 
 const KIB = 1024;
@@ -195,6 +204,9 @@ export const DEFAULT_LIMITS: Limits = {
   sfuTimeoutMs: 15000,
   maxCallTracksPerRequest: 64,
   maxCallSdpBytes: 16 * KIB,
+  maxCallSlots: 256,
+  maxCallSlotsPerIdentity: 4,
+  callSlotTtlMs: 24 * 60 * 60 * 1000,
 };
 
 /** Optional numeric overrides from Worker vars (strings), e.g. small caps in tests. */
@@ -262,6 +274,9 @@ export function limitsFrom(env: Partial<Record<string, unknown>>): Limits {
     sfuTimeoutMs: pick("SFU_TIMEOUT_MS", DEFAULT_LIMITS.sfuTimeoutMs),
     maxCallTracksPerRequest: pick("MAX_CALL_TRACKS_PER_REQUEST", DEFAULT_LIMITS.maxCallTracksPerRequest),
     maxCallSdpBytes: pick("MAX_CALL_SDP_BYTES", DEFAULT_LIMITS.maxCallSdpBytes),
+    maxCallSlots: pick("MAX_CALL_SLOTS", DEFAULT_LIMITS.maxCallSlots),
+    maxCallSlotsPerIdentity: pick("MAX_CALL_SLOTS_PER_IDENTITY", DEFAULT_LIMITS.maxCallSlotsPerIdentity),
+    callSlotTtlMs: pick("CALL_SLOT_TTL_MS", DEFAULT_LIMITS.callSlotTtlMs),
   };
 }
 
@@ -347,6 +362,14 @@ export async function sha256Hex(data: ArrayBuffer | Uint8Array | string): Promis
 export const CALL_ROOM_ID = /^[0-9a-f]{32}$/;
 export const CALL_PID = /^[0-9a-f]{16}$/;
 export const SHA256_HEX = /^[0-9a-f]{64}$/;
+/** G5: a group id is a canonical lowercase UUID; the server keeps only a hash of it. */
+export const GROUP_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** G5: the frozen member list of a group call, bounded well above the 17-participant cap. */
+export const MAX_CALL_ROSTER = 64;
+/** G5/B1: highest accepted roster revision (2^31-1). A larger value could pin a group's slot forever. */
+export const MAX_CALL_REVISION = 2 ** 31 - 1;
+/** G5/B3: a slot must be older than this before a proved-dead owner may be taken over (closes the claim-to-insert gap). */
+export const CALL_SLOT_TAKEOVER_GRACE_MS = 30_000;
 /** A provider session id: opaque url-safe token, bounded. */
 export const SFU_SESSION_ID = /^[A-Za-z0-9_-]{1,256}$/;
 /** A WebRTC media id / track name: short url-safe token. */

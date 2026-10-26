@@ -34,6 +34,8 @@
     // MAX_SFU_REQUEST_BYTES, MAX_SFU_RESPONSE_BYTES, SFU_TIMEOUT_MS, MAX_CALL_TRACKS_PER_REQUEST,
     // MAX_CALL_SDP_BYTES. SFU_APP_ID and SFU_APP_SECRET are also SECRETS: `wrangler secret put SFU_APP_ID`
     // and `wrangler secret put SFU_APP_SECRET`. Without them the SFU proxy answers 503 not_configured.
+    // G5: ALLOW_UNROSTERED_CALLS (default on). Set "0" to refuse a group-call create that carries no frozen roster
+    // (400 roster_required); MAX_CALL_SLOTS (256), MAX_CALL_SLOTS_PER_IDENTITY (4) and CALL_SLOT_TTL_MS (24 h) bound the per-group live-room slots.
   },
   "observability": { "enabled": true }
 }
