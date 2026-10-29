@@ -21,7 +21,7 @@ the log together.
 | [WP14](wps/WP14-desktop-1on1-calls.md) | L3 | Desktop: 1:1 calls | WP06, WP12 | doing |
 | [WP15](wps/WP15-server-callroom-sfu.md) | L4 | Server: CallRoom Durable Object and SFU proxy | WP02, WP11 | doing |
 | [WP16](wps/WP16-group-call-clients.md) | L4 | Group voice on phone and desktop | WP13, WP14, WP15 | doing |
-| [WP17](wps/WP17-group-call-e2ee.md) | L4 | Group call E2EE (frame encryption) — gated | WP16 | planned |
+| [WP17](wps/WP17-group-call-e2ee.md) | L4 | Group call E2EE (frame encryption) — gated | WP16 | doing |
 | [WP18](wps/WP18-macos-unsigned-dmg.md) | L2 | macOS unsigned `.dmg` (Apple Silicon) | WP06, WP10 | doing |
 
 Totals: 18 work packages, 80 acceptance criteria, 18 decisions (LP-D01–LP-D18), 14 risks, 6 open questions.
@@ -30,7 +30,10 @@ Totals: 18 work packages, 80 acceptance criteria, 18 decisions (LP-D01–LP-D18)
 
 - [WP09 phone](evidence/WP09-phone.md) and [desktop](evidence/WP09-desktop.md): 100 MiB encrypted files implemented; app 244 tests, desktop 97 gated tests passed before later WP07/WP13 edits. Real phone + Android memory gate unrun.
 - [WP11](evidence/WP11.md), [WP12](evidence/WP12.md): call server + shared engine committed `294e31d`; core 500 (one opt-in provider skip), server 360. Deployment, real calls unrun.
-- [WP07](evidence/WP07.md), [WP13](evidence/WP13.md), [WP15](evidence/WP15.md): implementation exists in working tree but independent reviews found blockers; all remain doing and uncommitted. WP07-AC2 phone roster sync still absent; WP13 device criteria unrun; WP15 security fixes under re-review.
+- [WP15](evidence/WP15.md) / [WP15-g5](evidence/WP15-g5.md): CallRoom and SFU proxy committed `645c710`, frozen roster and revocation `a016e91`; owner-signed roster attestation now verified server-side (`c5321dc`). Still unrun: live SFU, deploy, 48 h pilot.
+- [WP16](evidence/WP16-android.md) / [WP16-desktop](evidence/WP16-desktop.md) / [WP16-core](evidence/WP16-core.md): both clients wired to the real chat path, SFU, UI and foreground service (`785bc46`, `f92b521`). No device, emulator or live SFU run.
+- [WP17](evidence/WP17.md): key schedule, frame crypto, replay window (desktop only) and security-label rule committed and wired into both peers (`785bc46`, `f92b521`). Android's Java `FrameCryptor` exposes no per-frame hook, so the replay window cannot be enforced there. WP17-AC1/AC2 unrun.
+- [WP07](evidence/WP07.md), [WP13](evidence/WP13.md): committed and reviewed; WP07-AC2 phone roster sync and the WP13 device criteria remain unrun.
 
 
 - [WP05](evidence/WP05.md): device authorization (G1) — phone-only admin key, per-device auth keys, migration, revocation with socket close, duplicate/cross-purpose key rejection, send/revoke race and phone lost-reply handling. Linking (link slot, bundle, sync, sent copies) is part B and still open.

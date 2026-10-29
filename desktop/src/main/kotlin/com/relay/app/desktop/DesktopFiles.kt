@@ -251,7 +251,19 @@ class DesktopFiles(
     }
     companion object {
         private val modeFile = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------"))
-        fun noSymlinks(path: Path) { var p: Path? = path.toAbsolutePath(); while (p != null) { require(!Files.isSymbolicLink(p)) { "Symlink path refused" }; p = p.parent } }
+        fun noSymlinks(path: Path) {
+            // A link owned by the OS (uid 0) is a system alias such as macOS /var -> /private/var or
+            // /tmp -> /private/tmp; failing on it would refuse an honest path on every Mac. Any other
+            // link in the chain is app-controlled and still refused.
+            var p: Path? = path.toAbsolutePath().normalize()
+            while (p != null) {
+                if (Files.isSymbolicLink(p)) {
+                    val uid = runCatching { Files.getAttribute(p, "unix:uid") as Int }.getOrNull()
+                    require(uid == 0) { "Symlink path refused" }
+                }
+                p = p.parent
+            }
+        }
         private fun privateDirectory(path: Path) { noSymlinks(path); if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) Files.createDirectories(path, PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"))); require(Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)); Files.setPosixFilePermissions(path, PosixFilePermissions.fromString("rwx------")) }
         private fun durableCopy(input: InputStream, path: Path) { Files.createFile(path, modeFile); try { Files.newOutputStream(path).use { input.copyTo(it, 65536) }; syncFile(path); syncDirectory(path.parent) } catch (e: Exception) { Files.deleteIfExists(path); throw e } }
         private fun syncFile(path: Path) { java.nio.channels.FileChannel.open(path, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS).use { it.force(true) } }
