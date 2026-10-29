@@ -40,6 +40,9 @@ export type ErrorCode =
   | "room_full"
   | "not_in_roster"
   | "roster_required"
+  | "roster_unverified"
+  | "signed_roster_required"
+  | "not_owner"
   | "group_room_exists"
   | "stale_revision"
   | "session_limit"
@@ -368,6 +371,16 @@ export const GROUP_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 export const MAX_CALL_ROSTER = 64;
 /** G5/B1: highest accepted roster revision (2^31-1). A larger value could pin a group's slot forever. */
 export const MAX_CALL_REVISION = 2 ** 31 - 1;
+
+/**
+ * G5 signed roster attestation: the owner signs a canonical byte string with the group's Nostr key. The longest
+ * accepted lifetime and the tolerated clock difference are protocol constants, not operator knobs: both the client
+ * and the Worker must agree on them or a valid attestation is refused.
+ */
+export const MAX_ATTESTATION_LIFETIME_S = 900;
+export const ATTESTATION_SKEW_S = 300;
+/** BIP-340 signature, standard base64: 64 bytes always encode to 88 characters including padding. */
+export const SCHNORR_B64 = /^[A-Za-z0-9+/]{86}==$/;
 /** G5/B3: a slot must be older than this before a proved-dead owner may be taken over (closes the claim-to-insert gap). */
 export const CALL_SLOT_TAKEOVER_GRACE_MS = 30_000;
 /** A provider session id: opaque url-safe token, bounded. */

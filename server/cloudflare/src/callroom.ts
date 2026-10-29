@@ -1,10 +1,12 @@
 import { DurableObject } from "cloudflare:workers";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { AUTH_WINDOW_S, verifyRequestAuth, type AuthOutcome } from "./auth";
 import { proxySfu, sfuConfigFrom, type SfuConfig, type SfuOptions } from "./call";
 import type { CallAuthOutcome, CallSlotOutcome } from "./mailbox";
 import {
-  CALL_PID, CALL_ROOM_ID, GROUP_UUID, MAX_CALL_REVISION, MAX_CALL_ROSTER, SHA256_HEX, SFU_SESSION_ID, SFU_TRACK_ID,
-  constantTimeEqualHex, deviceParam, errorResponse, json, limitsFrom, sha256Hex, type Limits,
+  ATTESTATION_SKEW_S, CALL_PID, CALL_ROOM_ID, GROUP_UUID, MAX_ATTESTATION_LIFETIME_S, MAX_CALL_REVISION, MAX_CALL_ROSTER,
+  SCHNORR_B64, SHA256_HEX, SFU_SESSION_ID, SFU_TRACK_ID, constantTimeEqualHex, deviceParam, errorResponse, json,
+  limitsFrom, sha256Hex, type Limits,
 } from "./protocol";
 
 /**
@@ -84,6 +86,41 @@ interface Binding {
   revision: number;
   rosterHash: string;
   members: string[];
+  /** Signed attestation fields; null/absent for a legacy unsigned create. */
+  owner: string | null;
+  issuedAt: number | null;
+  expiresAt: number | null;
+  signature: string | null;
+}
+
+/** The signed attestation fields, present together or not at all. */
+type Attestation = Binding & { room: string; owner: string; issuedAt: number; expiresAt: number; signature: string };
+
+const ATTESTATION_FIELDS = ["owner", "rosterSig", "issuedAt", "expiresAt"];
+
+/**
+ * G5: the roster hash both this Worker and `GroupCallCodec.rosterHash` compute. Identity membership only; the
+ * server can recompute it because it has the group id, owner, revision and member set, so a `rosterHash` in the
+ * body is no longer stored unverified.
+ */
+export async function rosterHashOf(group: string, owner: string, revision: number, members: string[]): Promise<string> {
+  const canonical = `relay-group-call-roster-v1\n${group}\n${owner}\n${revision}\n${[...members].sort().join("\n")}`;
+  return sha256Hex(canonical);
+}
+
+/** The exact bytes the owner signs. Quoted verbatim in PROTOCOL.md; the core golden vector pins the same string. */
+export function attestationCanonical(a: Attestation): string {
+  return [
+    "relay-call-roster-attestation-v1",
+    "v=1",
+    `groupId=${a.group}`,
+    `revision=${a.revision}`,
+    `rosterHash=${a.rosterHash}`,
+    `members=${[...a.members].sort().join(",")}`,
+    `room=${a.room}`,
+    `issuedAt=${a.issuedAt}`,
+    `expiresAt=${a.expiresAt}`,
+  ].join("\n");
 }
 
 /** Strictly ascending, deduplicated, bounded list of 64-hex pubkeys. Anything else is rejected, not repaired. */
@@ -100,14 +137,25 @@ function pubkeyList(v: unknown, min: number, max: number): string[] | null {
 /** No roster fields: legacy. Some but not all, or any malformed field: invalid. */
 function parseBinding(value: Record<string, unknown>): Binding | null | "invalid" {
   const present = ["group", "revision", "rosterHash", "members"].filter((k) => value[k] !== undefined);
-  if (present.length === 0) return null;
+  const attested = ATTESTATION_FIELDS.filter((k) => value[k] !== undefined);
+  if (present.length === 0) return attested.length === 0 ? null : "invalid";
   const { group, revision, rosterHash } = value;
   if (typeof group !== "string" || !GROUP_UUID.test(group)) return "invalid";
   if (typeof revision !== "number" || !Number.isSafeInteger(revision) || revision < 1 || revision > MAX_CALL_REVISION) return "invalid";
   if (typeof rosterHash !== "string" || !SHA256_HEX.test(rosterHash)) return "invalid";
   const members = pubkeyList(value.members, 1, MAX_CALL_ROSTER);
   if (!members) return "invalid";
-  return { group, revision, rosterHash, members };
+  // A signed roster is all of the attestation or none of it; partial fields are a client bug, never repaired here.
+  if (attested.length !== 0 && attested.length !== ATTESTATION_FIELDS.length) return "invalid";
+  if (attested.length === 0) return { group, revision, rosterHash, members, owner: null, issuedAt: null, expiresAt: null, signature: null };
+  const { owner, rosterSig, issuedAt, expiresAt } = value;
+  if (typeof owner !== "string" || !SHA256_HEX.test(owner)) return "invalid";
+  if (typeof rosterSig !== "string" || !SCHNORR_B64.test(rosterSig)) return "invalid";
+  if (typeof issuedAt !== "number" || !Number.isSafeInteger(issuedAt) || issuedAt <= 0) return "invalid";
+  if (typeof expiresAt !== "number" || !Number.isSafeInteger(expiresAt) || expiresAt <= issuedAt) return "invalid";
+  if (expiresAt - issuedAt > MAX_ATTESTATION_LIFETIME_S) return "invalid";
+  if (members.length < 1 || !members.includes(owner)) return "invalid";
+  return { group, revision, rosterHash, members, owner, issuedAt, expiresAt, signature: rosterSig };
 }
 
 const groupKeyOf = (group: string): Promise<string> => sha256Hex(`relay-call-group-v1\n${group}`);
@@ -115,6 +163,7 @@ const groupKeyOf = (group: string): Promise<string> => sha256Hex(`relay-call-gro
 interface MailboxCalls {
   callAuth(signer: string, device: string): Promise<CallAuthOutcome>;
   callCreateAllowed(signer: string, device: string): Promise<boolean>;
+  callGroupOwner(groupKey: string, owner: string): Promise<{ ok: true; pinned: boolean } | { ok: false }>;
   callSlotClaim(groupKey: string, revision: number, room: string, creator: string): Promise<CallSlotOutcome>;
   callSlotRelease(groupKey: string, room: string): Promise<void>;
   callSlotTakeover(groupKey: string, revision: number, deadRoom: string, room: string, creator: string): Promise<boolean>;
@@ -124,6 +173,7 @@ interface MailboxCalls {
 
 interface PeerRoom {
   roomLive(): Promise<boolean>;
+  rosterVerified(): Promise<boolean>;
   supersede(by: string): Promise<void>;
   supersedeAllowed(identity: string): Promise<boolean>;
   evictIfUnjoined(): Promise<boolean>;
@@ -159,6 +209,13 @@ function parseJson(bytes: ArrayBuffer): unknown {
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** Lowercase hex to bytes; only 32/64-hex values reach here, and a shorter odd value never does. */
+function hexBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
 
 export class CallRoom extends DurableObject<Env> {
   private readonly sql: SqlStorage;
@@ -245,13 +302,19 @@ export class CallRoom extends DurableObject<Env> {
     const principal = await this.authorize(request, body, url);
     if (principal instanceof Response) return this.withMetrics(principal, start);
     if (!this.recordAuth(principal.auth)) return this.withMetrics(errorResponse(401, "auth_replayed"), start);
+    // G5: a signed roster is verified before it can be treated as authoritative — or even as an idempotent retry.
+    const signed = binding !== null && binding.owner !== null;
+    if (binding && signed) {
+      const refusal = await this.verifyAttestation(binding, value.room);
+      if (refusal) return this.withMetrics(refusal, start);
+    }
     const groupKey = binding ? await groupKeyOf(binding.group) : null;
     const existing = this.q<{ secret_hash: string }>("SELECT secret_hash FROM room WHERE id = ?", value.room)[0];
     if (existing) {
       // Constant-time comparison: the secret hash is attacker-supplied and must not leak a prefix. A retry is
       // idempotent only for the very same roster binding, so a legacy create can never strip or replace one.
       const same = constantTimeEqualHex(existing.secret_hash, value.secretHash) && this.sameBinding(binding, groupKey);
-      return this.withMetrics(same ? this.created(binding !== null) : errorResponse(409, "room_exists"), start);
+      return this.withMetrics(same ? this.created(binding !== null, signed) : errorResponse(409, "room_exists"), start);
     }
     if (binding === null && !this.allowUnrostered) return this.withMetrics(errorResponse(400, "roster_required"), start);
     if (binding && !binding.members.includes(principal.identity)) return this.withMetrics(errorResponse(403, "not_in_roster"), start);
@@ -259,9 +322,13 @@ export class CallRoom extends DurableObject<Env> {
     if (!await this.mailbox().callCreateAllowed(principal.signer, principal.device)) {
       return this.withMetrics(errorResponse(429, "rate_limited", true), start);
     }
+    if (binding && signed) {
+      const refused = await this.pinOwner(binding);
+      if (refused) return this.withMetrics(refused, start);
+    }
     let superseded: string | null = null;
     if (binding && groupKey) {
-      const claim = await this.claimSlot(groupKey, binding.revision, value.room, principal.identity);
+      const claim = await this.claimSlot(groupKey, binding.revision, value.room, principal.identity, signed);
       if (claim instanceof Response) return this.withMetrics(claim, start);
       superseded = claim;
     }
@@ -271,7 +338,7 @@ export class CallRoom extends DurableObject<Env> {
         value.room, value.secretHash, principal.identity, now, now,
       );
       if (binding && groupKey) {
-        this.q("INSERT INTO room_roster (id, group_key, revision, roster_hash) VALUES (?, ?, ?, ?)", value.room, groupKey, binding.revision, binding.rosterHash);
+        this.q("INSERT INTO room_roster (id, group_key, revision, roster_hash, verified) VALUES (?, ?, ?, ?, ?)", value.room, groupKey, binding.revision, binding.rosterHash, signed ? 1 : 0);
         for (const member of binding.members) this.q("INSERT INTO roster_members (pubkey) VALUES (?)", member);
       }
       this.invalidateRoster();
@@ -289,28 +356,80 @@ export class CallRoom extends DurableObject<Env> {
       // own unjoined/empty alarms and the slot ownership check bound a failure here.
       await (this.peer(superseded).supersede(principal.identity)).catch(() => undefined);
     }
-    return this.withMetrics(this.created(binding !== null), start);
+    return this.withMetrics(this.created(binding !== null, signed), start);
   }
 
-  private created(rostered: boolean): Response {
-    const body = rostered ? { v: 1, created: true, rostered: true } : { v: 1, created: true };
+  /** `verified` reports whether an owner signature was checked for this roster; legacy creates are unverified. */
+  private created(rostered: boolean, verified: boolean): Response {
+    const body = rostered ? { v: 1, created: true, rostered: true, verified } : { v: 1, created: true };
     return json(body, 200, { [ROSTERED_HEADER]: rostered ? "1" : "0" });
   }
 
   /** True when the stored binding equals [binding] (both unrostered counts as equal). */
   private sameBinding(binding: Binding | null, groupKey: string | null): boolean {
-    const stored = this.q<{ group_key: string; revision: number; roster_hash: string }>("SELECT group_key, revision, roster_hash FROM room_roster LIMIT 1")[0];
+    const stored = this.q<{ group_key: string; revision: number; roster_hash: string; verified: number }>("SELECT group_key, revision, roster_hash, verified FROM room_roster LIMIT 1")[0];
     if (!binding || !groupKey) return !stored;
     if (!stored || stored.group_key !== groupKey || stored.revision !== binding.revision || stored.roster_hash !== binding.rosterHash) return false;
+    // A retry may not upgrade or downgrade the verified status of a room.
+    if ((stored.verified === 1) !== (binding.owner !== null)) return false;
     const members = this.q<{ pubkey: string }>("SELECT pubkey FROM roster_members ORDER BY pubkey").map((r) => r.pubkey);
     return members.length === binding.members.length && members.every((m, i) => m === binding.members[i]);
   }
 
   /**
+   * G5: verify the owner's attestation over exactly this create request. Null means verified (and the group's
+   * owner key pinned); a Response is the refusal.
+   *
+   * What this does and does not prove: the signature is by the key named in the body, over the group id, revision,
+   * roster hash, sorted member set, room id and validity window. The server recomputes `rosterHash` from the body's
+   * own roster, so a hash cannot be decoration. A compromised owner key still signs anything (documented residual).
+   */
+  private async verifyAttestation(binding: Binding, room: string): Promise<Response | null> {
+    if (binding.owner === null || binding.issuedAt === null || binding.expiresAt === null || binding.signature === null) return null;
+    const att = { ...binding, room } as Attestation;
+    if (await rosterHashOf(binding.group, binding.owner, binding.revision, binding.members) !== binding.rosterHash) {
+      return errorResponse(400, "roster_unverified");
+    }
+    const now = nowS();
+    if (binding.expiresAt <= now || binding.issuedAt > now + ATTESTATION_SKEW_S || binding.issuedAt < now - ATTESTATION_SKEW_S) {
+      return errorResponse(400, "roster_unverified");
+    }
+    if (!await this.schnorrVerify(binding.signature, await sha256Hex(attestationCanonical(att)), binding.owner)) {
+      return errorResponse(400, "roster_unverified");
+    }
+    return null;
+  }
+
+  /**
+   * Trust-on-first-use per group: the first verified roster pins the owner key, so an enrolled member cannot sign a
+   * roster with their own key and supersede the real group's room. Called after the auth, membership and create
+   * budget checks, so an unauthorized or rate-limited request cannot pin a group; a request that loses the slot
+   * race afterwards can still leave its pin (the same key that would own the group under TOFU).
+   */
+  private async pinOwner(binding: Binding): Promise<Response | null> {
+    if (binding.owner === null) return null;
+    const pin = await this.mailbox().callGroupOwner(await groupKeyOf(binding.group), binding.owner);
+    return pin.ok ? null : errorResponse(403, "not_owner");
+  }
+
+  /** BIP-340 over 32 raw digest bytes. `@noble/curves` throws on a non-point key; that is a bad signature, not a crash. */
+  private async schnorrVerify(signatureB64: string, digestHex: string, ownerHex: string): Promise<boolean> {
+    try {
+      const sig = Uint8Array.from(atob(signatureB64), (c) => c.charCodeAt(0));
+      if (sig.length !== 64) return false;
+      return schnorr.verify(sig, hexBytes(digestHex), hexBytes(ownerHex));
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * G5: claim the one live room of (group, revision) in the Mailbox object. Returns the superseded room id
    * (or null), or the refusal to send. A slot whose owner room is provably gone (a lost release) is taken over.
+   * [signed] means this create carried a verified owner attestation: it supersedes regardless of the old roster,
+   * because the pinned owner's signature is authoritative for the group.
    */
-  private async claimSlot(groupKey: string, revision: number, room: string, creator: string): Promise<string | null | Response> {
+  private async claimSlot(groupKey: string, revision: number, room: string, creator: string, signed: boolean): Promise<string | null | Response> {
     const mailbox = this.mailbox();
     for (let attempt = 0; attempt < 4; attempt++) {
       const outcome = await mailbox.callSlotClaim(groupKey, revision, room, creator);
@@ -327,6 +446,14 @@ export class CallRoom extends DurableObject<Env> {
         continue;
       }
       if (outcome.code === "newer") {
+        if (signed) {
+          // G5: a verified owner revision replaces whatever holds the slot; the owner's key is the group's authority.
+          if (await mailbox.callSlotSupersede(groupKey, revision, outcome.room, room, creator)) return outcome.room;
+          continue;
+        }
+        // A legacy create can never displace an owner-signed room, even when its creator is listed in it. Unknown
+        // (a dead peer) counts as signed so the refusal fails closed.
+        if (await this.peer(outcome.room).rosterVerified().catch(() => true)) return errorResponse(409, "signed_roster_required");
         // B1: only the old room's frozen roster (creator or listed member) may end it. Unknown counts as no.
         if (!await this.peer(outcome.room).supersedeAllowed(creator).catch(() => false)) return errorResponse(403, "not_in_roster");
         if (await mailbox.callSlotSupersede(groupKey, revision, outcome.room, room, creator)) return outcome.room;
@@ -361,6 +488,12 @@ export class CallRoom extends DurableObject<Env> {
     const row = this.q<{ created_at: number }>("SELECT created_at FROM room LIMIT 1")[0];
     if (!row) return false;
     return !this.expiredUnjoined(row.created_at);
+  }
+
+  /** RPC: was this room's roster checked against an owner signature? Unknown/unbound rooms are not verified. */
+  async rosterVerified(): Promise<boolean> {
+    const row = this.q<{ verified: number }>("SELECT verified FROM room_roster LIMIT 1")[0];
+    return row?.verified === 1;
   }
 
   /** RPC from a newer revision's room (B1): may [identity] end this room? Only the frozen roster may. A dead room has no say. */
@@ -440,9 +573,9 @@ export class CallRoom extends DurableObject<Env> {
     }
     // G5: a removed (or never rostered) identity is told the room does not exist, so its banner clears.
     if (!this.isOnRoster(principal.identity)) return this.withMetrics(errorResponse(404, "not_found"), start);
-    const bound = this.q<{ revision: number; roster_hash: string }>("SELECT revision, roster_hash FROM room_roster LIMIT 1")[0];
+    const bound = this.q<{ revision: number; roster_hash: string; verified: number }>("SELECT revision, roster_hash, verified FROM room_roster LIMIT 1")[0];
     const body = bound
-      ? { v: 1, room, participants: n, createdAt: row.created_at, rostered: true, revision: bound.revision, rosterHash: bound.roster_hash }
+      ? { v: 1, room, participants: n, createdAt: row.created_at, rostered: true, verified: bound.verified === 1, revision: bound.revision, rosterHash: bound.roster_hash }
       : { v: 1, room, participants: n, createdAt: row.created_at };
     return this.withMetrics(json(body, 200, { [ROSTERED_HEADER]: bound ? "1" : "0" }), start);
   }
@@ -1145,7 +1278,10 @@ export class CallRoom extends DurableObject<Env> {
   private migrate(): void {
     this.sql.exec("CREATE TABLE IF NOT EXISTS pending_track_close (session_id TEXT NOT NULL, mid TEXT NOT NULL, pid TEXT NOT NULL, PRIMARY KEY (session_id, mid)) WITHOUT ROWID");
     this.sql.exec("CREATE TABLE IF NOT EXISTS room (id TEXT PRIMARY KEY, secret_hash TEXT NOT NULL, creator TEXT NOT NULL, created_at INTEGER NOT NULL, last_activity INTEGER NOT NULL) WITHOUT ROWID");
-    this.sql.exec("CREATE TABLE IF NOT EXISTS room_roster (id TEXT PRIMARY KEY, group_key TEXT NOT NULL, revision INTEGER NOT NULL, roster_hash TEXT NOT NULL) WITHOUT ROWID");
+    this.sql.exec("CREATE TABLE IF NOT EXISTS room_roster (id TEXT PRIMARY KEY, group_key TEXT NOT NULL, revision INTEGER NOT NULL, roster_hash TEXT NOT NULL, verified INTEGER NOT NULL DEFAULT 0) WITHOUT ROWID");
+    // An object that already holds a pre-attestation room keeps its row: add the column instead of recreating it.
+    const rosterColumns = this.sql.exec<{ name: string }>("PRAGMA table_info(room_roster)").toArray().map((c) => c.name);
+    if (!rosterColumns.includes("verified")) this.sql.exec("ALTER TABLE room_roster ADD COLUMN verified INTEGER NOT NULL DEFAULT 0");
     this.sql.exec("CREATE TABLE IF NOT EXISTS roster_members (pubkey TEXT PRIMARY KEY) WITHOUT ROWID");
     this.sql.exec("CREATE TABLE IF NOT EXISTS roster_removed (pubkey TEXT PRIMARY KEY) WITHOUT ROWID");
     this.sql.exec("CREATE TABLE IF NOT EXISTS pulled_tracks (session_id TEXT NOT NULL, mid TEXT NOT NULL, pid TEXT NOT NULL, PRIMARY KEY (session_id, mid)) WITHOUT ROWID");

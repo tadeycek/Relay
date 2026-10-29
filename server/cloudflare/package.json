@@ -13,6 +13,7 @@
     "pilot": "node tools/pilot.ts"
   },
   "dependencies": {
+    "@noble/curves": "2.0.1",
     "nostr-tools": "2.25.2"
   },
   "devDependencies": {

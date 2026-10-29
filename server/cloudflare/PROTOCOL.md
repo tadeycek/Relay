@@ -699,8 +699,8 @@ Hashing the decoded 32 bytes instead is **not** this contract.
 
 | Request | Auth | Effect |
 |---|---|---|
-| `POST /v1/call/rooms` `{"v":1,"room":"<32hex>","secretHash":"<64hex>"[,"group":"<uuid>","revision":<n>,"rosterHash":"<64hex>","members":["<64hex>",…]]}` | NIP-98 member/device | Creates the room. Legacy (no roster fields): `{"v":1,"created":true}`. Roster-bound: `{"v":1,"created":true,"rostered":true}`. Idempotent for the same hash **and** the same roster binding; anything else for the same room is `409 room_exists`. See G5 below for the roster rules and the `409 group_room_exists` / `409 stale_revision` / `403 not_in_roster` / `400 roster_required` answers. Both forms set the response header `x-relay-call-rostered: 1\|0`. |
-| `GET /v1/call/rooms/<room>[?device=<id>]` | NIP-98 member/device | `200 {"v":1,"room":"…","participants":<n>,"createdAt":<ms>}` while the room lives (a roster-bound room adds `"rostered":true,"revision":<n>,"rosterHash":"<64hex>"`); `404 not_found` after teardown, and for a roster-bound room also to an identity that is not (or no longer) in its frozen set. The only accepted query parameter is `device`. |
+| `POST /v1/call/rooms` `{"v":1,"room":"<32hex>","secretHash":"<64hex>"[,"group":"<uuid>","revision":<n>,"rosterHash":"<64hex>","members":["<64hex>",…][,"owner":"<64hex>","rosterSig":"<base64>","issuedAt":<s>,"expiresAt":<s>]]}` | NIP-98 member/device | Creates the room. Legacy (no roster fields): `{"v":1,"created":true}`. Roster-bound: `{"v":1,"created":true,"rostered":true,"verified":<bool>}`. Idempotent for the same hash **and** the same roster binding and verified status; anything else for the same room is `409 room_exists`. See G5 below for the roster rules, the signed attestation, and the `409 group_room_exists` / `409 stale_revision` / `409 signed_roster_required` / `403 not_in_roster` / `403 not_owner` / `400 roster_required` / `400 roster_unverified` answers. Both forms set the response header `x-relay-call-rostered: 1\|0`. |
+| `GET /v1/call/rooms/<room>[?device=<id>]` | NIP-98 member/device | `200 {"v":1,"room":"…","participants":<n>,"createdAt":<ms>}` while the room lives (a roster-bound room adds `"rostered":true,"verified":<bool>,"revision":<n>,"rosterHash":"<64hex>"`); `404 not_found` after teardown, and for a roster-bound room also to an identity that is not (or no longer) in its frozen set. The only accepted query parameter is `device`. |
 | `GET /v1/call/rooms/<room>/ws?secret=<64hex>[&device=<id>][&pid=<16hex>]` | NIP-98 member/device + secret | The room control socket. `426 upgrade_required` without `Upgrade: websocket`; `400 bad_request` for an unknown query parameter or malformed `room`/`secret`/`pid`; `403 forbidden` for a wrong secret; `403 not_in_roster` for an identity outside the frozen set of a roster-bound room; `404 not_found` for an unknown room; `409 room_full` at the cap; `429 rate_limited` above the join budget. |
 | `POST /v1/call/rooms/<room>/end[?device=<id>]` | NIP-98 member/device + creator only | `{"v":1,"ended":true}` after telling every member `{"type":"end","by":<creator pubkey>}` and wiping the room. Any other member gets `403 forbidden`. |
 | `POST /v1/call/rooms/<room>/roster[?device=<id>]` `{"v":1,"remove":["<64hex>",…][,"secretHash":"<64hex>"]}` | NIP-98 member/device + creator only | G5 removal: `{"v":1,"removed":<n>}`. See below. |
@@ -729,13 +729,64 @@ creator identity. The group id itself is never stored.
 |---|---|
 | `group` | canonical lowercase UUID (36 chars), the group id |
 | `revision` | integer, 1 to 2^31-1 (`400 bad_request` above; a larger value could pin a group's slot for 24 h and cannot be superseded) |
-| `rosterHash` | 64 lowercase hex. The client's `GroupCallCodec.rosterHash(roster)` value. The server stores and republishes it but does **not** recompute it (it is not given the owner) |
+| `rosterHash` | 64 lowercase hex. The client's `GroupCallCodec.rosterHash(roster)` value. On a **signed** create the server recomputes it from `group`, `owner`, `revision` and `members` and answers `400 roster_unverified` on a mismatch; on a legacy unsigned create it is stored and republished unverified |
 | `members` | 1 to 64 pubkeys, 64 lowercase hex each, **strictly ascending and unique** (rejected with `400 bad_request`, never repaired) |
 
 Giving some but not all of the four, or any malformed field, is `400 bad_request` and stores nothing. The
 creator's identity must be in `members` (`403 not_in_roster`) and, as always, a current server member with an
 enrolled, non-revoked device (`403 not_allowed` / `401 auth_revoked`). The room stores the member set, the
 revision, the roster hash and `sha256("relay-call-group-v1\n" + group)`; nothing else about the group.
+
+#### Signed roster attestation (G5)
+
+A create may prove the roster instead of merely claiming it. Four more fields travel together or not at all
+(any subset is `400 bad_request`):
+
+| Field | Rule |
+|---|---|
+| `owner` | the group owner's 64-hex Nostr public key; must be in `members` |
+| `rosterSig` | standard base64 of the owner's 64-byte BIP-340 (Schnorr) signature, so exactly 88 characters ending `==` |
+| `issuedAt` | Unix seconds when the owner signed; must be within **±300 s** of the server clock |
+| `expiresAt` | Unix seconds; must be after `issuedAt` and at most **900 s** later, and still in the future |
+
+The signature is over the SHA-256 of these UTF-8 bytes, LF-separated, **no trailing newline**:
+
+```
+relay-call-roster-attestation-v1
+v=1
+groupId=<uuid>
+revision=<decimal>
+rosterHash=<64 hex>
+members=<sorted 64-hex pubkeys, comma separated>
+room=<32 hex>
+issuedAt=<decimal seconds>
+expiresAt=<decimal seconds>
+```
+
+`owner` and `rosterSig` are not inside the message (the key is the verifier's input; the signature is the
+proof). `members` is sorted ascending before it enters the message, so the body's strictly-ascending order and
+the signed order are the same list. The Worker verifies, in this order: shape, recomputed
+`rosterHash == body.rosterHash`, freshness window, then the BIP-340 signature over those exact bytes. Any failure
+is `400 roster_unverified` and stores nothing.
+
+On success the room is marked **verified**: `verified: true` in the create/read bodies and `room_roster.verified = 1`.
+Only the roster hash, the member set and that flag are stored — never the signature, the owner key or the group id.
+A retry of the same create must resend a still-fresh attestation: an expired `expiresAt` is `400 roster_unverified`
+even for an otherwise idempotent retry (re-sign, do not downgrade to an unsigned create).
+
+**Owner pinning (first use wins).** The Mailbox object pins the owner key of a group the first time a verified
+roster names it (`call_group_owners`, keyed by `sha256("relay-call-group-v1\n" + group)`, bounded to 256 groups,
+oldest pin evicted). A later signed create for the same group with a different `owner` is `403 not_owner` before
+any slot is claimed, so an enrolled member cannot sign a roster with their own key and take the group over.
+This is trust-on-first-use inside this deployment: the server has no group directory, so the first verified
+owner it sees *is* the owner (see the residual risks in `linux-port/evidence/WP15-g5.md`).
+
+**Supersession.** A verified signed create may replace a live room of the same group with a higher `revision`
+regardless of who is in the old room's frozen set, because the pinned owner's signature is authoritative.
+A legacy **unsigned** create can never displace a verified room: it is answered
+`409 signed_roster_required` and the old room stays live. A signed create is still refused where an unsigned
+room already holds the same (group, revision) slot (`409 group_room_exists`, unchanged): the legacy path remains
+a squatting vector until `ALLOW_UNROSTERED_CALLS="0"`.
 
 **Joins.** A join must satisfy NIP-98, device enrolment and the join secret **and** the signer's identity
 must be in the frozen member set (`403 not_in_roster`). The pid reconnect path applies the same check. Every
@@ -758,9 +809,11 @@ one synchronous SQL step in that single object, so concurrent creates cannot bot
   `{"v":1,"error":{"code":"group_room_exists","retryable":false},"room":"<winner room id>"}`. The winner's
   join secret (and its hash) is never disclosed. The loser stores nothing; the client should join the
   winner's room using the secret the winner distributed (`group_start`).
-- A newer `revision` replaces the slot only when the new room's creator is in the **OLD room's** frozen roster
-  (the old creator or any member still listed there) as well as in its own newer set; otherwise `403
-  not_in_roster` and the old room stays live. A removed member of the old room cannot supersede it. The older
+- A newer `revision` **signed by the pinned owner** replaces the slot regardless of the old room's roster. An
+  unsigned newer `revision` replaces the slot only when the new room's creator is in the **OLD room's** frozen
+  roster (the old creator or any member still listed there) as well as in its own newer set, **and** the old
+  room is not verified; otherwise `403 not_in_roster` / `409 signed_roster_required` and the old room stays live.
+  A removed member of the old room cannot supersede it. The older
   room is then told to end: its members get `{"type":"end","by":<creator>,"reason":"superseded"}` and
   its sockets close 1000. An older `revision` than the live one is `409 stale_revision` (no room named).
 - The slot is released when the room is torn down for any reason (creator end, last leaver, grace alarm,
@@ -780,14 +833,26 @@ one synchronous SQL step in that single object, so concurrent creates cannot bot
 old pilot clients keep working; while on, a client can create an unrostered room that has none of the
 roster protections above. This is a deployment gate, not a default to keep.
 
-**Limits that remain without a signed roster (B1 residual, BLOCKED cross-layer gate).** The member list is
-still claimed by the creator and not verified by the server (no signed owner roster revision exists in the
-contract). Therefore: (1) any enrolled member who knows a group UUID can **squat** an unclaimed
-(group, revision) slot with a self-chosen set for up to the unjoined TTL (12 min) or until the creator ends
-it; (2) a member who was **ex-roster** in the real group but is listed in the live room's frozen set (or is the
-old creator) can still supersede that room with a higher revision; (3) the supersede check only proves
-membership in the old claimed set, not in the real group. Closing these needs the signed roster revision
-(WP02/WP16 contract), which this server work does not invent.
+**What the signed roster does and does not close.** With a verified roster: an outsider or an ex-member can no
+longer supersede the room, because a higher revision needs the pinned owner's signature; and a `rosterHash` can
+no longer be decoration, because the server recomputes it. What remains:
+
+1. **A compromised (or malicious) owner key still wins.** The attestation proves "this owner key signed this
+   roster", not that the roster is the group's real membership. An owner who signs a set including an outsider
+   makes the server enforce that set.
+2. **First-use pinning.** The first verified owner key the server sees for a group is pinned. An enrolled member
+   who can produce any valid self-signed roster for a group the server has never seen verified can pin
+   themselves as owner (`403 not_owner` for the real owner afterwards). Check the pin by asking whether
+   `verified:true` succeeds for the legitimate owner on first use.
+3. **Legacy creates.** An unsigned create still claims its own set where no verified room holds the slot: it can
+   squat an unclaimed (group, revision) for the unjoined TTL (12 min) and can fill the slot at the same revision
+   so a signed create gets `409 group_room_exists`. It can never supersede a verified room. Setting
+   `ALLOW_UNROSTERED_CALLS="0"` removes the legacy path and this vector.
+4. **Server metadata.** A verified roster tells the Worker the owner pubkey (only during verification — it is not
+   stored) and pins `sha256(group)` → owner in the Mailbox. Roster membership was already visible for bound rooms.
+5. **No revocation.** Removing a member changes the live set through `/roster`, but the pinned owner key cannot be
+   rotated without a newer verified revision; the pin survives the room. A future owner-key change is a protocol
+   change, not something this endpoint supports.
 
 **409 oracle.** `409 group_room_exists` answers any enrolled member, with the winning room id, whether a call
 exists for a group UUID they name (`409` vs `200`). The group UUID is a 122-bit value so this is not a
@@ -821,12 +886,10 @@ mids match `[A-Za-z0-9_-]{1,256}` / `{1,64}`, 64 tracks per request, 16 KiB SDP,
 bodies. Malformed JSON, non-object, non-string `type`, wrongly typed `state` fields and binary frames get an
 `error` frame or a 4xx and never close or corrupt the room (regression-tested).
 
-**Not provided (honest limits).** The roster is *claimed by the creator*: the server has no signed owner
-roster, so a server member who knows a group UUID can claim a slot with a self-chosen member set (squatting
-a revision, or superseding with a higher revision they list themselves in). Only a signed roster revision
-(WP02/WP16 follow-up) closes that. Only the creator may remove members or rotate, so a group owner who did
-not start the call must have the creator's client act, or end the room. Roster-bound answers prove nothing
-about the E2EE of the call (WP17).
+**Not provided (honest limits).** An unsigned roster is still *claimed by the creator*; only a signed one is
+proven, and it is only as good as the owner key (see the residuals above). Only the creator may remove members
+or rotate, so a group owner who did not start the call must have the creator's client act, or end the room.
+Roster-bound answers prove nothing about the E2EE of the call (WP17).
 
 ### Join and roster frames
 

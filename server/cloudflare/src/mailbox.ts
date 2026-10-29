@@ -150,6 +150,8 @@ type AuthOk = Extract<AuthOutcome, { ok: true }>;
 export type CallAuthOutcome =
   | { ok: true; identity: string; device: string; member: boolean; revoked: boolean }
   | { ok: false; code: "auth_invalid" | "not_primary" | "unknown_device" };
+/** G5 signed roster: `{ok:false}` means this group is pinned to a different owner key. */
+export type GroupOwnerOutcome = { ok: true; pinned: boolean } | { ok: false };
 /** G5: the outcome of claiming the one live room slot of a group revision. */
 export type CallSlotOutcome =
   | { ok: true; superseded: string | null }
@@ -642,6 +644,25 @@ export class Mailbox extends DurableObject<Env> {
     if (n >= this.limits.maxCallSlots) return { ok: false, code: "full" };
     this.sql.exec("INSERT INTO call_slots (group_key, revision, room, creator, claimed_at) VALUES (?, ?, ?, ?, ?)", groupKey, revision, room, creator, now);
     return { ok: true, superseded: null };
+  }
+
+  /**
+   * G5 signed roster: pins the owner key of a group the first time a verified attestation names it. A later
+   * signed revision for the same group must use the same key, so an enrolled member cannot mint their own "owner"
+   * attestation and supersede the real group's call. First use is trusted: the server has no group directory, so
+   * this is trust-on-first-use within this deployment, not proof against a first squatter.
+   */
+  async callGroupOwner(groupKey: string, owner: string): Promise<GroupOwnerOutcome> {
+    const row = this.sql.exec<{ owner: string }>("SELECT owner FROM call_group_owners WHERE group_key = ?", groupKey).toArray()[0];
+    if (row) return row.owner === owner ? { ok: true, pinned: false } : { ok: false };
+    const n = this.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM call_group_owners").one().n;
+    if (n >= this.limits.maxCallSlots) {
+      // Keep the table bounded: the oldest pin is the least likely to be needed again. A re-pin after eviction is
+      // still safe for the current room; it only loses the ability to reject an older squatter's key.
+      this.sql.exec("DELETE FROM call_group_owners WHERE group_key IN (SELECT group_key FROM call_group_owners ORDER BY pinned_at ASC LIMIT 1)");
+    }
+    this.sql.exec("INSERT INTO call_group_owners (group_key, owner, pinned_at) VALUES (?, ?, ?)", groupKey, owner, Date.now());
+    return { ok: true, pinned: true };
   }
 
   /** G5/B1: replaces the slot of [oldRoom] with a higher revision. Compare-and-swap on the old room and a lower revision. */
@@ -1910,6 +1931,8 @@ export class Mailbox extends DurableObject<Env> {
   private migrate(): void {
     this.sql.exec("CREATE TABLE IF NOT EXISTS call_create_budget (id INTEGER PRIMARY KEY AUTOINCREMENT, identity TEXT NOT NULL, at_ms INTEGER NOT NULL)");
     this.sql.exec("CREATE TABLE IF NOT EXISTS call_slots (group_key TEXT PRIMARY KEY, revision INTEGER NOT NULL, room TEXT NOT NULL, creator TEXT NOT NULL, claimed_at INTEGER NOT NULL) WITHOUT ROWID");
+    // G5 signed roster: one pinned owner key per group (hash of the group id, never the id itself).
+    this.sql.exec("CREATE TABLE IF NOT EXISTS call_group_owners (group_key TEXT PRIMARY KEY, owner TEXT NOT NULL, pinned_at INTEGER NOT NULL) WITHOUT ROWID");
     this.sql.exec("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
     const current = Number(this.q<{ value: string }>("SELECT value FROM meta WHERE key = 'schema'")[0]?.value ?? 0);
     const steps: Array<() => void> = [

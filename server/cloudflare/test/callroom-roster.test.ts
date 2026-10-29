@@ -90,7 +90,8 @@ describe("G5 frozen roster binding at create", () => {
   it("stores only hashes and the member set, never the group id, name or avatar", async () => {
     const reply = await createBound(user(0).sk, ROOM, SECRET, { members: set(0, 1, 2), revision: 3 });
     expect(reply.status).toBe(200);
-    expect(reply.body).toEqual({ v: 1, created: true, rostered: true });
+    // G5 signed roster: an unsigned (legacy) create reports verified:false; see callroom-attestation.test.ts.
+    expect(reply.body).toEqual({ v: 1, created: true, rostered: true, verified: false });
     expect(reply.headers.get("x-relay-call-rostered")).toBe("1");
 
     const all = await dump(ROOM);
@@ -100,7 +101,9 @@ describe("G5 frozen roster binding at create", () => {
     expect(all.roster_members.map((r) => r.pubkey).sort()).toEqual(set(0, 1, 2));
     expect(all.room_roster).toHaveLength(1);
     expect(all.room_roster[0].revision).toBe(3);
-    expect(Object.keys(all.room_roster[0]).sort()).toEqual(["group_key", "id", "revision", "roster_hash"].sort());
+    // G5 signed roster adds only `verified`; the signature, owner key and group id are never stored.
+    expect(Object.keys(all.room_roster[0]).sort()).toEqual(["group_key", "id", "revision", "roster_hash", "verified"].sort());
+    expect(all.room_roster[0].verified).toBe(0);
     for (const rows of Object.values(all)) for (const row of rows) expect(Object.keys(row).join()).not.toMatch(/name|avatar|label/i);
 
     const mailbox = JSON.stringify(await slots());
