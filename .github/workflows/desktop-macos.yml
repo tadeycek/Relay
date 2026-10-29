@@ -112,12 +112,20 @@ jobs:
           if len(launchers) != 1:
               raise SystemExit(f'Expected one executable launcher; found {len(launchers)}')
           tmp = Path(os.environ['RUNNER_TEMP']) / 'relay-smoke'
-          result = subprocess.run([str(launchers[0]), '--print-identity', '--config-dir', str(tmp / 'config'), '--data-dir', str(tmp / 'data')],
-                                  capture_output=True, text=True, timeout=35, env={**os.environ, 'RELAY_MAILBOX_URL': ''})
+          def run(args, timeout):
+              return subprocess.run([str(launchers[0]), *args], capture_output=True, text=True, timeout=timeout,
+                                    env={**os.environ, 'RELAY_MAILBOX_URL': ''})
+          # WP18-AC1: the packaged app must open its encrypted DB and reach the OS keyring for real.
+          # The flag prints no secrets and refuses default/real profile paths.
+          self_test = run(['--self-test', '--config-dir', str(tmp / 'st-config'), '--data-dir', str(tmp / 'st-data')], 90)
+          print(f'packaged --self-test: exit={self_test.returncode} stdout={self_test.stdout.strip()!r} stderr={self_test.stderr.strip()!r}')
+          if self_test.returncode:
+              raise SystemExit(f'packaged --self-test failed: exit={self_test.returncode}')
+          result = run(['--print-identity', '--config-dir', str(tmp / 'config'), '--data-dir', str(tmp / 'data')], 35)
           # Public keys are intentionally not printed into CI logs.
           if result.returncode or 'pubkey=' not in result.stdout or 'inner=' not in result.stdout:
               raise SystemExit(f'bounded --print-identity diagnostic failed: exit={result.returncode}; output withheld')
-          print('bounded --print-identity diagnostic: exit=0, identity fields present (not a DB/Keychain self-test)')
+          print('bounded --print-identity diagnostic: exit=0, identity fields present')
           PY
           cp "$dmg" "$RUNNER_TEMP/relay-artifact/"
           (cd "$RUNNER_TEMP/relay-artifact" && shasum -a 256 ./*.dmg > SHA256SUMS && shasum -a 256 -c SHA256SUMS)
