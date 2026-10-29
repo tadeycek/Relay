@@ -8,8 +8,11 @@ import java.security.MessageDigest
  * never put this JSON (especially joinSecret) in a server-visible envelope, log or chat history. */
 data class GroupAnnouncement(val op: String, val eventId: String, val groupId: String, val owner: String,
     val revision: Long, val rosterHash: String, val room: String, val joinSecret: String?,
-    val caller: String, val device: String, val created: Long, val expires: Long, val keyEpoch: Long? = null) {
-    override fun toString(): String = "GroupAnnouncement(op=$op, eventId=$eventId, groupId=$groupId, room=$room, joinSecret=<redacted>)"
+    val caller: String, val device: String, val created: Long, val expires: Long, val keyEpoch: Long? = null,
+    /** WP17: base64 of the 32-byte per-call key. Present only inside the E2E-sealed group_start. */
+    val callKey: String? = null) {
+    override fun toString(): String = "GroupAnnouncement(op=$op, eventId=$eventId, groupId=$groupId, room=$room, " +
+        "joinSecret=<redacted>, callKey=<redacted>, keyEpoch=$keyEpoch)"
 }
 /** Construct ONLY after outer E2E seal verification; this type is not itself cryptographic proof.
  * Public factory exists for platform boundaries and tests: callers must never use the plaintext body caller. */
@@ -72,6 +75,8 @@ object GroupCallCodec {
     private val devicePattern = Regex("[A-Za-z0-9_-]{1,64}")
     private val common = setOf("v", "op", "event", "group", "owner", "revision", "rosterHash", "room",
         "joinSecret", "caller", "device", "created", "expires")
+    /** WP17 key fields are optional and only meaningful on group_start. */
+    private val keyFields = setOf("keyEpoch", "callKey")
     private fun randomHex(random: (Int) -> ByteArray, bytes: Int): String {
         val value = random(bytes)
         require(value.size == bytes) { "random provider returned wrong size" }
@@ -79,16 +84,18 @@ object GroupCallCodec {
     }
     /** Host injects SecureRandom::nextBytes-equivalent; no predictable source in production. */
     fun newStart(roster: GroupProtocol.State, caller: String, device: String, now: Long,
-        random: (Int) -> ByteArray): GroupAnnouncement {
+        random: (Int) -> ByteArray, keyEpoch: Long? = null, callKey: ByteArray? = null): GroupAnnouncement {
         val room = randomHex(random, 16)
         val secret = randomHex(random, 32)
         val event = randomHex(random, 16)
+        require((keyEpoch == null) == (callKey == null)) { "keyEpoch and callKey must be supplied together" }
         return GroupAnnouncement("group_start", event, roster.id, roster.owner, roster.revision,
-            rosterHash(roster), room, secret, caller, device, now, now + MAX_LIFETIME_MS).also { encode(it) }
+            rosterHash(roster), room, secret, caller, device, now, now + MAX_LIFETIME_MS, keyEpoch,
+            callKey?.let { java.util.Base64.getEncoder().encodeToString(it) }).also { encode(it) }
     }
     fun newEnd(start: GroupAnnouncement, now: Long, random: (Int) -> ByteArray): GroupAnnouncement =
         start.copy(op = "group_end", eventId = randomHex(random, 16), joinSecret = null,
-            created = now, expires = now + MAX_LIFETIME_MS).also { encode(it) }
+            keyEpoch = null, callKey = null, created = now, expires = now + MAX_LIFETIME_MS).also { encode(it) }
     /** Hash of identity membership only, not mutable display names/relay hints. A signed owner roster
      * revision/proof is still a G5 server contract, NOT provided by this hash. */
     fun rosterHash(roster: GroupProtocol.State): String {
@@ -107,7 +114,10 @@ object GroupCallCodec {
         (if (a.op == "group_start") a.joinSecret?.let { hex64.matches(it) } == true else a.joinSecret == null) &&
         hex64.matches(a.caller) && devicePattern.matches(a.device) && a.created > 0 &&
         a.expires > a.created && a.expires - a.created <= MAX_LIFETIME_MS &&
-        a.keyEpoch == null // keyEpoch is reserved for WP17: any value is rejected so no host can read it as E2EE
+        // WP17: the key travels only inside a sealed group_start; either both fields or neither.
+        ((a.keyEpoch == null && a.callKey == null) ||
+            (a.op == "group_start" && a.keyEpoch != null && a.keyEpoch!! >= 0 && a.keyEpoch!! <= Int.MAX_VALUE &&
+                a.callKey != null && runCatching { java.util.Base64.getDecoder().decode(a.callKey!!).size == 32 }.getOrDefault(false)))
 
     fun secretHash(joinSecret: String): String {
         require(hex64.matches(joinSecret)) { "invalid join secret" }
@@ -120,7 +130,8 @@ object GroupCallCodec {
             "\"owner\":\"${a.owner}\",\"revision\":${a.revision},\"rosterHash\":\"${a.rosterHash}\"," +
             "\"room\":\"${a.room}\",\"joinSecret\":" + (a.joinSecret?.let { "\"$it\"" } ?: "null") +
             ",\"caller\":\"${a.caller}\",\"device\":\"${a.device}\",\"created\":${a.created},\"expires\":${a.expires}" +
-            (a.keyEpoch?.let { ",\"keyEpoch\":$it" } ?: "") + "}"
+            (a.keyEpoch?.let { ",\"keyEpoch\":$it" } ?: "") +
+            (a.callKey?.let { ",\"callKey\":\"$it\"" } ?: "") + "}"
         require(out.toByteArray(Charsets.UTF_8).size <= MAX_BYTES)
         return out
     }
@@ -130,7 +141,7 @@ object GroupCallCodec {
         if (wire.length > MAX_BYTES || wire.toByteArray(Charsets.UTF_8).size > MAX_BYTES) return GroupDecodeResult.Rejected(GroupReject.TOO_LARGE)
         val obj = try { StrictJson.parse(wire) as? Map<*, *> } catch (_: Exception) { null }
             ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED)
-        if (obj.keys != common && obj.keys != common + "keyEpoch") return GroupDecodeResult.Rejected(GroupReject.MALFORMED)
+        if (obj.keys != common && obj.keys != common + keyFields) return GroupDecodeResult.Rejected(GroupReject.MALFORMED)
         if (obj["v"] != 1L) return GroupDecodeResult.Rejected(GroupReject.MALFORMED)
         val a = GroupAnnouncement(
             obj["op"] as? String ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED),
@@ -145,7 +156,8 @@ object GroupCallCodec {
             obj["device"] as? String ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED),
             obj["created"] as? Long ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED),
             obj["expires"] as? Long ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED),
-            if ("keyEpoch" in obj) obj["keyEpoch"] as? Long ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED) else null)
+            if ("keyEpoch" in obj) obj["keyEpoch"] as? Long ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED) else null,
+            if ("callKey" in obj) obj["callKey"] as? String ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED) else null)
         if (!valid(a)) return GroupDecodeResult.Rejected(GroupReject.MALFORMED)
         if (a.groupId != roster.id || a.owner != roster.owner) return GroupDecodeResult.Rejected(GroupReject.FOREIGN_ROSTER)
         if (a.revision != roster.revision || a.rosterHash != rosterHash(roster)) return GroupDecodeResult.Rejected(GroupReject.STALE_ROSTER)
