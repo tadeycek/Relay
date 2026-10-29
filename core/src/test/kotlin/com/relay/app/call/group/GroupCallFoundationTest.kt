@@ -385,6 +385,48 @@ class GroupCallFoundationTest {
         assertTrue(later.apply(start(id = "b".repeat(32)).copy(room = fenced), sender(owner)).any { it is GroupCallEffect.OpenRoom })
     }
 
+    private fun rnd(seed: Int = 1): (Int) -> ByteArray { var n = seed; return { size -> ByteArray(size) { (n++ and 0xff).toByte() } } }
+
+    @Test fun liveRoomAdvancesToANewerSignedRevisionAndKeepsTheCall() {
+        val engine = GroupCallEngine(roster, member, { now })
+        engine.apply(start(), sender(owner))
+        engine.confirmedRoom(room)
+        val next = roster.copy(revision = 4)
+        val advance = GroupCallCodec.newRevision(start(), next, now, rnd())
+        val wire = GroupCallCodec.encode(advance)
+        val decoded = GroupCallCodec.decodeAdvance(wire, sender(owner), roster, next, now, GroupEventReplay())
+        assertEquals(advance, (decoded as GroupDecodeResult.Accepted).announcement)
+        val effects = engine.advance(next, advance, sender(owner))
+        assertTrue(effects.any { it is GroupCallEffect.RebindRoom })
+        assertFalse(effects.contains(GroupCallEffect.CloseRoom))
+        assertEquals(room, engine.state.room)
+        // The old revision can no longer re-open anything: the frozen roster moved with the room.
+        assertTrue(engine.apply(start(), sender(owner)).isEmpty())
+    }
+
+    @Test fun aRemovedMemberCannotAdvanceTheRevisionAndAStaleOneIsRefused() {
+        val next = roster.copy(revision = 4, members = listOf(roster.members.first()))
+        // The only non-owner member was removed in `next`: its own advance is unauthenticated.
+        val byOwner = GroupCallCodec.newRevision(start(), next, now, rnd()).copy(caller = member)
+        assertEquals(GroupReject.UNAUTHENTICATED,
+            (GroupCallCodec.decodeAdvance(GroupCallCodec.encode(byOwner), sender(member), roster, next, now, GroupEventReplay()) as GroupDecodeResult.Rejected).reason)
+        val engine = GroupCallEngine(roster, owner, { now })
+        engine.apply(start(), sender(owner)); engine.confirmedRoom(room)
+        assertTrue(engine.advance(next, byOwner, sender(member)).isEmpty())
+        // Same revision (not strictly newer) and a foreign group are refused by the acceptance rule.
+        val same = GroupCallCodec.newRevision(start(), next, now, rnd())
+        assertEquals(GroupReject.STALE_ROSTER,
+            (GroupCallCodec.decodeAdvance(GroupCallCodec.encode(same), sender(owner), roster, next.copy(revision = 3), now, GroupEventReplay()) as GroupDecodeResult.Rejected).reason)
+        assertEquals(GroupReject.FOREIGN_ROSTER,
+            (GroupCallCodec.decodeAdvance(GroupCallCodec.encode(same), sender(owner), roster, next.copy(id = "123e4567-e89b-12d3-a456-426614174001"), now, GroupEventReplay()) as GroupDecodeResult.Rejected).reason)
+        // A key epoch that does not advance is refused by the engine (old epoch must be closed, never reused).
+        val keyedStart = start().copy(keyEpoch = 1, callKey = java.util.Base64.getEncoder().encodeToString(ByteArray(32)))
+        val keyedEngine = GroupCallEngine(roster, owner, { now })
+        keyedEngine.apply(keyedStart, sender(owner)); keyedEngine.confirmedRoom(room)
+        val sameEpoch = GroupCallCodec.newRevision(keyedStart, next, now, rnd(), keyEpoch = 2L, callKey = ByteArray(32)).copy(keyEpoch = 1L)
+        assertTrue(keyedEngine.advance(next, sameEpoch, sender(owner)).isEmpty())
+    }
+
     @Test fun eighteenParticipantsKeepFirstSeventeenWithoutClosing() {
         val engine = GroupCallEngine(roster, owner, { now })
         val s = start(); engine.apply(s, sender(owner)); engine.confirmedRoom(s.room)

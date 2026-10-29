@@ -168,6 +168,25 @@ class GroupCallKeySchedule private constructor(
         fun create(callKey: ByteArray, participants: Collection<ParticipantDevice>): GroupCallKeySchedule =
             createAtEpoch(callKey, participants, 0, emptySet())
 
+        /**
+         * A schedule for an existing [epoch], built from the call key a device received for it.
+         *
+         * A device that joins after a re-key holds the new call key and the new epoch but not the history that
+         * produced them, so it cannot call [rotateForRemoval]. Everything the derivation needs is the call key,
+         * the epoch and the device itself: the epoch only enters the HKDF labels ([ratchetInfo],
+         * [materialInfo]), never the participant set. This is therefore byte-identical to the schedule the
+         * members already on [epoch] hold — same ratchet salt, same per-device keys — and a late joiner can
+         * adopt the current epoch instead of failing closed.
+         *
+         * [retiredEpochs] is deliberately empty: this device never held those keys, and an index outside the
+         * current epoch is reported as UNKNOWN_KEY_INDEX, which is rejected exactly like RETIRED.
+         */
+        fun create(
+            callKey: ByteArray,
+            epoch: Int,
+            participants: Collection<ParticipantDevice>,
+        ): GroupCallKeySchedule = createAtEpoch(callKey, participants, epoch, emptySet())
+
         fun fromCallKeyHex(callKeyHex: String, participants: Collection<ParticipantDevice>): GroupCallKeySchedule {
             require(callKeyHex.length == CALL_KEY_BYTES * 2 && callKeyHex.all { it in "0123456789abcdef" }) {
                 "call key must be 64 lowercase hex characters"

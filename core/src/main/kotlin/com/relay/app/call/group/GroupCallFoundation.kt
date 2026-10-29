@@ -93,6 +93,28 @@ object GroupCallCodec {
             rosterHash(roster), room, secret, caller, device, now, now + MAX_LIFETIME_MS, keyEpoch,
             callKey?.let { java.util.Base64.getEncoder().encodeToString(it) }).also { encode(it) }
     }
+    /**
+     * The live-roster advance: a NEW `group_start` for the SAME room at a strictly newer owner-signed revision,
+     * with a fresh join secret, event id and (optionally) the next call-key epoch. It is accepted only through
+     * [decodeAdvance] plus [GroupCallEngine.advance]: the caller must be a member of both the old and the new set,
+     * and the old epoch is closed as part of applying it. Removed members cannot produce one.
+     */
+    fun newRevision(previous: GroupAnnouncement, next: GroupProtocol.State, now: Long,
+        random: (Int) -> ByteArray, keyEpoch: Long? = previous.keyEpoch,
+        callKey: ByteArray? = null, joinSecret: String? = null): GroupAnnouncement {
+        require(previous.op == "group_start") { "only a live group_start can advance" }
+        require(next.id == previous.groupId && next.owner == previous.owner) { "foreign roster" }
+        require(next.revision > previous.revision) { "revision must strictly advance" }
+        require(next.members.any { it.key == previous.caller }) { "caller left the roster" }
+        require((keyEpoch == null) == (callKey == null)) { "keyEpoch and callKey must be supplied together" }
+        if (previous.keyEpoch != null && keyEpoch != null) require(keyEpoch > previous.keyEpoch) { "epoch must advance" }
+        val secret = joinSecret ?: randomHex(random, 32)
+        require(hex64.matches(secret)) { "invalid join secret" }
+        return previous.copy(op = "group_start", eventId = randomHex(random, 16), revision = next.revision,
+            rosterHash = rosterHash(next), joinSecret = secret, created = now,
+            expires = now + MAX_LIFETIME_MS, keyEpoch = keyEpoch,
+            callKey = callKey?.let { java.util.Base64.getEncoder().encodeToString(it) }).also { encode(it) }
+    }
     fun newEnd(start: GroupAnnouncement, now: Long, random: (Int) -> ByteArray): GroupAnnouncement =
         start.copy(op = "group_end", eventId = randomHex(random, 16), joinSecret = null,
             keyEpoch = null, callKey = null, created = now, expires = now + MAX_LIFETIME_MS).also { encode(it) }
@@ -138,6 +160,42 @@ object GroupCallCodec {
     /** authenticatedSender MUST come from the verified E2E seal, never from caller in the body. */
     fun decode(wire: String, authenticatedSender: VerifiedGroupSender, roster: GroupProtocol.State, now: Long,
         replay: GroupEventReplay): GroupDecodeResult {
+        val parsed = parse(wire)
+        if (parsed !is GroupDecodeResult.Accepted) return parsed
+        val a = parsed.announcement
+        if (a.groupId != roster.id || a.owner != roster.owner) return GroupDecodeResult.Rejected(GroupReject.FOREIGN_ROSTER)
+        if (a.revision != roster.revision || a.rosterHash != rosterHash(roster)) return GroupDecodeResult.Rejected(GroupReject.STALE_ROSTER)
+        if (authenticatedSender.identity != a.caller || roster.members.none { it.key == a.caller }) return GroupDecodeResult.Rejected(GroupReject.UNAUTHENTICATED)
+        if (now >= a.expires || now < a.created - 30_000) return GroupDecodeResult.Rejected(GroupReject.EXPIRED)
+        if (!replay.accept(a.eventId, a.expires, now, a.caller)) return GroupDecodeResult.Rejected(GroupReject.DUPLICATE)
+        return GroupDecodeResult.Accepted(a)
+    }
+    /**
+     * The revision-advance acceptance rule. [current] is the roster the live room was frozen at, [next] the roster
+     * the announcement claims. Unlike [decode], it accepts a strictly newer revision, but ONLY when every binding
+     * still matches: same group and owner, the hash of [next] (not of [current]), and a caller who is a member of
+     * BOTH sets. A member removed in [next] can therefore never advance anything.
+     */
+    fun decodeAdvance(wire: String, authenticatedSender: VerifiedGroupSender, current: GroupProtocol.State,
+        next: GroupProtocol.State, now: Long, replay: GroupEventReplay): GroupDecodeResult {
+        val parsed = parse(wire)
+        if (parsed !is GroupDecodeResult.Accepted) return parsed
+        val a = parsed.announcement
+        if (a.op != "group_start") return GroupDecodeResult.Rejected(GroupReject.MALFORMED)
+        if (next.id != current.id || next.owner != current.owner || a.groupId != current.id || a.owner != current.owner) {
+            return GroupDecodeResult.Rejected(GroupReject.FOREIGN_ROSTER)
+        }
+        if (a.revision != next.revision || a.revision <= current.revision || a.rosterHash != rosterHash(next)) {
+            return GroupDecodeResult.Rejected(GroupReject.STALE_ROSTER)
+        }
+        if (authenticatedSender.identity != a.caller || current.members.none { it.key == a.caller } ||
+            next.members.none { it.key == a.caller }) return GroupDecodeResult.Rejected(GroupReject.UNAUTHENTICATED)
+        if (now >= a.expires || now < a.created - 30_000) return GroupDecodeResult.Rejected(GroupReject.EXPIRED)
+        if (!replay.accept(a.eventId, a.expires, now, a.caller)) return GroupDecodeResult.Rejected(GroupReject.DUPLICATE)
+        return GroupDecodeResult.Accepted(a)
+    }
+    /** Shape/format checks shared by [decode] and [decodeAdvance]; no roster binding is judged here. */
+    private fun parse(wire: String): GroupDecodeResult {
         if (wire.length > MAX_BYTES || wire.toByteArray(Charsets.UTF_8).size > MAX_BYTES) return GroupDecodeResult.Rejected(GroupReject.TOO_LARGE)
         val obj = try { StrictJson.parse(wire) as? Map<*, *> } catch (_: Exception) { null }
             ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED)
@@ -159,11 +217,6 @@ object GroupCallCodec {
             if ("keyEpoch" in obj) obj["keyEpoch"] as? Long ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED) else null,
             if ("callKey" in obj) obj["callKey"] as? String ?: return GroupDecodeResult.Rejected(GroupReject.MALFORMED) else null)
         if (!valid(a)) return GroupDecodeResult.Rejected(GroupReject.MALFORMED)
-        if (a.groupId != roster.id || a.owner != roster.owner) return GroupDecodeResult.Rejected(GroupReject.FOREIGN_ROSTER)
-        if (a.revision != roster.revision || a.rosterHash != rosterHash(roster)) return GroupDecodeResult.Rejected(GroupReject.STALE_ROSTER)
-        if (authenticatedSender.identity != a.caller || roster.members.none { it.key == a.caller }) return GroupDecodeResult.Rejected(GroupReject.UNAUTHENTICATED)
-        if (now >= a.expires || now < a.created - 30_000) return GroupDecodeResult.Rejected(GroupReject.EXPIRED)
-        if (!replay.accept(a.eventId, a.expires, now, a.caller)) return GroupDecodeResult.Rejected(GroupReject.DUPLICATE)
         return GroupDecodeResult.Accepted(a)
     }
 }
@@ -178,6 +231,10 @@ sealed interface GroupCallEffect {
         override fun toString(): String = "OpenRoom(room=$room, secret=<redacted>)"
     }
     data object CloseRoom : GroupCallEffect
+    /** Same room, new frozen revision and join capability: reconnect/rotate, do NOT tear the call down. */
+    data class RebindRoom(val room: String, val secret: String) : GroupCallEffect {
+        override fun toString(): String = "RebindRoom(room=$room, secret=<redacted>)"
+    }
     data class Subscribe(val ref: GroupTrackRef) : GroupCallEffect
     data class Unsubscribe(val ref: GroupTrackRef) : GroupCallEffect
     data class WarnUnknown(val pid: String) : GroupCallEffect
@@ -329,12 +386,49 @@ class GroupCallEngine(initialRoster: GroupProtocol.State, private val self: Stri
         state = state.copy(participants = valid.toList())
         return reconcile() + valid.filter { p -> roster.members.none { it.key == p.pubkey } }.map { GroupCallEffect.WarnUnknown(it.pid) }
     }
+    /**
+     * A newer stored roster reached the engine. While a call is live the frozen revision is NOT changed here: the
+     * room is still bound to it until an owner-signed advance ([advance]) re-binds the same room, so the call keeps
+     * running instead of being torn down by a roster edit. A self removal still closes immediately (this device is
+     * out either way). Without a live call the roster simply advances.
+     */
     fun updateRoster(next: GroupProtocol.State): List<GroupCallEffect> {
         if (next.id != roster.id || next.owner != roster.owner || next.revision < roster.revision) return emptyList()
         if (next.revision == roster.revision && GroupCallCodec.rosterHash(next) != GroupCallCodec.rosterHash(roster)) return emptyList()
+        if (active != null) {
+            if (next.members.none { it.key == self }) return close()
+            return emptyList()
+        }
         roster = next
-        // A capability belongs to the frozen revision: all peers leave until a new signed room exists.
-        return if (active != null && (next.revision != active!!.revision || next.members.none { it.key == self })) close() else emptyList()
+        return emptyList()
+    }
+    /**
+     * Applies an owner-signed advance of the LIVE room to [next] at revision [a].revision. The caller must be a member
+     * of BOTH the frozen and the new set (so a removed member can never advance anything), the announcement must name
+     * this exact room with the new roster hash and a key epoch that moves forward, and the old epoch is closed by
+     * unsubscribing every track of a member who left. Effects are a [GroupCallEffect.RebindRoom], never CloseRoom.
+     */
+    fun advance(next: GroupProtocol.State, a: GroupAnnouncement, authenticatedSender: VerifiedGroupSender): List<GroupCallEffect> {
+        val current = active ?: return emptyList()
+        val t = clock()
+        if (current.revision != roster.revision) return emptyList()
+        if (next.id != roster.id || next.owner != roster.owner || next.revision <= roster.revision) return emptyList()
+        if (a.op != "group_start" || a.groupId != roster.id || a.owner != roster.owner) return emptyList()
+        if (a.revision != next.revision || a.rosterHash != GroupCallCodec.rosterHash(next)) return emptyList()
+        if (a.room != current.room || a.joinSecret == null) return emptyList()
+        if (authenticatedSender.identity != a.caller) return emptyList()
+        if (roster.members.none { it.key == a.caller } || next.members.none { it.key == a.caller }) return emptyList()
+        if (next.members.none { it.key == self }) return close()
+        if (t >= a.expires || a.created > t + 30_000) return emptyList()
+        if (!runCatching { GroupCallCodec.encode(a) }.isSuccess) return emptyList()
+        // The key epoch must advance too (both present or both absent, as the codec guarantees).
+        if (current.keyEpoch != null && (a.keyEpoch == null || a.keyEpoch!! <= current.keyEpoch!!)) return emptyList()
+        if (seen.offer(a.eventId, a.expires, t, a.caller) != ReplayAdmission.ACCEPTED) return emptyList()
+        roster = next
+        active = a
+        state = state.copy(room = a.room)
+        // reconcile() drops every subscription of a member who is no longer on the new roster: the old epoch's tracks die.
+        return reconcile() + GroupCallEffect.RebindRoom(a.room, a.joinSecret!!)
     }
     fun tick() = if (active != null && !confirmed && clock() >= active!!.expires) close() else emptyList()
     fun mute(value: Boolean): List<GroupCallEffect> {

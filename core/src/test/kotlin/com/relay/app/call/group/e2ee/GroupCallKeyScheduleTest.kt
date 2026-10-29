@@ -71,4 +71,41 @@ class GroupCallKeyScheduleTest {
         GroupCallKeySchedule.create(callKey, listOf(owner, member))
             .rotateForRemoval(listOf(owner, member, third), ByteArray(32) { 7 })
     }
+
+    @Test
+    fun createAtEpochMatchesTheRotatedSchedule() {
+        val newKey = ByteArray(32) { (it + 32).toByte() }
+        val third = ParticipantDevice("c".repeat(64), "tablet")
+        val rotated = GroupCallKeySchedule.create(callKey, listOf(owner, member, third))
+            .rotateForRemoval(listOf(owner, member), newKey)
+        // What a device that missed epoch 0 can rebuild from (newKey, epoch 1, roster):
+        val late = GroupCallKeySchedule.create(newKey, rotated.epoch, listOf(member, owner))
+        assertEquals(rotated.epoch, late.epoch)
+        assertEquals(1, late.keyIndex)
+        assertEquals(rotated.ratchetSaltHex(), late.ratchetSaltHex())
+        for (p in listOf(owner, member)) {
+            assertEquals(rotated.materialFor(p).toString(Charsets.US_ASCII), late.materialFor(p).toString(Charsets.US_ASCII))
+            assertEquals(rotated.aesKeyFor(p).toHex(), late.aesKeyFor(p).toHex())
+        }
+        // It never held epoch 0, so an epoch-0 frame is rejected like a retired one, never decrypted.
+        assertEquals(FrameKeyStatus.UNKNOWN_KEY_INDEX, late.keyRing().classify(owner, 0))
+        assertEquals(FrameKeyStatus.CURRENT, late.keyRing().classify(owner, 1))
+        // A late joiner that is not in the epoch's participant set is rejected outright.
+        val fourth = ParticipantDevice("d".repeat(64), "laptop")
+        assertEquals(FrameKeyStatus.UNKNOWN_SENDER, late.keyRing().classify(fourth, 1))
+    }
+
+    @Test
+    fun epochZeroCreateIsUnchanged() {
+        val plain = GroupCallKeySchedule.create(callKey, listOf(owner, member))
+        val same = GroupCallKeySchedule.create(callKey, 0, listOf(owner, member))
+        assertEquals(plain.ratchetSaltHex(), same.ratchetSaltHex())
+        assertEquals(plain.aesKeyFor(owner).toHex(), same.aesKeyFor(owner).toHex())
+        assertEquals(plain.retiredEpochs, same.retiredEpochs)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun epochOutsideTheOneByteSelectorIsRejected() {
+        GroupCallKeySchedule.create(callKey, 256, listOf(owner))
+    }
 }
