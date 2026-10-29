@@ -71,6 +71,34 @@ object CallNotifier {
             .build()
     }
 
+    /**
+     * The group-call equivalent of [ongoing]. It opens the group chat (the group call UI lives there) and its
+     * only action leaves the call; "end for everyone" stays in the in-call screen because it needs the
+     * creator's confirmation.
+     */
+    fun groupOngoing(context: Context, displayName: String?, groupId: Long): Notification {
+        ensureChannel(context)
+        val person = Person.Builder().setName(callNotificationName(displayName, CallController.previewsHidden(context))).setImportant(true).build()
+        val leave = CallActionReceiver.intent(context, CallActionReceiver.ACTION_GROUP_LEAVE)
+        val open = PendingIntent.getActivity(
+            context, 3,
+            Intent(context, com.relay.app.MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra("group_call_id", groupId),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        return NotificationCompat.Builder(context, CHANNEL_CALLS)
+            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+            .setStyle(NotificationCompat.CallStyle.forOngoingCall(person, leave))
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setContentIntent(open)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .build()
+    }
+
     fun cancel(context: Context) {
         context.getSystemService(NotificationManager::class.java)?.cancel(NOTIFICATION_ID)
     }
@@ -106,6 +134,7 @@ class CallActionReceiver : android.content.BroadcastReceiver() {
             ACTION_ACCEPT -> CallController.accept(context)
             ACTION_DECLINE -> CallController.decline(context)
             ACTION_HANGUP -> CallController.hangUp(context)
+            ACTION_GROUP_LEAVE -> com.relay.app.calls.group.GroupCallController.leave(context)
         }
     }
 
@@ -113,6 +142,7 @@ class CallActionReceiver : android.content.BroadcastReceiver() {
         const val ACTION_ACCEPT = "com.relay.app.calls.ACCEPT"
         const val ACTION_DECLINE = "com.relay.app.calls.DECLINE"
         const val ACTION_HANGUP = "com.relay.app.calls.HANGUP"
+        const val ACTION_GROUP_LEAVE = "com.relay.app.calls.GROUP_LEAVE"
 
         fun intent(context: Context, action: String): PendingIntent = PendingIntent.getBroadcast(
             context,

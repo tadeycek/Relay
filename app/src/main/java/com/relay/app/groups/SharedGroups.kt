@@ -100,6 +100,26 @@ object SharedGroups {
     }
     private fun fanOut(context: Context, db: RelayDbHelper, stored: Stored, packet: GroupProtocol.Event, own: String) =
         recipients(db, stored.state, own).forEach { queue(context, db, it, stored.localId, packet) }
+    /**
+     * Queues a sealed call-control frame (`TYPE:CALL|J:`) to the group, or only to [only] when re-sealing a
+     * rotated room capability to the members who stayed. It never writes a chat row or a delivery/unread
+     * row: call control is not history. Returns how many member legs were queued.
+     */
+    internal fun stageCallControl(context: Context, groupId: Long, wire: String, only: Set<String>? = null): Int {
+        if (!com.relay.app.calls.group.GroupCallWire.isAnnouncement(wire)) return 0
+        val db = MessagingDb.get(context)
+        val stored = get(db, groupId) ?: return 0
+        val own = NostrIdentity.publicKeyHex(context)
+        if (stored.hidden || stored.state.members.none { it.key == own }) return 0
+        val packet = event(stored.state, "post", own, wire)
+        var queued = 0
+        transaction(context) {
+            recipients(db, stored.state, own).filter { only == null || it.key in only }.forEach {
+                queue(context, db, it, groupId, packet); queued++
+            }
+        }
+        return queued
+    }
     private fun event(state: GroupProtocol.State, kind: String, own: String, text: String, event: String = UUID.randomUUID().toString()) =
         GroupProtocol.Event(kind, GroupProtocol.ref(state), event, own, text, System.currentTimeMillis()).also { GroupProtocol.format(it) }
     private fun <T> transaction(context: Context, block: (RelayDbHelper) -> T): T {
@@ -144,6 +164,7 @@ object SharedGroups {
             rosterRecipients(db, (old.members + next.members).distinctBy { it.key }, old.owner).forEach { queue(context, db, it, id, GroupProtocol.Sync(next)) }
         }
         GroupProfiles.syncPending(context)
+        com.relay.app.calls.group.GroupCallController.onRosterChanged(context, id, next)
         notify(context, id)
     }
     /** The creator re-issues its roster when a member's verified key or relay hints change (or a roster saved
@@ -161,6 +182,7 @@ object SharedGroups {
                 com.relay.app.sync.SentSync.stageGroupRoster(context, stored.localId)
                 rosterRecipients(db, next.members, own).forEach { queue(context, db, it, stored.localId, GroupProtocol.Sync(next)) }
             }
+            com.relay.app.calls.group.GroupCallController.onRosterChanged(context, stored.localId, next)
             notify(context, stored.localId)
         }
     }
@@ -184,6 +206,7 @@ object SharedGroups {
         val db = MessagingDb.get(context); val stored = get(db, id) ?: error("This is a legacy local group; create a new shared group")
         val own = NostrIdentity.publicKeyHex(context)
         require(!stored.hidden && stored.state.members.any { it.key == own }) { "You are no longer in this group" }
+        require(!com.relay.app.calls.group.GroupCallWire.isAnnouncement(text)) { "Call control can't be sent as chat" }
         val packet = event(stored.state, "post", own, text, event)
         val accepted = transaction(context) {
             fanOut(context, db, stored, packet, own)
@@ -215,6 +238,7 @@ object SharedGroups {
     }
 
     private fun store(context: Context, db: RelayDbHelper, id: Long, state: GroupProtocol.State, e: GroupProtocol.Event, own: String, mediaPath: String? = null): Boolean {
+        if (com.relay.app.calls.group.GroupCallWire.isAnnouncement(e.text)) return false
         if (com.relay.app.messaging.MessageDeletion.isDeleted(db, "group:$id", e.author, e.event, e.time)) return false
         if (e.kind == "post" && !com.relay.app.messaging.RetentionPolicy.admissible(e.time, System.currentTimeMillis())) return false
         // Keyed by author as well: events come from every member now, and one member must not be able to
@@ -273,6 +297,9 @@ object SharedGroups {
         // An invitation that doesn't list us is someone else's group.
         if (existing == null && incoming.members.none { it.key == own }) return
         val id = transaction(context) { save(db, incoming, existing).also { com.relay.app.sync.SentSync.stageGroupRoster(context, it) } }
+        // The creator's roster change is mirrored into a live group call: removal posts /roster and closes
+        // the frozen-revision room, and a removed member tears down on the same revision.
+        com.relay.app.calls.group.GroupCallController.onRosterChanged(context, id, incoming)
         if (incoming.members.any { it.key == own }) GroupAvatars.request(context, id, incoming)
         notify(context, id)
         replayPending(context, db, incoming)
@@ -291,6 +318,12 @@ object SharedGroups {
         val stored = existing ?: return
         // Removed members keep their history but take nothing new.
         if (stored.state.members.none { it.key == own }) return
+        // Control-only group call frames are not chat. They never reach store(), unread counts or a
+        // notification; the engine persists its replay/ended fences before the banner is released.
+        if (com.relay.app.calls.group.GroupCallWire.isAnnouncement(e.text)) {
+            com.relay.app.calls.group.GroupCallController.onGroupAnnouncement(context, stored.localId, stored.state, sender, e.text)
+            return
+        }
         if (e.kind == "profile") { GroupProfiles.apply(context, stored, e); return }
         if (e.kind == "read") { GroupReadReceipts.apply(context, stored, e); return }
         var received = false

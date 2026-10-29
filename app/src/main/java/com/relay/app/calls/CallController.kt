@@ -139,7 +139,7 @@ object CallController {
         }
         val block = CallGuard.startBlock(
             micGranted = hasMic(app),
-            otherCallLive = isBusy(),
+            otherCallLive = isBusy() || com.relay.app.calls.group.GroupCallController.isBusy(),
             online = online(app),
             callsEnabled = true,
         )
@@ -153,6 +153,10 @@ object CallController {
     fun accept(context: Context) {
         val app = context.applicationContext
         if (!initialize(app)) return
+        if (com.relay.app.calls.group.GroupCallController.isBusy()) {
+            toast(app, CallGuard.startMessage(CallStartBlock.BUSY))
+            return
+        }
         val block = CallGuard.answerBlock(micGranted = hasMic(app), callsEnabled = true)
         if (block != CallStartBlock.NONE) {
             toast(app, CallGuard.startMessage(block))

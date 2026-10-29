@@ -69,6 +69,9 @@ class MainActivity : FragmentActivity() {
     // (see NfcPairing.handleNdefIntent) — jump to the scan screen so the code it carried is not lost.
     private val pendingOpenScan = mutableStateOf(false)
 
+    // Group id from the ongoing-call notification; tapping it opens that group's in-call screen.
+    private val pendingGroupCall = mutableStateOf<Long?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -82,6 +85,7 @@ class MainActivity : FragmentActivity() {
         PairingCoordinator.restore(applicationContext)
         pendingOpenContacts.value = intent?.getBooleanExtra("open_contacts", false) == true
         handleOpenChatIntent(intent)
+        pendingGroupCall.value = intent?.getLongExtra("group_call_id", -1L)?.takeIf { it > 0 }
         pendingOpenScan.value = com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)
         setContent {
             val transition = calculatorSession.transitionUntil
@@ -165,6 +169,14 @@ class MainActivity : FragmentActivity() {
                         }
                     }
 
+                    val groupCallId by pendingGroupCall
+                    LaunchedEffect(groupCallId) {
+                        groupCallId?.let {
+                            navController.navigate(Screen.GroupChat.routeFor(it))
+                            pendingGroupCall.value = null
+                        }
+                    }
+
                     val shouldOpenScan by pendingOpenScan
                     LaunchedEffect(shouldOpenScan) {
                         if (shouldOpenScan) {
@@ -188,6 +200,7 @@ class MainActivity : FragmentActivity() {
             pendingOpenContacts.value = true
         }
         handleOpenChatIntent(intent)
+        intent.getLongExtra("group_call_id", -1L).takeIf { it > 0 }?.let { pendingGroupCall.value = it }
         if (com.relay.app.nfc.NfcPairing.handleNdefIntent(intent)) pendingOpenScan.value = true
     }
 

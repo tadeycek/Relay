@@ -38,6 +38,10 @@ class RelayApplication : Application(), coil.ImageLoaderFactory {
         // Connect the internet transport, receive messages and drain the outbox for as long as the
         // process lives. Android may suspend/kill it; ordinary periodic work reconnects later.
         MessagingRuntime.ensureStarted(this)
+        // Group calls are part of the app graph from process start: inbound call frames need the
+        // coordinator, a live session needs the foreground service, and a cold start must purge any
+        // persisted banner before it can be mistaken for a live call.
+        com.relay.app.calls.group.GroupCallController.initialize(this)
         PollWorker.schedule(this)
     }
 

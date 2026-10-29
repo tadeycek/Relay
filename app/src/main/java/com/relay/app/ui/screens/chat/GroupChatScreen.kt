@@ -8,6 +8,11 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -71,6 +76,33 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val error by vm.error.collectAsState()
     var replyDraft by rememberSaveable { mutableStateOf<String?>(null) }
     val acceptedDraft by vm.acceptedDraft.collectAsState()
+    val callBanners by com.relay.app.calls.group.GroupCallController.banners.collectAsState()
+    val callScreen by com.relay.app.calls.group.GroupCallController.screen.collectAsState()
+    val callNotice by com.relay.app.calls.group.GroupCallController.notice.collectAsState()
+    val banner = callBanners[groupId]
+    val activeCall = callScreen?.takeIf { it.groupId == groupId }
+    val callContext = LocalContext.current
+    var micGranted by remember {
+        mutableStateOf(ContextCompat.checkSelfPermission(callContext, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+    }
+    val askMic = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        micGranted = granted
+        if (granted) com.relay.app.calls.group.GroupCallController.start(callContext, groupId)
+        else android.widget.Toast.makeText(callContext, com.relay.app.calls.group.GroupCallGuard.message(
+            com.relay.app.calls.group.GroupStartBlock.MIC_DENIED), android.widget.Toast.LENGTH_LONG).show()
+    }
+    LaunchedEffect(groupId) {
+        while (true) {
+            com.relay.app.calls.group.GroupCallController.bannerFor(groupId)
+            kotlinx.coroutines.delay(10_000)
+        }
+    }
+    LaunchedEffect(callNotice) {
+        callNotice?.let {
+            android.widget.Toast.makeText(callContext, it, android.widget.Toast.LENGTH_LONG).show()
+            com.relay.app.calls.group.GroupCallController.clearNotice()
+        }
+    }
     val composerId = rememberSaveable { java.util.UUID.randomUUID().toString() }
     var draftRevision by rememberSaveable { mutableStateOf(0L) }
     var input by rememberSaveable(stateSaver = androidx.compose.ui.text.input.TextFieldValue.Saver) {
@@ -144,13 +176,35 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                 memberSeeds = group?.members.orEmpty().map { GlyphGenerator.seedFor(it.nostrPubkey, null, it.name) },
                 memberCount = group?.members?.size ?: 0,
                 onBack = { navController.popBackStack() },
-                actions = { ConversationMenu(groupId, true, onMembers = { vm.refresh(); showMembers = true }) },
+                actions = {
+                    if (activeCall == null && banner == null) {
+                        GroupCallStartButton(enabled = canSend && group?.sharedOwner != null) {
+                            if (micGranted) com.relay.app.calls.group.GroupCallController.start(context, groupId)
+                            else askMic.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    }
+                    ConversationMenu(groupId, true, onMembers = { vm.refresh(); showMembers = true })
+                },
 
             )
         },
         containerColor = Background,
     ) { padding ->
         Column(modifier = Modifier.fillMaxSize().padding(padding).imePadding()) {
+            if (activeCall != null) {
+                GroupCallScreen(
+                    state = activeCall,
+                    onMute = { com.relay.app.calls.group.GroupCallController.mute(context, it) },
+                    onDeafen = { com.relay.app.calls.group.GroupCallController.deafen(context, it) },
+                    onVolume = { pubkey, volume -> com.relay.app.calls.group.GroupCallController.setVolume(context, pubkey, volume) },
+                    onLeave = { com.relay.app.calls.group.GroupCallController.leave(context) },
+                    onEnd = { com.relay.app.calls.group.GroupCallController.end(context) },
+                    onDismiss = { com.relay.app.calls.group.GroupCallController.dismissEnded() },
+                )
+            } else {
+            banner?.let {
+                GroupCallBannerBar(it) { com.relay.app.calls.group.GroupCallController.join(context, groupId) }
+            }
             if (!loaded) {
                 com.relay.app.ui.components.InitialLoadState(loadError, vm::reload, Modifier.weight(1f).fillMaxWidth())
             } else if (items.isEmpty()) {
@@ -220,6 +274,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
             } else if (loaded && group != null && own.isNotEmpty()) androidx.compose.material3.Text(
                 if (group?.sharedOwner == null) "This is a legacy local group. Create a new shared group from People." else "You are no longer a member of this group.",
                 modifier = Modifier.padding(16.dp), color = TextSecondary)
+            }
         }
     }
 

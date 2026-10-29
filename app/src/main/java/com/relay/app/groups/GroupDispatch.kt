@@ -26,6 +26,7 @@ object GroupDispatch {
         val event = (packet as? GroupProtocol.Event)?.event ?: UUID.randomUUID().toString()
         val payload = UUID.nameUUIDFromBytes("$group:$event:${to.key}".toByteArray(Charsets.UTF_8)).toString()
         val source = packet is GroupProtocol.Event && packet.kind == "post" &&
+            !com.relay.app.calls.group.GroupCallWire.isAnnouncement(packet.text) &&
             ConversationEventBody.parse(packet.text)?.kind != "reaction"
         val sql = db.writableDatabase
         sql.insertWithOnConflict("group_dispatch", null, ContentValues().apply {
@@ -35,7 +36,7 @@ object GroupDispatch {
             put("requires_source", if (source) 1 else 0)
         }, android.database.sqlite.SQLiteDatabase.CONFLICT_IGNORE)
         check(sql.rawQuery("SELECT 1 FROM group_dispatch WHERE payload_id=?", arrayOf(payload)).use { it.moveToFirst() })
-        if (packet is GroupProtocol.Event && packet.kind == "post")
+        if (packet is GroupProtocol.Event && packet.kind == "post" && !com.relay.app.calls.group.GroupCallWire.isAnnouncement(packet.text))
             sql.execSQL("INSERT OR IGNORE INTO group_delivery(group_id,event,payload_id,state,recipient,requires_source) VALUES(?,?,?,?,?,?)",
                 arrayOf(group, event, payload, DeliveryState.QUEUED, to.key, if (source) 1 else 0))
         com.relay.app.messaging.MessagingRuntime.kick()

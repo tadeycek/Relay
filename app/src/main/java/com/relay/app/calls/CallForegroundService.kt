@@ -31,8 +31,10 @@ class CallForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val callId = intent?.getStringExtra(EXTRA_CALL_ID)
         val name = intent?.getStringExtra(EXTRA_PEER_NAME)
-        val stage = if (intent?.getStringExtra(EXTRA_STAGE) == STAGE_IN_CALL) ServiceStage.IN_CALL else ServiceStage.RINGING
-        val notification = CallNotifier.ongoing(this, name, callId ?: "")
+        val groupId = intent?.getLongExtra(EXTRA_GROUP_ID, -1L) ?: -1L
+        val stage = if (groupId > 0 || intent?.getStringExtra(EXTRA_STAGE) == STAGE_IN_CALL) ServiceStage.IN_CALL else ServiceStage.RINGING
+        val notification = if (groupId > 0) CallNotifier.groupOngoing(this, name, groupId)
+            else CallNotifier.ongoing(this, name, callId ?: "")
         val micGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val types = CallServicePolicy.typesFor(Build.VERSION.SDK_INT, stage, micGranted).fold(0) { acc, t ->
             acc or when (t) {
@@ -79,6 +81,7 @@ class CallForegroundService : Service() {
         const val EXTRA_CALL_ID = "call_id"
         const val EXTRA_PEER_NAME = "peer_name"
         const val EXTRA_STAGE = "stage"
+        const val EXTRA_GROUP_ID = "group_call_id"
         const val STAGE_RINGING = "ringing"
         const val STAGE_IN_CALL = "in_call"
         private const val TAG = "RelayCallService"
@@ -99,6 +102,19 @@ class CallForegroundService : Service() {
 
         fun stop(context: Context) {
             runCatching { context.stopService(Intent(context, CallForegroundService::class.java)) }
+        }
+
+        /** Same service and policy as a 1:1 call, with the group notification and MainActivity content intent. */
+        fun startGroup(context: Context, groupId: Long, groupName: String?) {
+            val intent = Intent(context, CallForegroundService::class.java)
+                .putExtra(EXTRA_GROUP_ID, groupId)
+                .putExtra(EXTRA_PEER_NAME, groupName)
+                .putExtra(EXTRA_STAGE, STAGE_IN_CALL)
+            try {
+                if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
+            } catch (e: Exception) {
+                Log.w(TAG, "group foreground service refused: ${e.message}")
+            }
         }
     }
 }
