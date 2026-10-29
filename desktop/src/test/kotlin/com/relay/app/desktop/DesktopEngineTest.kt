@@ -21,6 +21,32 @@ import org.junit.rules.TemporaryFolder
 
 class DesktopEngineTest {
 
+    @Test fun `encrypted group announcement reaches the group controller and never becomes chat`() = runBlocking {
+        val paths = DesktopPaths(tmp.newFolder("call-config").toPath(), tmp.newFolder("call-data").toPath())
+        val secrets = FileSecretStore(paths.secretFile)
+        val identity = DesktopIdentity(paths, secrets)
+        val keys = DesktopKeyMaterial(paths, secrets)
+        val store = DesktopMessageStore(paths.databaseFile, secrets)
+        val transport = FakeTransport()
+        val self = identity.publicKeyHex()
+        val group = GroupCallHarness(self)
+        group.group = group.stored(keys = listOf(self, GroupCallHarness.B), owner = self)
+        store.saveGroupState(group.roster())
+        val calls = DesktopGroupCalls(self, "desk-1", store::storedGroup, store::storedGroup, store, group.api,
+            announce = { _, _ -> SendResult.Sent(1) }, online = { true }, makeMedia = { group.FakeMedia() }, nameOf = { it }, clock = { group.now }, timers = group.timers)
+        val engine = DesktopEngine(identity, keys, store, transport, groupCalls = calls)
+        try {
+            engine.start()
+            val start = group.startBy(GroupCallHarness.B)
+            val encrypted = com.relay.app.messaging.InnerEnvelope.seal(keys, keys.publicKeyBase64(), group.frame(start))
+            transport.deliver(GroupCallHarness.B, RelayPayload("group-call-test", group.now, encrypted))
+            withTimeout(5_000) { while (calls.state.value.banners[group.group!!.conversationId] == null) kotlinx.coroutines.delay(10) }
+            assertEquals(start.room, engine.groupCallState.value.banners[group.group!!.conversationId]?.room)
+            assertTrue(store.messages(GroupCallHarness.B).isEmpty())
+            assertTrue(store.messages(group.group!!.conversationId).isEmpty())
+        } finally { engine.close(); store.close(); group.close() }
+    }
+
     @get:Rule
     val tmp = TemporaryFolder()
 

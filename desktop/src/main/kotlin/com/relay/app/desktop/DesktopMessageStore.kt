@@ -47,7 +47,7 @@ data class DesktopMessage(
 class DesktopMessageStore(
     private val databaseFile: Path,
     secretStore: SecretStore,
-) : AutoCloseable, RawPacketStore, SyncStore {
+) : AutoCloseable, RawPacketStore, SyncStore, GroupCallStateStore {
 
     private val lock = Any()
     private val key: String = Base64.getEncoder().encodeToString(secretStore.getOrCreateKey(DATABASE_KEY_ID))
@@ -259,6 +259,8 @@ class DesktopMessageStore(
                     "CREATE TABLE IF NOT EXISTS call_log(call_id TEXT PRIMARY KEY, peer TEXT NOT NULL, incoming INTEGER NOT NULL, " +
                         "outcome TEXT NOT NULL, reason TEXT, duration_ms INTEGER NOT NULL, at_ms INTEGER NOT NULL)",
                 )
+                st.execute("CREATE TABLE IF NOT EXISTS group_call_state(conversation_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL, updated_at INTEGER NOT NULL)")
+                st.execute("CREATE TABLE IF NOT EXISTS group_call_invite(conversation_id TEXT PRIMARY KEY, announcement TEXT NOT NULL, rejoin INTEGER NOT NULL, updated_at INTEGER NOT NULL)")
             }
         }
     }
@@ -290,6 +292,109 @@ class DesktopMessageStore(
         } finally {
             connection.autoCommit = true
         }
+    }
+
+    /**
+     * WP16: the group-call engine's replay fence / ended rooms for one group, in the same encrypted database. One UPSERT =
+     * one atomic commit: it is written after an accepted event and before the controller publishes any effect, so a failure
+     * here means the event was NOT accepted (the stored packet is retried).
+     */
+    override fun commit(conversationId: String, snapshot: com.relay.app.call.group.GroupCallFenceSnapshot): Unit = synchronized(lock) {
+        val json = org.json.JSONObject()
+            .put("ended", org.json.JSONArray().also { a -> snapshot.ended.forEach { (k, v) -> a.put(org.json.JSONArray().put(k.first).put(k.second).put(v)) } })
+            .put("replayed", org.json.JSONArray().also { a -> snapshot.replayed.forEach { (k, v) -> a.put(org.json.JSONArray().put(k).put(v)) } })
+            .put("active", snapshot.activeRoom?.let { org.json.JSONArray().put(it.first).put(it.second) } ?: org.json.JSONObject.NULL)
+        connection.prepareStatement(
+            "INSERT INTO group_call_state(conversation_id, snapshot, updated_at) VALUES(?,?,?) " +
+                "ON CONFLICT(conversation_id) DO UPDATE SET snapshot = excluded.snapshot, updated_at = excluded.updated_at",
+        ).use { ps -> ps.setString(1, conversationId); ps.setString(2, json.toString()); ps.setLong(3, System.currentTimeMillis()); ps.executeUpdate() }
+        secureFiles()
+    }
+
+    override fun snapshot(conversationId: String): com.relay.app.call.group.GroupCallFenceSnapshot? = synchronized(lock) {
+        val raw = connection.prepareStatement("SELECT snapshot FROM group_call_state WHERE conversation_id = ?").use { ps ->
+            ps.setString(1, conversationId); ps.executeQuery().use { rs -> if (rs.next()) rs.getString(1) else null }
+        } ?: return@synchronized null
+        runCatching {
+            val o = org.json.JSONObject(raw)
+            val ended = LinkedHashMap<Pair<String, String>, Long>()
+            o.getJSONArray("ended").let { a -> for (i in 0 until a.length()) a.getJSONArray(i).let { ended[it.getString(0) to it.getString(1)] = it.getLong(2) } }
+            val replayed = LinkedHashMap<String, Long>()
+            o.getJSONArray("replayed").let { a -> for (i in 0 until a.length()) a.getJSONArray(i).let { replayed[it.getString(0)] = it.getLong(1) } }
+            val active = o.optJSONArray("active")?.let { it.getString(0) to it.getString(1) }
+            com.relay.app.call.group.GroupCallFenceSnapshot(ended, replayed, active)
+        }.getOrNull() // a damaged row is dropped; the engine restore is bounded and validating anyway
+    }
+
+    /**
+     * The fence and the joinable announcement are written in ONE transaction. A crash can therefore never leave a room
+     * fenced without its invitation (which would make a live call unjoinable) or an invitation without the fence (which
+     * would let a replayed start resurrect an ended call).
+     */
+    override fun commit(conversationId: String, snapshot: com.relay.app.call.group.GroupCallFenceSnapshot, invitation: StoredGroupCall?): Unit = synchronized(lock) {
+        val json = fenceJson(snapshot)
+        connection.autoCommit = false
+        try {
+            connection.prepareStatement(
+                "INSERT INTO group_call_state(conversation_id, snapshot, updated_at) VALUES(?,?,?) " +
+                    "ON CONFLICT(conversation_id) DO UPDATE SET snapshot = excluded.snapshot, updated_at = excluded.updated_at",
+            ).use { ps -> ps.setString(1, conversationId); ps.setString(2, json.toString()); ps.setLong(3, System.currentTimeMillis()); ps.executeUpdate() }
+            if (invitation == null) {
+                connection.prepareStatement("DELETE FROM group_call_invite WHERE conversation_id = ?").use { ps ->
+                    ps.setString(1, conversationId); ps.executeUpdate()
+                }
+            } else {
+                val wire = com.relay.app.call.group.GroupCallCodec.encode(invitation.announcement)
+                connection.prepareStatement(
+                    "INSERT INTO group_call_invite(conversation_id, announcement, rejoin, updated_at) VALUES(?,?,?,?) " +
+                        "ON CONFLICT(conversation_id) DO UPDATE SET announcement = excluded.announcement, rejoin = excluded.rejoin, updated_at = excluded.updated_at",
+                ).use { ps ->
+                    ps.setString(1, conversationId); ps.setString(2, wire); ps.setInt(3, if (invitation.rejoin) 1 else 0)
+                    ps.setLong(4, System.currentTimeMillis()); ps.executeUpdate()
+                }
+            }
+            connection.commit()
+            secureFiles()
+        } catch (e: Exception) {
+            runCatching { connection.rollback() }
+            throw e
+        } finally {
+            connection.autoCommit = true
+        }
+    }
+
+    override fun invitations(): Map<String, StoredGroupCall> = synchronized(lock) {
+        val out = LinkedHashMap<String, StoredGroupCall>()
+        connection.prepareStatement("SELECT conversation_id, announcement, rejoin FROM group_call_invite").use { ps ->
+            ps.executeQuery().use { rs ->
+                while (rs.next()) {
+                    runCatching { parseGroupCall(rs.getString(2), rs.getInt(3) == 1) }.getOrNull()
+                        ?.let { out[rs.getString(1)] = it }
+                }
+            }
+        }
+        out
+    }
+
+    private fun fenceJson(snapshot: com.relay.app.call.group.GroupCallFenceSnapshot): org.json.JSONObject =
+        org.json.JSONObject()
+            .put("ended", org.json.JSONArray().also { a -> snapshot.ended.forEach { (k, v) -> a.put(org.json.JSONArray().put(k.first).put(k.second).put(v)) } })
+            .put("replayed", org.json.JSONArray().also { a -> snapshot.replayed.forEach { (k, v) -> a.put(org.json.JSONArray().put(k).put(v)) } })
+            .put("active", snapshot.activeRoom?.let { org.json.JSONArray().put(it.first).put(it.second) } ?: org.json.JSONObject.NULL)
+
+    private fun parseGroupCall(wire: String, rejoin: Boolean): StoredGroupCall? {
+        val o = org.json.JSONObject(wire)
+        val a = com.relay.app.call.group.GroupAnnouncement(
+            o.getString("op"), o.getString("event"), o.getString("group"), o.getString("owner"), o.getLong("revision"),
+            o.getString("rosterHash"), o.getString("room"), if (o.isNull("joinSecret")) null else o.getString("joinSecret"),
+            o.getString("caller"), o.getString("device"), o.getLong("created"), o.getLong("expires"),
+            if (o.has("keyEpoch")) o.getLong("keyEpoch") else null,
+            // WP17: the call key is part of the announcement only, and this row is inside the SQLCipher database together
+            // with the join secret. It is never written to a plain file, a log line or a REST body.
+            if (o.has("callKey")) o.getString("callKey") else null,
+        )
+        com.relay.app.call.group.GroupCallCodec.encode(a) // validates every field again; corrupt rows are dropped
+        return StoredGroupCall(a, rejoin)
     }
 
     fun callRecords(peer: String, limit: Int = 200): List<DesktopCallRecord> = synchronized(lock) {

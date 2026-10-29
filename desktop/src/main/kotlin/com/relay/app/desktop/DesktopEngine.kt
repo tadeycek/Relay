@@ -46,6 +46,8 @@ class DesktopEngine(
     val media: DesktopMedia? = null,
     /** WP14 1:1 calls. Null without a linked device and a mailbox; incoming call packets are then dropped, never shown as chat. */
     val calls: DesktopCallService? = null,
+    /** WP16 group calls, only available with an enrolled device and mailbox. */
+    val groupCalls: DesktopGroupCalls? = null,
     private val callsLinked: () -> Boolean = { linkKeys?.linkedDevice() != null },
 ) : AutoCloseable {
 
@@ -80,7 +82,17 @@ class DesktopEngine(
     val status: StateFlow<TransportStatus> get() = transport.status
 
     private var collector: Job? = null
-    init { media?.onChange = { _revision.value++ }; calls?.onChange = { _revision.value++ } }
+    init { media?.onChange = { _revision.value++ }; calls?.onChange = { _revision.value++ }; groupCalls?.onChange = { _revision.value++ } }
+
+    private val idleGroupCall = MutableStateFlow(DesktopGroupCallUi()).asStateFlow()
+    val groupCallState: StateFlow<DesktopGroupCallUi> get() = groupCalls?.state ?: idleGroupCall
+    fun startGroupCall(conversationId: String): String? = groupCalls?.start(conversationId) ?: "Link this computer to your phone before starting a group call."
+    fun joinGroupCall(conversationId: String): String? = groupCalls?.join(conversationId) ?: "Link this computer to your phone before joining a group call."
+    fun leaveGroupCall() { groupCalls?.leave() }
+    fun endGroupCall() { groupCalls?.endCall() }
+    fun muteGroupCall(muted: Boolean) { groupCalls?.setMuted(muted) }
+    fun deafenGroupCall(deafened: Boolean) { groupCalls?.setDeafened(deafened) }
+    fun groupCallVolume(pid: String, volume: Float) { groupCalls?.setVolume(pid, volume) }
 
     private val idleCall = MutableStateFlow(DesktopCallUi()).asStateFlow()
     /** What the call UI renders. The host behind it lives with the engine, not with any window. */
@@ -103,7 +115,10 @@ class DesktopEngine(
 
     private val sync: DesktopSyncService? =
         if (syncPublisher != null && syncApplier != null) {
-            DesktopSyncService(syncPublisher, syncApplier, onApplied = { _revision.value++ }, intervalMs = syncIntervalMs, scope = scope)
+            DesktopSyncService(syncPublisher, syncApplier, onApplied = {
+                _revision.value++
+                groupCalls?.let { calls -> store.storedGroups().forEach(calls::onRoster) }
+            }, intervalMs = syncIntervalMs, scope = scope)
         } else {
             null
         }
@@ -274,8 +289,17 @@ class DesktopEngine(
         }
         // Group rosters, group posts, group avatars and profile controls are never chat rows.
         if (groups.handle(envelope.senderPubkeyHex, text)) {
+            if (com.relay.app.groups.GroupProtocol.parse(text) is com.relay.app.groups.GroupProtocol.Sync) {
+                groupCalls?.let { calls -> store.storedGroups().forEach(calls::onRoster) }
+            }
             envelope.onHandled?.invoke(); _revision.value++; return
         }
+        // The sender is the opened seal's authenticated pubkey, never a caller supplied in the call body.
+        if (GroupCallWire.isGroupOp(text)) {
+            if (encrypted) groupCalls?.ingress(envelope.senderPubkeyHex, text)
+            envelope.onHandled?.invoke(); _revision.value++; return
+        }
+        // Malformed call controls are never chat messages either.
         if (groups.isAvatarControl(text)) {
             groups.handleAvatar(envelope.senderPubkeyHex, text)
             runCatching { groups.answerAvatarRequest(envelope.senderPubkeyHex, text) }
@@ -310,6 +334,7 @@ class DesktopEngine(
 
     suspend fun stop() {
         // Calls first: hang up, flush the hang-up signal, cancel TURN/timers, close the peer. Only then the transport.
+        groupCalls?.let { service -> runCatching { kotlinx.coroutines.withContext(Dispatchers.IO) { service.close() } } }
         calls?.let { service -> runCatching { kotlinx.coroutines.withContext(Dispatchers.IO) { service.close() } } }
         fileWorker?.cancel(); fileWorker = null
         sync?.stop()
@@ -392,9 +417,27 @@ class DesktopEngine(
                 record = { store.recordCall(it) },
                 nameOf = { key -> store.profile(key)?.name?.takeIf { it.isNotBlank() } ?: store.contacts().firstOrNull { it.nostrPubkey == key }?.name ?: (key.take(8) + "…") },
             ) else null
+            val groupCalls = if (mailbox != null && device != null) DesktopGroupCalls(
+                selfPubkey = identity.publicKeyHex(), deviceId = device.deviceId,
+                groupByConversation = store::storedGroup, groupBySharedId = store::storedGroup,
+                states = store, api = DesktopGroupCallHttp(mailboxUrl, device.signer, device.deviceId),
+                announce = { peer, body ->
+                    val announcement = runCatching { org.json.JSONObject(GroupCallWire.unframe(body)!!) }.getOrNull()
+                    val roster = announcement?.let { store.storedGroup(it.optString("owner"), it.optString("group")) }
+                    val member = roster?.takeIf { !it.hidden && it.members.any { m -> m.key == identity.publicKeyHex() } }
+                        ?.members?.firstOrNull { it.key == peer }
+                    val inner = if (member == null) null else member.inner ?: store.contacts().firstOrNull { it.nostrPubkey == peer && it.deletedAt == null }?.publicKey
+                    val sealed = inner?.let { InnerEnvelope.seal(keyMaterial, it, body) }
+                    if (sealed == null) SendResult.Failed("Group member encryption key unavailable", false)
+                    else transport.send(peer, RelayPayload(PayloadCodec.newId(), System.currentTimeMillis(), sealed), member?.relays ?: emptyList())
+                },
+                online = { transport.status.value == TransportStatus.ONLINE },
+                makeMedia = { DesktopSfuPeer(requireE2ee = true) },
+                nameOf = { key -> store.contacts().firstOrNull { it.nostrPubkey == key }?.name ?: key.take(8) + "…" },
+            ) else null
             return DesktopEngine(
                 identity, keyMaterial, store, transport, peerInnerKeys,
-                calls = calls,
+                calls = calls, groupCalls = groupCalls,
                 linkKeys = linkKeys, syncPublisher = publisher, syncApplier = applier,
                 files = if (mailboxUrl.startsWith("https://")) DesktopFiles(paths.databaseFile.parent.resolve("files"), store,
                     DesktopFileMediaClient(com.relay.app.transport.mailbox.MailboxMedia.Client(

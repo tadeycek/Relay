@@ -75,6 +75,7 @@ fun main(args: Array<String>) {
         kotlin.system.exitProcess(2)
     }
     val paths = DesktopPaths(options.configDir?.let(Path::of), options.dataDir?.let(Path::of))
+    if (options.selfTest) kotlin.system.exitProcess(DesktopSelfTest.run(paths))
     val engine = DesktopEngine.create(paths, options.mailboxUrl, options.peerInnerKeys)
     if (options.printIdentity) {
         println("pubkey=${engine.identity.publicKeyHex()}")
@@ -128,7 +129,7 @@ fun main(args: Array<String>) {
 /** Lets the window close handler and the exit path reach the engine that owns the call host. */
 internal object CallLifecycle {
     val engine = java.util.concurrent.atomic.AtomicReference<DesktopEngine?>(null)
-    fun live(): Boolean = engine.get()?.callState?.value?.live == true
+    fun live(): Boolean = engine.get()?.let { it.callState.value.live || it.groupCallState.value.live } == true
 
     /**
      * JVM shutdown hook (SIGTERM, window-manager kill, logout): runs the same hang-up path as a normal exit. [take] hands
@@ -160,6 +161,8 @@ internal data class Args(
     val seedDemoMedia: String? = null,
     /** WP14 diagnostics: render the Call button, an in-call bar and a call-log row without a call (UI render only). */
     val callDemo: Boolean = false,
+    /** WP18 packaged self-test: opens the encrypted database with the OS keyring and exits nonzero on any failure. */
+    val selfTest: Boolean = false,
 ) {
     companion object {
         fun parse(args: Array<String>): Args {
@@ -174,6 +177,7 @@ internal data class Args(
             var sendTestMessage = false
             var sendTo: String? = null
             var sendToInner: String? = null
+            var selfTest = false
             val peerKeys = mutableMapOf<String, String>()
             var i = 0
             while (i < args.size) {
@@ -193,6 +197,7 @@ internal data class Args(
                     "--print-identity" -> printIdentity = true
                     "--show-chat-ui" -> showChatUi = true
                     "--demo-call" -> callDemo = true
+                    "--self-test" -> selfTest = true
                     "--send-test-message" -> {
                         sendTestMessage = true
                         sendTo = args.getOrNull(++i)
@@ -202,7 +207,7 @@ internal data class Args(
                         println(
                             "usage: relay-desktop [--mailbox-url URL] [--peer HEX] " +
                                 "[--peer-inner-key BASE64 PEER] [--config-dir DIR] [--data-dir DIR] " +
-                                "[--print-identity] [--show-chat-ui] [--demo-call] [--send-test-message PUBKEY INNERKEY]",
+                                "[--print-identity] [--self-test] [--show-chat-ui] [--demo-call] [--send-test-message PUBKEY INNERKEY]",
                         )
                         kotlin.system.exitProcess(0)
                     }
@@ -218,8 +223,77 @@ internal data class Args(
             }
             require(seedDemoMedia == null || showChatUi) { "--seed-demo-media requires --show-chat-ui" }
             require(!callDemo || showChatUi) { "--demo-call requires --show-chat-ui" }
-            return Args(mailboxUrl, initialPeer, configDir, dataDir, peerKeys, printIdentity, sendTestMessage, sendTo, sendToInner, showChatUi, seedDemoMedia, callDemo)
+            if (selfTest) {
+                require(!configDir.isNullOrBlank() && !dataDir.isNullOrBlank()) {
+                    "--self-test requires explicit --config-dir and --data-dir (it never uses the default profile)"
+                }
+                requireSelfTestPath(configDir!!, dataDir!!)
+            }
+            return Args(mailboxUrl, initialPeer, configDir, dataDir, peerKeys, printIdentity, sendTestMessage, sendTo, sendToInner, showChatUi, seedDemoMedia, callDemo, selfTest)
         }
+
+        /**
+         * A self-test writes a fixture conversation, so it must never be pointed at the real profile or an ancestor of
+         * it. Both named directories have to be dedicated and distinct from the XDG defaults.
+         */
+        fun requireSelfTestPath(configDir: String, dataDir: String) {
+            val config = Path.of(configDir).toAbsolutePath().normalize()
+            val data = Path.of(dataDir).toAbsolutePath().normalize()
+            val home = Path.of(System.getProperty("user.home")).toAbsolutePath().normalize()
+            val defaultConfig = DesktopPaths.defaultConfigDir().toAbsolutePath().normalize()
+            val defaultData = DesktopPaths.defaultDataDir().toAbsolutePath().normalize()
+            fun refused(path: Path, default: Path): Boolean =
+                path == default || path.startsWith(default) || path == home || path == home.resolve(".config") ||
+                    path == home.resolve(".local/share") || path == home.resolve(".local/state")
+            require(!refused(config, defaultConfig) && !refused(data, defaultData)) {
+                "--self-test refuses the default or real Relay profile paths; use dedicated scratch directories"
+            }
+            require(config != data) { "--self-test needs distinct --config-dir and --data-dir" }
+        }
+    }
+}
+
+/**
+ * WP18 packaged-app self-test. It deliberately does NOT use [DesktopEngine.create] or [SecretStores.open]: both fall
+ * back to the 0600 file key when no keyring is reachable, which would make a packaged launch look healthy without
+ * exercising the OS Keychain/Keyring backend the build claims. This path fails closed instead, writes a fixture
+ * conversation to the encrypted database, closes it, opens it again and reads the row back. It prints no key, seed,
+ * password, identity or message content.
+ */
+internal object DesktopSelfTest {
+    fun run(paths: DesktopPaths): Int = try {
+        if (System.getenv("RELAY_FORCE_FILE_SECRET_STORE") == "1") {
+            error("RELAY_FORCE_FILE_SECRET_STORE is set; the self-test requires the real OS keyring")
+        }
+        val backend = KeyringSecretStore("relay-desktop-selftest")
+        // A Secret Service prompt or a missing DBus session can block forever; the packaged self-test must fail, not hang.
+        val probe = java.util.concurrent.FutureTask { backend.probe() }
+        Thread(probe, "relay-selftest-keyring").apply { isDaemon = true; start() }
+        val keyringReady = runCatching { probe.get(10, java.util.concurrent.TimeUnit.SECONDS) }.getOrDefault(false)
+        check(keyringReady) { "OS Keychain/Keyring backend is not available or did not persist a probe" }
+        val peer = "5".repeat(64)
+        val marker = "wp18-selftest-" + java.util.UUID.randomUUID()
+        val now = System.currentTimeMillis()
+        DesktopMessageStore(paths.databaseFile, backend).use { store ->
+            store.ensureConversation(peer, title = "WP18 self-test")
+            check(store.insertMessage(DesktopMessage("selftest-$now", peer, peer, marker, now, false))) {
+                "the encrypted database refused the fixture write"
+            }
+            check(store.countMessages() >= 1) { "the fixture write was not visible before closing" }
+        }
+        DesktopMessageStore(paths.databaseFile, backend).use { reopened ->
+            val row = reopened.messages(peer, limit = 10).singleOrNull { it.id == "selftest-$now" }
+                ?: error("the fixture conversation did not survive a database reopen")
+            check(row.body == marker) { "the fixture body changed across a database reopen" }
+        }
+        val raw = java.nio.file.Files.readAllBytes(paths.databaseFile)
+        check(!String(raw, Charsets.ISO_8859_1).contains(marker)) { "the database is not encrypted at rest" }
+        println("self-test: ok (OS keyring, encrypted database, fixture conversation reopened)")
+        0
+    } catch (t: Throwable) {
+        // No stack trace: it can contain paths, but never the key material or the fixture content.
+        System.err.println("self-test: failed: ${t.javaClass.simpleName}${t.message?.let { ": $it" } ?: ""}")
+        1
     }
 }
 
@@ -484,6 +558,7 @@ private fun App(engine: DesktopEngine, initialPeer: String?, seedDemoMedia: Stri
         if (callDemo) runCatching { DesktopCallDemo.seed(engine) }.onSuccess { controller.select(DesktopCallDemo.PEER) }
     }
     val realCall by engine.callState.collectAsState()
+    val groupCall by engine.groupCallState.collectAsState()
     val call = if (callDemo) DesktopCallDemo.ui() else realCall
 
     // Select the requested peer on launch (linking flow).
@@ -541,10 +616,25 @@ private fun App(engine: DesktopEngine, initialPeer: String?, seedDemoMedia: Stri
             declineCall = { scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.declineCall() } } },
             hangUp = { scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.hangUpCall() } } },
             toggleMute = { muted -> scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.muteCall(muted) } } },
+            startGroupCall = {
+                controller.state.value.selected?.id?.let { conv ->
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.startGroupCall(conv) }.getOrElse { "Could not start group voice." }?.let(controller::reportError) }
+                }
+            },
+            joinGroupCall = {
+                controller.state.value.selected?.id?.let { conv ->
+                    scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.joinGroupCall(conv) }.getOrElse { "Could not join group voice." }?.let(controller::reportError) }
+                }
+            },
+            leaveGroupCall = { scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.leaveGroupCall() } } },
+            endGroupCall = { scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.endGroupCall() } } },
+            muteGroupCall = { muted -> scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.muteGroupCall(muted) } } },
+            deafenGroupCall = { deafened -> scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.deafenGroupCall(deafened) } } },
+            groupVolume = { pid, volume -> scope.launch(kotlinx.coroutines.Dispatchers.IO) { runCatching { engine.groupCallVolume(pid, volume) } } },
         )
     }
 
-    ChatScreen(state = state, actions = actions, engine = engine, call = call, showRing = false)
+    ChatScreen(state = state, actions = actions, engine = engine, call = call, groupCall = groupCall, showRing = false)
     // The ring lives in its own always-on-top window of THIS app, so it shows even when the main window is minimised.
     if (call.stage == DesktopCallStage.RINGING_IN) {
         androidx.compose.ui.window.Window(

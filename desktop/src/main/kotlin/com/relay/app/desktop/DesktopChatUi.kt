@@ -80,6 +80,13 @@ data class ChatActions(
     val declineCall: () -> Unit = {},
     val hangUp: () -> Unit = {},
     val toggleMute: (Boolean) -> Unit = {},
+    val startGroupCall: () -> Unit = {},
+    val joinGroupCall: () -> Unit = {},
+    val leaveGroupCall: () -> Unit = {},
+    val endGroupCall: () -> Unit = {},
+    val muteGroupCall: (Boolean) -> Unit = {},
+    val deafenGroupCall: (Boolean) -> Unit = {},
+    val groupVolume: (String, Float) -> Unit = { _, _ -> },
 )
 
 // Discord's own density, not its logo or typeface: a dark three-pane messenger.
@@ -126,6 +133,7 @@ fun ChatScreen(
     modifier: Modifier = Modifier,
     engine: DesktopEngine? = null,
     call: DesktopCallUi = DesktopCallUi(),
+    groupCall: DesktopGroupCallUi = DesktopGroupCallUi(),
     /** False when the host window shows the ring card in its own always-on-top window instead. */
     showRing: Boolean = true,
     callClock: () -> Long = System::currentTimeMillis,
@@ -173,6 +181,22 @@ fun ChatScreen(
             ConversationList(state, actions, modifier = Modifier.width(280.dp), onQuickSwitcher = { quickSwitcher = true })
             Column(Modifier.weight(1f).fillMaxHeight().background(MainColor)) {
                 ThreadHeader(state, showMembers, onToggleMembers = { showMembers = !showMembers }, call = call, onCall = actions.startCall)
+                if (state.selected?.isGroup == true) {
+                    // WP17: the default is the honest in-transit wording; only verified epoch keys raise it.
+                    Text(groupCall.label, color = MutedColor, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                    groupCall.securityError?.let {
+                        Text(it, color = Color(0xFFED4245), fontSize = 11.sp, modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp))
+                    }
+                }
+                if (state.selected?.isGroup == true && !groupCall.live && groupCall.banners[state.selected.id] == null) {
+                    OutlinedButton(onClick = actions.startGroupCall, modifier = Modifier.testTag("group-call-start")) { Text("Start voice call") }
+                    if (state.status != "Online") {
+                        Text("Group voice needs a connection to your mailbox.", color = MutedColor, fontSize = 11.sp)
+                    }
+                }
+                if (groupCall.live || state.selected?.id?.let { groupCall.banners.containsKey(it) } == true) {
+                    GroupCallPanel(groupCall, state.selected?.id, actions)
+                }
                 if (call.stage != DesktopCallStage.IDLE && call.stage != DesktopCallStage.RINGING_IN) CallBar(call, actions, callClock, callTicks)
                 else if (call.stage == DesktopCallStage.IDLE) call.notice?.let { CallNotice(it) }
                 Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -226,6 +250,44 @@ fun ChatScreen(
             null -> Unit
             ChatDialog.Settings -> SettingsDialog(state, actions, onClose = { dialog = null })
 
+        }
+    }
+}
+
+@Composable
+private fun GroupCallPanel(call: DesktopGroupCallUi, selected: String?, actions: ChatActions) {
+    val banner = selected?.let { call.banners[it] }
+    Column(Modifier.fillMaxWidth().background(HeaderColor).padding(10.dp)) {
+        call.notice?.let { Text(it, color = Color(0xFFF2B8B5), fontSize = 11.sp) }
+        if (banner != null) {
+            Text("${banner.starterName} started a voice call", color = TextColor)
+            OutlinedButton(onClick = actions.joinGroupCall, modifier = Modifier.testTag("group-call-join")) {
+                Text(if (banner.rejoin) "Rejoin voice" else "Join voice")
+            }
+        }
+        if (call.live) {
+            Text("${call.groupName}: ${call.stage.name.lowercase()}", color = TextColor)
+            val outside = call.people.count { !it.inRoster }
+            if (outside > 0) {
+                Text("Not in this group: $outside ${if (outside == 1) "person is" else "people are"} in this call but not on its roster. They are not subscribed.",
+                    color = Color(0xFFF2B8B5), fontSize = 11.sp, modifier = Modifier.testTag("group-call-outside"))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { actions.muteGroupCall(!call.muted) }, modifier = Modifier.testTag("group-call-mute")) { Text(if (call.muted) "Unmute" else "Mute") }
+                OutlinedButton(onClick = { actions.deafenGroupCall(!call.deafened) }, modifier = Modifier.testTag("group-call-deafen")) { Text(if (call.deafened) "Undeafen" else "Deafen") }
+                OutlinedButton(onClick = actions.leaveGroupCall, modifier = Modifier.testTag("group-call-leave")) { Text("Leave") }
+                if (call.host) OutlinedButton(onClick = actions.endGroupCall, modifier = Modifier.testTag("group-call-end")) { Text("End for everyone") }
+            }
+            call.people.forEach { person ->
+                Text("${person.name.take(80)}${if (person.speaking) " — Speaking" else ""}", color = TextColor)
+                person.devices.forEach { device ->
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("${device.device.take(40)}${if (device.muted) " — Muted" else ""}", color = MutedColor)
+                        if (!person.self) TextButton(onClick = { actions.groupVolume(device.pid, if (device.volume > 0.5f) 0.5f else 1f) },
+                            modifier = Modifier.testTag("group-call-volume-${device.pid}")) { Text("Volume ${device.volume}") }
+                    }
+                }
+            }
         }
     }
 }
