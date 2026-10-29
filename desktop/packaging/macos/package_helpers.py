@@ -63,12 +63,25 @@ def one(root, prefix):
     return found[0]
 
 
+NATIVE_SUFFIXES = ('.so', '.dylib', '.dll')
+
+
 def audit_app(app):
     app = Path(app)
     nostr = one(app, 'nostr-sdk-kmp-jvm-')
-    webrtc = one(app, 'webrtc-java-0.20.0-macos-aarch64-')
-    if any('webrtc-java-0.20.0-' in p.name and p != webrtc for p in app.rglob('*.jar')):
-        raise ValueError('unexpected second webrtc native classifier')
+    # The API jar and the classifier jar share the version prefix, so classify by content, not by
+    # name: exactly one bundled jar may carry a webrtc native, and it must be the Apple Silicon one.
+    carriers = []
+    for candidate in app.rglob('*.jar'):
+        if 'webrtc-java-0.20.0' not in candidate.name:
+            continue
+        if any(i.filename.endswith(NATIVE_SUFFIXES) for i in entries(candidate)):
+            carriers.append(candidate)
+    if len(carriers) != 1:
+        raise ValueError(f'expected exactly one webrtc native jar, found {[p.name for p in carriers]}')
+    webrtc = carriers[0]
+    if 'macos-aarch64' not in webrtc.name:
+        raise ValueError(f'webrtc native jar is not the Apple Silicon classifier: {webrtc.name}')
     names = []
     for bundled_jar in app.rglob('*.jar'):
         with zipfile.ZipFile(bundled_jar) as jar:

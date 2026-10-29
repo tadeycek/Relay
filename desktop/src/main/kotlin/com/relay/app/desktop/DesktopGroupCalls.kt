@@ -8,6 +8,8 @@ import com.relay.app.call.group.GroupCallFenceSnapshot
 import com.relay.app.call.group.GroupDecodeResult
 import com.relay.app.call.group.GroupEventReplay
 import com.relay.app.call.group.GroupParticipant
+import com.relay.app.call.group.RosterAttestation
+import com.relay.app.call.group.RosterAttestations
 import com.relay.app.call.group.VerifiedGroupSender
 import com.relay.app.call.group.e2ee.GroupCallKeySchedule
 import com.relay.app.call.group.e2ee.GroupCallSecurityLabel
@@ -56,6 +58,8 @@ class DesktopGroupCalls(
     private val nameOf: (String) -> String,
     private val clock: () -> Long = System::currentTimeMillis,
     private val random: (Int) -> ByteArray = SecureRandom().let { rng -> { n -> ByteArray(n).also(rng::nextBytes) } },
+    /** Signs the owner's roster attestation for a live advance; null means this computer cannot advance (fails closed). */
+    private val signRoster: ((ByteArray) -> ByteArray?)? = null,
     private val timers: GroupCallTimers = ExecutorGroupCallTimers(),
     private val reconnectGraceMs: Long = 30_000,
     private val rejoinWindowMs: Long = 120_000,
@@ -71,12 +75,14 @@ class DesktopGroupCalls(
     private class Slot(
         var roster: GroupProtocol.State, var engine: GroupCallEngine, var committed: GroupCallFenceSnapshot,
         var inviteCommitted: StoredGroupCall?,
+        /** A newer roster from the phone, held back until the owner's signed advance re-binds the live room. */
+        var pending: GroupProtocol.State? = null,
     )
     private class Invite(val a: GroupAnnouncement, val rejoin: Boolean)
     private class Peer(val pid: String, val pubkey: String, val device: String, val sessionId: String?, val track: String?, val muted: Boolean, val deafened: Boolean)
     private class PendingWinner(val room: String?, val until: Long)
     private class RejoinHint(val creator: String, val until: Long)
-    private class Session(val conv: String, val a: GroupAnnouncement, val creator: Boolean) {
+    private class Session(val conv: String, var a: GroupAnnouncement, val creator: Boolean) {
         var socket: RoomSocket? = null
         var gen = 0
         var pid: String? = null
@@ -166,6 +172,16 @@ class DesktopGroupCalls(
         if (!changed || next.revision < slot.roster.revision) return
         val hash = runCatching { GroupCallCodec.rosterHash(next) }.getOrNull() ?: return
         if (next.revision == slot.roster.revision && hash != runCatching { GroupCallCodec.rosterHash(slot.roster) }.getOrNull()) return
+        val live = current?.takeIf { it.conv == conv }
+        if (live != null && next.revision > slot.roster.revision) {
+            // Keep the frozen revision: only the owner's signed advance may re-bind the live room. A self removal
+            // still closes it right away (the engine sees the new set and cannot stay).
+            slot.pending = next
+            handle(conv, slot.engine.updateRoster(next))
+            persist(conv, slot, strict = false)
+            return
+        }
+        slot.pending = null
         slot.roster = next
         handle(conv, slot.engine.updateRoster(next))
         persist(conv, slot, strict = false)
@@ -272,6 +288,30 @@ class DesktopGroupCalls(
         return participantsChanged || sessionsChanged
     }
 
+    /**
+     * A joiner or the owner adopts an advanced `group_start`: the same room, the new frozen revision, the rotated
+     * join capability and the next key epoch. The old epoch runtime is disposed (its keys are wiped) and the new
+     * one is built from the verified announcement; the removed device is not in its participant set.
+     */
+    private fun adoptAdvance(conv: String, slot: Slot, a: GroupAnnouncement) {
+        val s = current?.takeIf { it.conv == conv } ?: return
+        s.a = a
+        val old = s.e2ee
+        val next = startE2ee(s)
+        old?.close()
+        s.e2ee = next
+        s.securityError = if (next == null) GroupCallE2ee.NO_KEY_MESSAGE else null
+        if (next != null) {
+            s.media?.setFrameE2ee(next.provider()) { sender, epoch -> post { onE2eeVerified(s, next, sender, epoch) } }
+            runCatching { s.media?.publish() }
+            s.sendPathEncrypted = true
+        } else {
+            s.media?.setFrameE2ee(null, null)
+            s.media?.setMicMuted(true)
+            s.sendPathEncrypted = false
+        }
+    }
+
     /** Re-binds the provider after a peer joins/leaves: the device set is part of what the label covers. */
     private fun refreshE2ee(s: Session) {
         val e2ee = s.e2ee ?: return
@@ -304,13 +344,25 @@ class DesktopGroupCalls(
         val slot = slotFor(conv, group) ?: return@run true
         val sender = try { VerifiedGroupSender.fromAuthenticatedSeal(authenticatedSender) } catch (_: IllegalArgumentException) { return@run true }
         // The codec validates the wire, the roster binding and the sender; its replay cache here is scratch. The engine's
-        // cache is the durable one, so the fence is judged (and persisted) once.
+        // cache is the durable one, so the fence is judged (and persisted) once. A strictly newer revision is only
+        // acceptable through the explicit advance rule, against the pending roster mirrored from the phone.
         val decoded = GroupCallCodec.decode(json, sender, slot.roster, clock(), GroupEventReplay())
-        val a = (decoded as? GroupDecodeResult.Accepted)?.announcement ?: return@run true
+        val pending = slot.pending
+        val decodedAdvance = if (decoded is GroupDecodeResult.Rejected && decoded.reason == com.relay.app.call.group.GroupReject.STALE_ROSTER &&
+            pending != null && pending.revision > slot.roster.revision) {
+            GroupCallCodec.decodeAdvance(json, sender, slot.roster, pending, clock(), GroupEventReplay())
+        } else decoded
+        val a = (decodedAdvance as? GroupDecodeResult.Accepted)?.announcement ?: return@run true
+        val advancing = pending != null && a.revision == pending.revision
         val before = slot.engine.snapshot()
         val previousInvite = invites[conv]
-        val effects = slot.engine.apply(a, sender)
-        if (a.isStart() && effects.any { it is GroupCallEffect.OpenRoom && it.room == a.room }) {
+        val effects = if (advancing) slot.engine.advance(pending!!, a, sender) else slot.engine.apply(a, sender)
+        val rebound = advancing && effects.any { it is GroupCallEffect.RebindRoom }
+        if (rebound) {
+            slot.roster = pending!!
+            slot.pending = null
+            invites[conv] = Invite(a, rejoin = false)
+        } else if (a.isStart() && effects.any { it is GroupCallEffect.OpenRoom && it.room == a.room }) {
             invites[conv] = Invite(a, rejoin = false)
         }
         if (!a.isStart()) invites[conv]?.takeIf { it.a.room == a.room && it.a.caller == a.caller }?.let { invites.remove(conv) }
@@ -320,6 +372,7 @@ class DesktopGroupCalls(
             rollback(conv, slot, before)
             throw IllegalStateException("Group call state was not saved", e)
         }
+        if (rebound) adoptAdvance(conv, slot, a)
         if (a.isStart() && invites[conv]?.a?.room == a.room) verifyLater(conv, a)
         closeNotice = if (a.isStart()) null else "The call ended."
         handle(conv, effects)
@@ -387,6 +440,7 @@ class DesktopGroupCalls(
                 else if (inv != null) publish()
             }
             // Fail closed: without a usable key nothing is played, so no remote track is ever decoded into a sink.
+            is GroupCallEffect.RebindRoom -> Unit // the session adopts the advanced announcement itself
             is GroupCallEffect.Subscribe -> if (s != null && s.e2ee != null) s.media?.subscribe(e.ref)
             is GroupCallEffect.Unsubscribe -> s?.media?.unsubscribe(e.ref)
             is GroupCallEffect.WarnUnknown -> s?.warned?.add(e.pid)
@@ -789,10 +843,10 @@ class DesktopGroupCalls(
     // ---- roster changes (owner removal, mirrored from the phone) ------------------------------
 
     /**
-     * A roster was saved (phone sync). The engine closes a call whose revision is no longer current. The CREATOR'S client
-     * first revokes removed members on the server (`POST /roster`, which also seals the old room's join capability), then
-     * moves the remaining members to a new room at the new revision with a fresh secret re-sent E2E via `group_start`.
-     * Others wait for that invitation and rejoin automatically.
+     * A roster was saved (phone sync). A live call is not closed: the OWNER's client advances the room in place with
+     * an owner-signed attestation (`POST /roster` -> same room, newer revision, rotated secret, next key epoch) and
+     * sends that advanced `group_start` to the members who stayed. Everyone else holds the newer roster until that
+     * signed advance arrives. A failed advance fails closed with an honest message.
      */
     fun onRoster(group: StoredGroup) = run {
         val conv = group.conversationId
@@ -811,42 +865,61 @@ class DesktopGroupCalls(
             publish(); return@run
         }
         if (state.revision <= slot.roster.revision) { refreshRoster(conv, slot, state); publish(); return@run }
-        val old = slot.roster
-        if (s != null && s.creator && s.welcomed) {
-            val removed = old.members.map { it.key }.toSet() - state.members.map { it.key }.toSet()
-            if (removed.isNotEmpty()) {
-                val seal = GroupCallCodec.secretHash(random(32).joinToString("") { "%02x".format(it) })
-                val ok = runCatching { api?.removeMembers(s.a.room, removed.sorted(), seal) }.getOrNull() == true
-                if (!ok) notice = "Couldn't remove ${removed.size} member(s) from the live room on the server. Their access ends when the old room does."
-            }
-            // WP17 epoch rotation: the replacement call gets a fresh key at the next epoch for the remaining members only.
-            val rotateEpoch = s.e2ee?.nextEpoch()
-            val hadE2ee = s.e2ee != null
-            val ended = runCatching { api?.end(s.a.room) }.getOrNull() == true
-            endSession(s, if (ended) null else "Couldn't close the old room on the server; the replacement was not started.",
-                sendLeave = true, engineClosed = false)
-            slot.roster = state
-            handle(conv, slot.engine.updateRoster(state))
-            persist(conv, slot, strict = false)
-            invites.remove(conv)
-            persist(conv, slot, strict = false)
-            if (!ended) { publish(); return@run }
-            if (hadE2ee && rotateEpoch == null) {
-                notice = "This call has rotated its keys too often; start a new call."
-                publish(); return@run
-            }
-            val refused = startInternal(conv, rotateEpoch = rotateEpoch)
-            if (refused != null) notice = refused
-            publish(); return@run
-        }
-        if (s != null) rejoinHints[conv] = RejoinHint(s.a.caller, clock() + rejoinWindowMs)
-        closeNotice = if (s != null) "The group changed, so this call ended. It will continue in a new room if the host restarts it." else null
-        slot.roster = state
+        if (s != null && s.creator && s.welcomed) return@run advance(s, slot, state)
+        // Not ours to advance: hold the newer roster until the owner's signed advance re-binds the same room.
+        slot.pending = state
         handle(conv, slot.engine.updateRoster(state))
         persist(conv, slot, strict = false)
-        closeNotice = null
-        invites.remove(conv)
+        publish()
+    }
+
+    /** Owner path: attest the new roster, re-bind the live room on the server, rotate the key and announce it. */
+    private fun advance(s: Session, slot: Slot, state: GroupProtocol.State) {
+        val conv = s.conv
+        val members = state.members.map { it.key }.distinct().sorted()
+        val hash = GroupCallCodec.rosterHash(state)
+        val nowS = clock() / 1000
+        val signature = signRoster?.let { signer ->
+            runCatching {
+                RosterAttestations.sign(RosterAttestation(state.id, state.revision, hash, members, s.a.room, nowS, nowS + 600, state.owner), signer)
+            }.getOrNull()
+        }
+        val sig = signature?.signature
+        val secretBytes = random(32)
+        if (signature == null || sig == null || secretBytes.size != 32) {
+            return failAdvance(s, "The group changed, but this computer couldn't sign the new member list, so the call was ended.")
+        }
+        val secret = secretBytes.joinToString("") { "%02x".format(it) }
+        val request = RosterAdvance(state.id, state.revision, hash, members, signature.owner, sig,
+            signature.issuedAt, signature.expiresAt, GroupCallCodec.secretHash(secret))
+        val ok = runCatching { api?.advanceRoster(s.a.room, request) }.getOrNull() == true
+        if (!ok) return failAdvance(s, "The group changed, but the call couldn't move to the new member list, so it was ended.")
+        // WP17: a fresh call key at the next epoch, held only by this host and the members who stayed.
+        val epoch = (s.a.keyEpoch ?: -1L) + 1
+        val key = if (s.e2ee != null) ByteArray(32).also(secureRandom::nextBytes) else null
+        val advanced = runCatching {
+            GroupCallCodec.newRevision(s.a, state, clock(), random, if (key != null) epoch else null, key, secret)
+        }.getOrNull() ?: return failAdvance(s, "The group changed, but the call key couldn't rotate, so the call was ended.")
+        val effects = slot.engine.advance(state, advanced, VerifiedGroupSender.fromAuthenticatedSeal(selfPubkey))
+        if (effects.none { it is GroupCallEffect.RebindRoom }) {
+            return failAdvance(s, "The group changed, but this computer couldn't adopt the new member list, so the call was ended.")
+        }
+        slot.roster = state
+        slot.pending = null
+        invites[conv] = Invite(advanced, rejoin = false)
         persist(conv, slot, strict = false)
+        adoptAdvance(conv, slot, advanced)
+        handle(conv, effects)
+        // Only the members who stayed receive the new secret and key; the removed device never does.
+        val frame = GroupCallWire.frame(advanced)
+        for (peer in members) if (peer != selfPubkey) runCatching { runBlocking { announce(peer, frame) } }
+        publish()
+    }
+
+    /** Ends the room and the call together: publishing to a revision this host could not advance is never allowed. */
+    private fun failAdvance(s: Session, why: String) {
+        runCatching { api?.end(s.a.room) }
+        endSession(s, why, sendLeave = false, engineClosed = false)
         publish()
     }
 

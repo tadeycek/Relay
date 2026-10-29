@@ -113,8 +113,14 @@ class MacPackagingTests(unittest.TestCase):
                 jar.writestr('darwin-aarch64/libnostr_sdk_ffi.dylib', b'mac')
             with zipfile.ZipFile(app / 'webrtc-java-0.20.0-linux-x86_64-xyz.jar', 'w') as jar:
                 jar.writestr('libwebrtc-java-linux-x86_64.so', b'linux')
-            with self.assertRaisesRegex(ValueError, 'unexpected second webrtc native classifier'):
+            with self.assertRaisesRegex(ValueError, 'expected exactly one webrtc native jar'):
                 helper.audit_app(app.parent.parent)
+            # The classifier-less API jar shares the version prefix but carries no native; it must
+            # never be mistaken for a second classifier (the macOS DMG audit failed on exactly that).
+            (app / 'webrtc-java-0.20.0-linux-x86_64-xyz.jar').unlink()
+            with zipfile.ZipFile(app / 'webrtc-java-0.20.0-c733343250561533a49e1cd7316842b3.jar', 'w') as jar:
+                jar.writestr('dev/onvoid/webrtc/PeerConnection.class', b'class')
+            helper.audit_app(app.parent.parent)
 
 
 if __name__ == '__main__':

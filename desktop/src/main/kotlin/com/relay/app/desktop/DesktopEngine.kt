@@ -417,6 +417,7 @@ class DesktopEngine(
                 record = { store.recordCall(it) },
                 nameOf = { key -> store.profile(key)?.name?.takeIf { it.isNotBlank() } ?: store.contacts().firstOrNull { it.nostrPubkey == key }?.name ?: (key.take(8) + "…") },
             ) else null
+            val groupIce = mailbox?.let { DesktopGroupIce(it) }
             val groupCalls = if (mailbox != null && device != null) DesktopGroupCalls(
                 selfPubkey = identity.publicKeyHex(), deviceId = device.deviceId,
                 groupByConversation = store::storedGroup, groupBySharedId = store::storedGroup,
@@ -432,7 +433,10 @@ class DesktopEngine(
                     else transport.send(peer, RelayPayload(PayloadCodec.newId(), System.currentTimeMillis(), sealed), member?.relays ?: emptyList())
                 },
                 online = { transport.status.value == TransportStatus.ONLINE },
-                makeMedia = { DesktopSfuPeer(requireE2ee = true) },
+                makeMedia = { DesktopSfuPeer(requireE2ee = true, requireTurn = true, iceServers = { groupIce?.get().orEmpty() }) },
+                signRoster = { digest -> runCatching { identity.keys().signSchnorr(digest) }.getOrNull()?.let { hex ->
+                    if (hex.length == 128) ByteArray(64) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() } else null
+                } },
                 nameOf = { key -> store.contacts().firstOrNull { it.nostrPubkey == key }?.name ?: key.take(8) + "…" },
             ) else null
             return DesktopEngine(

@@ -48,6 +48,15 @@ data class CreateRoomRequest(
     val rosterHash: String, val members: List<String>,
 )
 
+/**
+ * G5 live roster advance: the full binding at a strictly newer revision plus the owner's attestation and the rotated
+ * join capability. Sent to `POST /v1/call/rooms/<room>/roster`; the room is re-bound in place.
+ */
+data class RosterAdvance(
+    val group: String, val revision: Long, val rosterHash: String, val members: List<String>,
+    val owner: String, val rosterSig: String, val issuedAt: Long, val expiresAt: Long, val secretHash: String,
+)
+
 /** Every documented answer of the roster-bound `POST /v1/call/rooms` (WP15 G5). No answer ever means "fall back to a legacy create". */
 sealed interface CreateRoomOutcome {
     data object Created : CreateRoomOutcome
@@ -94,6 +103,8 @@ interface GroupCallRoomApi {
     fun end(room: String): Boolean
     /** Creator only: G5 removal, optionally rotating the join capability in the same call. */
     fun removeMembers(room: String, remove: List<String>, secretHash: String?): Boolean
+    /** Owner/member: G5 live advance to a strictly newer revision with the owner's attestation. */
+    fun advanceRoster(room: String, advance: RosterAdvance): Boolean = false
     /** Creator only: capability rotation without removal. */
     fun rotate(room: String, secretHash: String): Boolean
     fun connect(room: String, secret: String, pid: String?, listener: RoomListener): RoomSocket

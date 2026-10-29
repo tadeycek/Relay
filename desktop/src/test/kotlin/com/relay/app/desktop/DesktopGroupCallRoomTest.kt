@@ -225,7 +225,7 @@ class DesktopGroupCallRoomTest {
         assertTrue(h.media.closed)
     }
 
-    @Test fun theCreatorRemovesTheMemberOnTheServerThenMovesRemainingMembersToANewRoomWithANewSecret() {
+    @Test fun theCreatorAdvancesTheLiveRoomInPlaceAndRevokesTheRemovedMember() {
         h.group = h.stored(keys = listOf(A, B, C, D))
         val svc = h.service(); assertNull(svc.start(h.conv))
         val first = h.api.creates.single()
@@ -235,33 +235,40 @@ class DesktopGroupCallRoomTest {
         // the owner removes D on the phone; the roster arrives by sync as revision 4
         h.group = h.stored(keys = listOf(A, B, C), rev = 4)
         svc.onRoster(h.group!!); svc.sync()
-        val removal = h.api.removals.single()
-        assertEquals("the previous room is closed before the replacement opens", listOf(first.room), h.api.ends)
-        assertTrue(h.log.indexOf("end:${first.room}") < h.log.indexOf("create:${h.api.creates.last().room}"))
-        assertEquals(first.room, removal.first); assertEquals(listOf(D), removal.second)
-        assertNotNull("the old room's capability is sealed in the same call", removal.third)
-        val second = h.api.creates.last()
-        assertNotEquals(first.room, second.room); assertEquals(4L, second.revision); assertEquals(listOf(A, B, C), second.members)
-        assertTrue("remove happens before the new room is announced", h.log.indexOf("remove:${first.room}") < h.log.indexOf("announce:b"))
+        val advance = h.api.advances.single()
+        assertEquals("the room is re-bound in place, never ended", first.room, advance.first)
+        assertEquals(4L, advance.second.revision); assertEquals(listOf(A, B, C), advance.second.members)
+        assertEquals(D, (listOf(A, B, C, D).toSet() - advance.second.members.toSet()).single())
+        assertTrue(advance.second.secretHash.matches(Regex("[0-9a-f]{64}")))
+        assertTrue(advance.second.rosterSig.isNotEmpty())
+        assertTrue("the old room is not closed", h.api.ends.isEmpty())
+        assertTrue("the call stays live", h.media.closed.not())
         assertEquals("new secret is re-sent only to the remaining members", setOf(B, C), h.announced.map { it.first }.toSet())
-        val newStart = GroupCallWire.decodeForTest(h.announced.first().second)
-        assertEquals(second.room, newStart.room); assertEquals(4L, newStart.revision)
-        assertEquals(com.relay.app.call.group.GroupCallCodec.secretHash(newStart.joinSecret!!), second.secretHash)
-        assertEquals("it moves itself into the new room", second.room, h.api.last.room)
+        val advanced = GroupCallWire.decodeForTest(h.announced.first().second)
+        assertEquals(first.room, advanced.room); assertEquals(4L, advanced.revision)
+        assertEquals(com.relay.app.call.group.GroupCallCodec.secretHash(advanced.joinSecret!!), advance.second.secretHash)
+        assertEquals("it stays in the same room", first.room, h.api.last.room)
+        // The removed device's key is dropped: the new epoch runtime covers only A, B and C.
+        assertTrue(h.medias.all { !it.closed })
     }
 
-    @Test fun aNonCreatorWhoseRevisionChangesWaitsAndRejoinsTheCreatorsNewRoom() {
+    @Test fun aNonCreatorHoldsTheNewRosterAndAdoptsTheOwnersAdvanceInPlace() {
         val svc = h.service()
-        h.joinedCall(svc, caller = B)
+        val invite = h.joinedCall(svc, caller = B)
         h.group = h.stored(keys = listOf(A, B, C), rev = 4)
         svc.onRoster(h.group!!); svc.sync()
-        assertEquals("the old call is closed locally for the old revision", GroupCallStage.IDLE, svc.state.value.stage)
-        assertTrue(h.media.closed); assertTrue(h.api.removals.isEmpty())
-        // the creator announces the continuing call at the new revision: this client was in the call, so it rejoins
-        val next = h.startBy(B)
-        h.api.infoFor = { h.liveMatching(next) }
-        svc.ingress(B, h.frame(next))
-        assertEquals(next.room, h.api.last.room)
+        assertEquals("the call is not closed while waiting for the owner", GroupCallStage.ACTIVE, svc.state.value.stage)
+        assertTrue(h.media.closed.not()); assertTrue(h.api.removals.isEmpty() && h.api.advances.isEmpty())
+        // The owner announces the same room at the new revision: this client adopts it, no rejoin needed.
+        val previous = GroupCallWire.decodeForTest(h.frame(invite))
+        val advanced = com.relay.app.call.group.GroupCallCodec.newRevision(previous, h.roster(),
+            h.now, h.deterministicRandom, keyEpoch = 1L, callKey = ByteArray(32) { (it * 3 + 1).toByte() })
+        h.api.infoFor = { RoomInfoOutcome.Live(true, advanced.revision, advanced.rosterHash, 1) }
+        svc.ingress(B, h.frame(advanced)); svc.sync()
+        assertEquals(GroupCallStage.ACTIVE, svc.state.value.stage)
+        assertEquals(invite.room, h.api.last.room)
+        assertEquals("no new socket", 1, h.api.sockets.size)
+        assertTrue(h.media.closed.not())
     }
 
     @Test fun anOutsiderWhoWasNeverInTheCallIsNotAutoJoinedAfterARevisionChange() {

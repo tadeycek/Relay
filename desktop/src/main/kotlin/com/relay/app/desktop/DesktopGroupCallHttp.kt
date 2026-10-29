@@ -94,6 +94,15 @@ class DesktopGroupCallHttp(
         return ok { call("POST", "$base/v1/call/rooms/$room/roster?$device", json) }
     }
 
+    override fun advanceRoster(room: String, advance: RosterAdvance): Boolean {
+        val json = JSONObject().put("v", 1)
+            .put("group", advance.group).put("revision", advance.revision).put("rosterHash", advance.rosterHash)
+            .put("members", JSONArray(advance.members)).put("owner", advance.owner).put("rosterSig", advance.rosterSig)
+            .put("issuedAt", advance.issuedAt).put("expiresAt", advance.expiresAt).put("secretHash", advance.secretHash)
+            .toString()
+        return ok { call("POST", "$base/v1/call/rooms/$room/roster?$device", json) }
+    }
+
     override fun rotate(room: String, secretHash: String): Boolean =
         ok { call("POST", "$base/v1/call/rooms/$room/rotate?$device", JSONObject().put("v", 1).put("secretHash", secretHash).toString()) }
 

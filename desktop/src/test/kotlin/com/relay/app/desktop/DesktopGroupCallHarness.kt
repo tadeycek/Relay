@@ -63,16 +63,19 @@ class GroupCallHarness(val self: String = A) {
         val creates = CopyOnWriteArrayList<CreateRoomRequest>()
         val ends = CopyOnWriteArrayList<String>()
         val removals = CopyOnWriteArrayList<Triple<String, List<String>, String?>>()
+        val advances = CopyOnWriteArrayList<Pair<String, RosterAdvance>>()
         val sockets = CopyOnWriteArrayList<FakeSocket>()
         @Volatile var createOutcome: CreateRoomOutcome = CreateRoomOutcome.Created
         var createHook: (CreateRoomRequest) -> CreateRoomOutcome? = { null }
         @Volatile var infoFor: (String) -> RoomInfoOutcome = { _ -> RoomInfoOutcome.Unknown }
         val infos = CopyOnWriteArrayList<String>()
         @Volatile var removeOk = true
+        @Volatile var advanceOk = true
         override fun create(request: CreateRoomRequest): CreateRoomOutcome { creates += request; log += "create:${request.room}"; return createHook(request) ?: createOutcome }
         override fun info(room: String): RoomInfoOutcome { infos += room; return infoFor(room) }
         override fun end(room: String): Boolean { ends += room; log += "end:$room"; return true }
         override fun removeMembers(room: String, remove: List<String>, secretHash: String?): Boolean { removals += Triple(room, remove, secretHash); log += "remove:$room"; return removeOk }
+        override fun advanceRoster(room: String, advance: RosterAdvance): Boolean { advances += room to advance; log += "advance:$room"; return advanceOk }
         override fun rotate(room: String, secretHash: String) = true
         override fun connect(room: String, secret: String, pid: String?, listener: RoomListener): RoomSocket =
             FakeSocket(room, secret, pid, listener).also { sockets += it; log += "connect:$room:${pid ?: "-"}" }
@@ -124,7 +127,8 @@ class GroupCallHarness(val self: String = A) {
         states = store, api = if (linked) api else null,
         announce = { peer, body -> announced += peer to body; log += "announce:${peer.take(1)}"; announceResult(peer) },
         online = { online }, makeMedia = { FakeMedia().also { medias += it } }, nameOf = { "n-" + it.take(1) },
-        clock = { now }, random = deterministicRandom, timers = timers, reconnectGraceMs = graceMs,
+        clock = { now }, random = deterministicRandom,
+        signRoster = { ByteArray(64) { 1 } }, timers = timers, reconnectGraceMs = graceMs,
     ).also { services += it }
 
     fun close() { services.forEach { runCatching { it.close() } } }

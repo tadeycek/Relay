@@ -1,5 +1,6 @@
 package com.relay.app.desktop
 
+import com.relay.app.call.IceServer
 import com.relay.app.call.group.GroupTrackRef
 import dev.onvoid.webrtc.CreateSessionDescriptionObserver
 import dev.onvoid.webrtc.PeerConnectionFactory
@@ -60,6 +61,103 @@ object SfuLevels {
 }
 
 /**
+ * One ICE server as it will be handed to webrtc-java. Keep this a plain value type: the mapping from the
+ * issued TURN answer is testable without touching the native library, and [toString] never prints a secret.
+ */
+data class SfuIceServer(val urls: List<String>, val username: String?, val credential: String?) {
+    val isTurn: Boolean get() = urls.any { it.startsWith("turn", ignoreCase = true) }
+
+    override fun toString(): String =
+        "SfuIceServer(urls=$urls, username=${if (username == null) "none" else "<issued>"}, credential=<redacted>)"
+}
+
+/**
+ * Maps the issued `GET /v1/call/ice` answer onto ICE servers for a group SFU peer.
+ *
+ * The endpoint is the SAME per-device TURN credential path the committed 1:1 calls use (short-lived
+ * Cloudflare TURN credentials, UDP and TLS urls when the API returns both). Group rooms need no extra Worker
+ * operation: the answer is device-scoped, not call-scoped.
+ *
+ * - TURN entries keep their issued transport urls and credentials.
+ * - A TURN entry without username+credential is dropped: it can never authenticate.
+ * - STUN stays as the fallback (the configured list, defaulting to Cloudflare STUN) and is appended when the
+ *   answer has no stun url of its own, so a LAN pair keeps working when no relay is needed.
+ * - [build] returns null when [requireTurn] is set and no usable TURN server was issued: the caller must fail
+ *   honestly instead of opening a peer that a strict-NAT or mobile peer can never reach.
+ */
+object SfuIcePlan {
+    const val STUN_FALLBACK = "stun:stun.cloudflare.com:3478"
+    private const val MAX_SERVERS = 8
+    private const val MAX_URLS = 8
+    private const val MAX_CREDENTIAL = 512
+    private val URL = Regex("^(stun|turn|turns):[A-Za-z0-9._~:/?#\\[\\]@!$&'()*+,;=%-]{3,480}$", RegexOption.IGNORE_CASE)
+
+    fun build(issued: List<IceServer>, requireTurn: Boolean, fallbackStun: List<String> = listOf(STUN_FALLBACK)): List<SfuIceServer>? {
+        val out = ArrayList<SfuIceServer>(issued.size + 1)
+        for (server in issued.take(MAX_SERVERS)) {
+            val urls = server.urls.filter { URL.matches(it) }.distinct().take(MAX_URLS)
+            if (urls.isEmpty()) continue
+            val username = server.username?.takeIf { it.isNotBlank() && it.length <= MAX_CREDENTIAL }
+            val credential = server.credential?.takeIf { it.isNotBlank() && it.length <= MAX_CREDENTIAL }
+            if (urls.any { it.startsWith("turn", ignoreCase = true) } && (username == null || credential == null)) continue
+            out += SfuIceServer(urls, username, credential)
+        }
+        if (requireTurn && out.none { it.isTurn }) return null
+        if (out.none { s -> s.urls.any { it.startsWith("stun:", ignoreCase = true) } }) {
+            val stun = fallbackStun.map { it.trim() }.filter { URL.matches(it) && it.startsWith("stun:", ignoreCase = true) }
+            if (stun.isNotEmpty()) out += SfuIceServer(stun, null, null)
+        }
+        return out
+    }
+}
+
+/**
+ * Authenticated `GET /v1/call/ice` for a group call, reusing [DesktopCallLink.fetchIce] and the same
+ * [DesktopIceResponse] validation as the 1:1 path. One answer is cached until shortly before it expires, so
+ * rebuilds and re-subscribes do not mint a credential each time. Blocking by design: callers are the group
+ * call's negotiator thread, never the UI. Nothing here logs or exposes a credential.
+ */
+class DesktopGroupIce(
+    private val link: DesktopCallLink,
+    private val nowMs: () -> Long = System::currentTimeMillis,
+) {
+    @Volatile private var servers: List<IceServer> = emptyList()
+    @Volatile private var expiresAtMs = 0L
+
+    @Synchronized
+    fun get(): List<IceServer> {
+        val now = nowMs()
+        val current = servers
+        if (current.isNotEmpty() && now < expiresAtMs - REUSE_MARGIN_MS) return current
+        val latch = java.util.concurrent.CountDownLatch(1)
+        val answer = java.util.concurrent.atomic.AtomicReference<Pair<Int, String?>?>(null)
+        val handle = try {
+            link.fetchIce { status, body -> answer.set(status to body); latch.countDown() }
+        } catch (_: Exception) { null }
+        try { latch.await(FETCH_TIMEOUT_SECONDS, TimeUnit.SECONDS) } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        } finally { runCatching { handle?.close() } }
+        val (status, body) = answer.get() ?: return current
+        return when (val parsed = DesktopIceResponse.parse(status, body)) {
+            is DesktopIceResponse.Ok -> {
+                servers = parsed.servers
+                expiresAtMs = parsed.expiresAtMs
+                parsed.servers
+            }
+            is DesktopIceResponse.Failed -> current
+        }
+    }
+
+    /** Diagnostics only: server count and cache state, never the urls' credentials. */
+    override fun toString(): String = "DesktopGroupIce(servers=${servers.size}, cached=${servers.isNotEmpty()})"
+
+    private companion object {
+        const val FETCH_TIMEOUT_SECONDS = 8L
+        const val REUSE_MARGIN_MS = 30_000L
+    }
+}
+
+/**
  * Native webrtc-java peer for ONE group call against the Cloudflare Realtime SFU, reached ONLY through the Worker proxy
  * ([SfuApi]). Sequence: `sessions-new` -> (publish) `tracks-new` local `mic` with our offer -> remote `tracks-new` per
  * publisher (provider offer, we answer via `renegotiate`) -> `tracks-close` on unsubscribe / leave.
@@ -80,7 +178,11 @@ class DesktopSfuPeer(
         echoCancellation = true; noiseSuppression = true; autoGainControl = true; highpassFilter = true
     }) },
     private val onPcm: (pid: String?, ByteArray) -> Unit = { _, _ -> },
-    private val stunUrls: List<String> = listOf("stun:stun.cloudflare.com:3478"),
+    private val stunUrls: List<String> = listOf(SfuIcePlan.STUN_FALLBACK),
+    /** Issued TURN/STUN servers (the committed per-device `GET /v1/call/ice` path). Never hardcoded. */
+    private val iceServers: () -> List<IceServer> = { emptyList() },
+    /** Production group calls need the relay: no issued TURN means the peer must refuse to publish. */
+    private val requireTurn: Boolean = false,
     private val makeFactory: (AudioDeviceModuleBase) -> PeerConnectionFactory = { PeerConnectionFactory(it) },
     private val providerCloseBudgetMs: Long = 2_000,
     /** Production callers pass true: no key means no microphone and no playback, never plaintext. */
@@ -198,9 +300,23 @@ class DesktopSfuPeer(
             var module: AudioDeviceModuleBase? = null; var factory: PeerConnectionFactory? = null
             try {
                 module = audio(); factory = makeFactory(module)
+                val plan = SfuIcePlan.build(iceServers(), requireTurn, stunUrls)
+                if (plan == null) {
+                    runCatching { factory.dispose() }; runCatching { module.dispose() }
+                    fail(TURN_UNAVAILABLE)
+                    return@submit
+                }
                 val config = RTCConfiguration().apply {
                     bundlePolicy = RTCBundlePolicy.MAX_BUNDLE
-                    if (stunUrls.isNotEmpty()) iceServers.add(RTCIceServer().apply { urls.addAll(stunUrls) })
+                    plan.forEach { server ->
+                        iceServers.add(RTCIceServer().apply {
+                            urls.addAll(server.urls)
+                            if (server.username != null && server.credential != null) {
+                                username = server.username
+                                password = server.credential
+                            }
+                        })
+                    }
                 }
                 val gathered = CompletableFuture<Unit>()
                 val connection = factory.createPeerConnection(config, observer(gen, gathered)) ?: error("no peer connection")
@@ -411,6 +527,10 @@ class DesktopSfuPeer(
 
     private fun api(): SfuApi = sfu ?: error("not open")
     private fun alive(gen: Int) = generation == gen && !closing.get()
+
+    private companion object {
+        const val TURN_UNAVAILABLE = "Group calls need the TURN relay, but this server didn't issue TURN credentials."
+    }
 
     private fun submit(gen: Int, block: () -> Unit) {
         try {
