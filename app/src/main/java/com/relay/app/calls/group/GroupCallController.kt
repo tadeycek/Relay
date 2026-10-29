@@ -8,6 +8,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import com.relay.app.call.group.GroupAnnouncement
 import com.relay.app.call.group.GroupCallCodec
+import com.relay.app.call.group.RosterAttestationSigner
 import com.relay.app.call.group.e2ee.ParticipantDevice
 import com.relay.app.calls.CallAudio
 import com.relay.app.calls.CallController
@@ -184,6 +185,8 @@ object GroupCallController {
         if (!holder.e2ee.adoptRotation(next, remaining)) {
             Log.w(TAG, "a re-keyed call could not be followed on this device")
         }
+        // The advance was accepted against the pending roster: the frozen revision moves with the room.
+        holder.roster = synchronized(coord) { coord.roster() }
     }
 
     /** Called by [SharedGroups] whenever this device saves a newer roster revision. */
@@ -192,7 +195,9 @@ object GroupCallController {
         val holder = active
         if (holder != null && holder.groupId == groupId) {
             val frozen = holder.roster.members.map { it.key }
-            holder.roster = roster
+            // Only the owner's client advances the frozen revision immediately; everyone else keeps the revision
+            // the live room is bound to until the owner's signed advance arrives (see adoptCallKey).
+            if (holder.roster.owner == holder.self && roster.owner == holder.self) holder.roster = roster
             holder.session.onRosterChanged(roster, frozen)
             return
         }
@@ -430,8 +435,9 @@ object GroupCallController {
                 device = GROUP_DEVICE,
                 creator = roster.owner,
                 listener = listener,
-                onSecretRotated = { roomId, newSecret, remaining ->
-                    reseal(app, groupId, roomId, newSecret, remaining)
+                attestationSigner = AndroidRosterAttestationSigner(app),
+                onAdvance = { next, previous, secret, remaining ->
+                    advance(app, groupId, next, previous, secret, remaining)
                 },
             )
             val focus = CallAudio.take(app)
@@ -448,35 +454,24 @@ object GroupCallController {
     }
 
     /**
-     * Called by the session after `POST /roster` removed members and rotated the room capability. The starter
-     * also rotates the frame-E2EE key here: a fresh 32-byte key at the next epoch, sealed to exactly the
-     * members that stayed. The removed device never receives it, so it cannot derive the new epoch even
-     * though it still knows the old call key.
+     * The live advance: after `POST /roster` re-bound the room to [next], rotate the frame-E2EE key to the next
+     * epoch for exactly the members that stayed and broadcast the owner's advanced `group_start` (same room, new
+     * secret, new revision) only to them. The removed device never receives it, so it cannot derive the new epoch
+     * even though it still knows the old call key. Null means the advance could not be completed (the session then
+     * fails closed).
      */
-    private fun reseal(app: Context, groupId: Long, room: String, secret: String, remaining: List<String>) {
-        if (remaining.isEmpty()) return
-        runCatching {
-            val stored = SharedGroups.get(MessagingDb.get(app), groupId) ?: return
-            val self = NostrIdentity.publicKeyHex(app)
-            val now = System.currentTimeMillis()
-            val holder = active?.takeIf { it.groupId == groupId && it.self == self }
-            val rotated = holder?.e2ee?.rotateForRemoval(remaining.toSet())
-            if (holder != null && rotated == null) {
-                Log.w(TAG, "call re-key could not be applied locally; send path stays off")
-            }
-            val json = JSONObject()
-                .put("v", 1).put("op", "group_reseal").put("group", stored.state.id)
-                .put("owner", stored.state.owner).put("revision", stored.state.revision)
-                .put("room", room).put("joinSecret", secret).put("caller", self).put("device", GROUP_DEVICE)
-                .put("created", now).put("expires", now + GroupCallCodec.MAX_LIFETIME_MS)
-            if (rotated != null) {
-                json.put("keyEpoch", rotated.epoch.toLong())
-                    .put("callKey", java.util.Base64.getEncoder().encodeToString(rotated.copyKey()))
-            }
-            val wire = GroupCallWire.wrap(json.toString())
-            SharedGroups.stageCallControl(app, groupId, wire, only = remaining.toSet())
-        }.onFailure { Log.w(TAG, "capability re-seal couldn't be sent: ${it.message}") }
-    }
+    private fun advance(app: Context, groupId: Long, next: GroupProtocol.State, previous: GroupAnnouncement,
+        secret: String, remaining: List<String>): GroupAnnouncement? = runCatching {
+        val holder = active?.takeIf { it.groupId == groupId }
+        val rotated = holder?.e2ee?.rotateForRemoval(remaining.toSet())
+        if (holder?.e2ee != null && rotated == null) return@runCatching null
+        val key = rotated ?: previous.keyEpoch?.let { ep -> previous.callKey?.let { GroupCallE2eeKey.fromAnnouncement(ep, it) } }
+        val announcement = GroupCallCodec.newRevision(previous, next, System.currentTimeMillis(), SecureBytes.provider,
+            key?.epoch?.toLong(), key?.copyKey(), secret)
+        SharedGroups.stageCallControl(app, groupId, GroupCallWire.wrap(GroupCallCodec.encode(announcement)),
+            only = remaining.toSet())
+        announcement
+    }.getOrNull()
 
     private fun ticker(holder: Active) {
         scope.launch {
@@ -574,4 +569,16 @@ object GroupCallController {
     }
 
     private val PID = Regex("[0-9a-f]{16}")
+}
+
+/**
+ * The owner's BIP-340 signer for a roster attestation, over the same rust-nostr key as every other request.
+ * `Keys.signSchnorr` returns the 128-hex signature; only the 64 raw bytes leave this class.
+ */
+private class AndroidRosterAttestationSigner(private val context: Context) : RosterAttestationSigner {
+    override fun signSchnorr(digest32: ByteArray): ByteArray? = runCatching {
+        val hex = NostrIdentity.keys(context.applicationContext).signSchnorr(digest32)
+        if (hex.length != 128) return@runCatching null
+        ByteArray(64) { i -> hex.substring(i * 2, i * 2 + 2).toInt(16).toByte() }
+    }.getOrNull()
 }

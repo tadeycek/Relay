@@ -2,6 +2,7 @@ package com.relay.app.calls.group
 
 import com.relay.app.call.group.GroupAnnouncement
 import com.relay.app.call.group.GroupCallCodec
+import com.relay.app.call.group.RosterAttestation
 import com.relay.app.groups.GroupProtocol
 import org.json.JSONObject
 import java.security.SecureRandom
@@ -37,6 +38,20 @@ object GroupCallRest {
             .put("group", roster.id).put("revision", roster.revision).put("rosterHash", GroupCallCodec.rosterHash(roster))
             .put("members", org.json.JSONArray(members))
             .toString()
+    }
+
+    /**
+     * The live-advance body (PROTOCOL.md "Live roster advance"): the full binding at the strictly newer revision,
+     * the owner's attestation over exactly this room/revision/member set, and the rotated join capability's hash.
+     */
+    fun advanceBody(next: GroupProtocol.State, room: String, attestation: RosterAttestation, secretHash: String): String {
+        val members = next.members.map { it.key }.distinct().sorted()
+        return JSONObject()
+            .put("v", 1).put("group", next.id).put("revision", next.revision)
+            .put("rosterHash", GroupCallCodec.rosterHash(next)).put("members", org.json.JSONArray(members))
+            .put("owner", attestation.owner).put("rosterSig", attestation.signature)
+            .put("issuedAt", attestation.issuedAt).put("expiresAt", attestation.expiresAt)
+            .put("secretHash", secretHash).toString()
     }
 
     internal fun errorOf(status: Int, body: String): Triple<String?, Boolean, JSONObject?> {

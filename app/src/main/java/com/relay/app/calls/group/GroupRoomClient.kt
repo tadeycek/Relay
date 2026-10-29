@@ -126,6 +126,9 @@ class RoomClient(private val port: RoomSocketPort, private val timers: RoomTimer
 
     fun sendState(muted: Boolean, deafened: Boolean) { if (!terminal) handle?.send(RoomFrames.state(muted, deafened)) }
 
+    /** The room's capability rotated in place (G5 advance): the open socket stays, the next reconnect uses [secret]. */
+    fun rotateSecret(secret: String) { if (!terminal) this.secret = secret }
+
     /** Tell the room we are leaving, then settle: no reconnect follows. */
     fun leave() {
         if (terminal) return

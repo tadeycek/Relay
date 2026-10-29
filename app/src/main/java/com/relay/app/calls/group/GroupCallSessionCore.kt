@@ -1,8 +1,12 @@
 package com.relay.app.calls.group
 
+import com.relay.app.call.group.GroupAnnouncement
 import com.relay.app.call.group.GroupCallCodec
 import com.relay.app.call.group.GroupCallEffect
 import com.relay.app.call.group.GroupParticipant
+import com.relay.app.call.group.RosterAttestation
+import com.relay.app.call.group.RosterAttestationSigner
+import com.relay.app.call.group.RosterAttestations
 import com.relay.app.groups.GroupProtocol
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -61,11 +65,16 @@ class GroupCallSessionCore(
     private val creator: String?,
     private val listener: GroupCallSessionListener,
     private val random: (Int) -> ByteArray = SecureBytes.provider,
-    private val onSecretRotated: (room: String, secret: String, remaining: List<String>) -> Unit = { _, _, _ -> },
+    /** Signs the owner's roster attestation for a live advance; null means this device cannot advance (fail closed). */
+    private val attestationSigner: RosterAttestationSigner? = null,
+    /** Rotates the call key and broadcasts the advanced `group_start`; returns it, or null when it could not be done. */
+    private val onAdvance: (next: GroupProtocol.State, previous: GroupAnnouncement, secret: String,
+        remaining: List<String>) -> GroupAnnouncement? = { _, _, _, _ -> null },
 ) {
     private companion object { const val RESUBSCRIBE_MS = 2_000L; const val RESUBSCRIBE_TRIES = 5 }
 
     private val commands = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private val idleWaiters = java.util.concurrent.ConcurrentHashMap.newKeySet<CompletableDeferred<Unit>>()
     private var room: String? = null
     private var published = false
     private var finished = false
@@ -126,33 +135,81 @@ class GroupCallSessionCore(
         }
     }
 
-    /** The roster changed. [frozenMembers] is the roster the room was created with (the creator's own copy). */
+    /**
+     * The local roster changed. A live call is NOT closed for a newer revision: when this device is the owner it
+     * advances the room in place (owner-signed attestation -> `POST /roster` -> rebind), and otherwise it waits for
+     * the owner's signed advance, keeping the room it is already bound to. Either way a removed device is dropped
+     * and a failure to advance fails closed with an honest message instead of publishing to a stale revision.
+     */
     fun onRosterChanged(next: GroupProtocol.State, frozenMembers: List<String>) = enqueue {
         if (finished) return@enqueue
-        val isCreator = creator == self
-        val removed = if (isCreator) GroupRosterChange.removed(frozenMembers, next, self).orEmpty() else emptyList()
-        var revoked = emptyList<String>()
         val current = room
-        if (isCreator && current != null && removed.isNotEmpty() && next.revision > coordinator.roster().revision) {
-            val revocation = GroupRosterChange.revocation(removed, random)
-            val answer = runCatching { http.request("POST", "/v1/call/rooms/$current/roster?device=$device", revocation.body) }.getOrNull()
-            if (answer?.status == 200) {
-                revoked = removed
-                // The room hash is rotated in the same call; the remaining members need the new capability
-                // before their next pid reconnect. The host seals it only to the members still on the roster.
-                runCatching { onSecretRotated(current, revocation.secret, next.members.map { it.key }.filter { it != self }) }
-            } else runCatching { http.request("POST", "/v1/call/rooms/$current/end?device=$device", null) } // cannot cut them off: end the room
+        val previous = coordinator.currentAnnouncement()
+        if (creator != self || current == null || previous == null || next.revision <= previous.revision) {
+            // Not ours to advance (or nothing newer): remember the roster; the engine keeps the live room frozen
+            // until the owner's advance arrives. A self removal closes immediately inside the engine.
+            val effects = coordinator.updateRoster(next)
+            val closed = effects.contains(GroupCallEffect.CloseRoom)
+            lastRosterOutcome = RosterChangeOutcome(emptyList(), closed, successorNeeded = false)
+            execute(effects, SessionEnd.ENDED, "The group changed, so the call ended.")
+            return@enqueue
         }
-        val effects = coordinator.updateRoster(next)
-        val closed = effects.contains(GroupCallEffect.CloseRoom)
-        lastRosterOutcome = RosterChangeOutcome(revoked, closed, successorNeeded = isCreator && closed && removed.isNotEmpty())
-        execute(effects, SessionEnd.ENDED, "The group changed, so the call ended.")
+        val removed = GroupRosterChange.removed(frozenMembers, next, self) ?: run {
+            lastRosterOutcome = RosterChangeOutcome(emptyList(), closed = true, successorNeeded = false)
+            execute(coordinator.updateRoster(next), SessionEnd.ENDED, "The group changed, so the call ended.")
+            return@enqueue
+        }
+        if (next.members.none { it.key == self }) {
+            lastRosterOutcome = RosterChangeOutcome(emptyList(), closed = true, successorNeeded = false)
+            execute(coordinator.updateRoster(next), SessionEnd.ENDED, "You were removed from this group, so the call ended.")
+            return@enqueue
+        }
+        val members = next.members.map { it.key }.distinct().sorted()
+        val nowS = timers.now() / 1000
+        val signature = attestationSigner?.let { signer ->
+            runCatching {
+                RosterAttestations.sign(RosterAttestation(next.id, next.revision, GroupCallCodec.rosterHash(next), members,
+                    current, nowS, nowS + 600, next.owner), signer)
+            }.getOrNull()
+        }
+        val secretBytes = random(32)
+        if (signature == null || secretBytes.size != 32) return@enqueue failAdvance("The group changed, but this device couldn't sign the new member list, so the call was ended.")
+        val secret = secretBytes.joinToString("") { "%02x".format(it) }
+        val body = GroupCallRest.advanceBody(next, current, signature, GroupCallCodec.secretHash(secret))
+        val answer = runCatching { http.request("POST", "/v1/call/rooms/$current/roster?device=$device", body) }.getOrNull()
+        if (answer?.status != 200) {
+            // Never keep publishing to a room whose revision could not advance: take it down instead.
+            return@enqueue failAdvance("The group changed, but the call couldn't move to the new member list, so it was ended.")
+        }
+        val remaining = members.filter { it != self }
+        val advanced = onAdvance(next, previous, secret, remaining)
+        if (advanced == null) return@enqueue failAdvance("The group changed, but this device couldn't rotate the call key, so the call was ended.")
+        // The coordinator holds the frozen revision until this advance is applied; pass it the new one first.
+        coordinator.updateRoster(next)
+        val applied = coordinator.onWire(self, GroupCallWire.wrap(GroupCallCodec.encode(advanced)))
+        if (applied !is IngressResult.Accepted) return@enqueue failAdvance("The group changed, but the call couldn't adopt the new member list, so it was ended.")
+        lastRosterOutcome = RosterChangeOutcome(removed, closed = false, successorNeeded = false)
+        execute(applied.effects, SessionEnd.ENDED, "The group changed, so the call ended.")
+    }
+
+    /** Ends the server room and this session together: the honest outcome when an advance cannot be applied. */
+    private suspend fun failAdvance(message: String) {
+        room?.let { runCatching { http.request("POST", "/v1/call/rooms/$it/end?device=$device", null) } }
+        lastRosterOutcome = RosterChangeOutcome(emptyList(), closed = true, successorNeeded = false)
+        terminate(SessionEnd.FAILED, message)
     }
 
     /** Completes once every command queued before it has run (test seam and orderly teardown). */
     suspend fun idle() {
         val done = CompletableDeferred<Unit>()
-        if (commands.trySend { done.complete(Unit) }.isSuccess) done.await()
+        if (finished) return
+        if (commands.trySend { done.complete(Unit) }.isSuccess) {
+            idleWaiters.add(done)
+            if (finished) done.complete(Unit)
+            // Bounded: a torn-down queue can never leave a caller (a test) parked forever.
+            kotlinx.coroutines.withTimeoutOrNull(5_000) { done.await() }
+            idleWaiters.remove(done)
+        }
     }
 
     // ---- everything below runs on the command queue ------------------------------------------------
@@ -226,6 +283,7 @@ class GroupCallSessionCore(
             is GroupCallEffect.SetPlaybackDeafened -> { deafened = effect.deafened; sfu.setDeafened(effect.deafened); listener.onDeafened(effect.deafened); client.sendState(muted, deafened) }
             is GroupCallEffect.WarnUnknown -> listener.onWarnUnknown(effect.pid)
             GroupCallEffect.CloseRoom -> return terminate(closeAs, closeMessage)
+            is GroupCallEffect.RebindRoom -> { if (effect.room == room) runCatching { client.rotateSecret(effect.secret) } }
             is GroupCallEffect.OpenRoom -> Unit
         }
         if (unsubscribe.isNotEmpty()) runCatching { sfu.unsubscribe(unsubscribe) }
@@ -249,6 +307,7 @@ class GroupCallSessionCore(
         if (end == SessionEnd.LEFT) runCatching { coordinator.leave() }
         runCatching { sfu.dispose() }
         listener.onFinished(end, message)
+        idleWaiters.forEach { it.complete(Unit) }
         commands.close()
     }
 }

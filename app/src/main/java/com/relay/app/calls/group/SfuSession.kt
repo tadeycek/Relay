@@ -1,5 +1,13 @@
 package com.relay.app.calls.group
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
@@ -30,6 +38,12 @@ interface SfuPeer {
     fun setDeafened(deafened: Boolean) {}
     /** Per-person playback volume for the publisher sessions that belong to that person. */
     fun setParticipantVolume(publisherSessions: List<String>, volume: Float) {}
+    /**
+     * This device's published `outbound-rtp` counters, read from real WebRTC stats. Null when there is no
+     * sender (nothing published yet) or the stats callback has not answered yet. Used by the outbound
+     * watchdog, which republishes a track the SFU is about to expire.
+     */
+    suspend fun outboundSample(): OutboundSample? = null
     /** Throws away the peer connection and microphone; a later [prepareMicOffer] builds a new one. */
     fun reset()
     fun release()
@@ -50,8 +64,68 @@ class SfuSession(private val api: SfuApi, private val peer: SfuPeer) {
     @Volatile private var local: String? = null
     private val remotes = LinkedHashMap<String, String>() // publisher session id -> our mid
 
+    // ---- outbound watchdog -------------------------------------------------------------------------
+    // The SFU expires a published track that sends no RTP for ~30 s. A long mute can get there, so the
+    // sender's real outbound-rtp counters are sampled once a second; a stall past the window republishes
+    // the track (a fresh SFU session), with backoff and a hard attempt limit in OutboundStallWatchdog.
+    private val watchdogScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val watchdog = OutboundStallWatchdog()
+    private val watchdogLock = Any()
+    private var watchdogJob: Job? = null
+    @Volatile private var outboundError: String? = null
+
+    /** Honest reason the published track could not be kept alive; null while it is fine. */
+    fun outboundError(): String? = outboundError
+
     val localMid: String? get() = local
     val subscribedSessions: Set<String> get() = synchronized(remotes) { remotes.keys.toSet() }
+
+    /**
+     * Starts the one-second stats loop, idempotently: a rebuild from inside the loop must not cancel the loop
+     * it is running on. The loop never busy-waits (the delay IS the sample interval) and stops itself after
+     * the watchdog's failure budget, leaving [outboundError] behind.
+     */
+    private fun ensureOutboundWatchdog() {
+        synchronized(watchdogLock) {
+            if (watchdogJob?.isActive == true) return
+            // A restart after the loop gave up (a host-driven rebuild) is a fresh budget, not a silent retry.
+            if (watchdog.exhausted()) watchdog.clearFailures(nowMs()) else watchdog.reset(nowMs())
+            watchdogJob = watchdogScope.launch {
+                while (isActive) {
+                    delay(WATCHDOG_INTERVAL_MS)
+                    if (disposed.get()) return@launch
+                    val sample = runCatching { peer.outboundSample() }.getOrNull() ?: continue
+                    when (watchdog.onSample(nowMs(), sample.packetsSent, sample.bytesSent)) {
+                        OutboundDecision.REPUBLISH -> {
+                            val recovered = runCatching { rebuild() }.isSuccess
+                            if (recovered) {
+                                // Counters restart with the new sender; the attempt budget is NOT reset here,
+                                // otherwise a track that dies right after every republish would loop forever.
+                                watchdog.restartCounters(nowMs())
+                                outboundError = null
+                            } else {
+                                outboundError = REPUBLISH_FAILED
+                            }
+                        }
+                        OutboundDecision.FAILED -> {
+                            outboundError = watchdog.lastError ?: REPUBLISH_FAILED
+                            return@launch
+                        }
+                        else -> Unit
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopOutboundWatchdog() {
+        synchronized(watchdogLock) {
+            watchdogJob?.cancel()
+            watchdogJob = null
+        }
+    }
+
+    private fun nowMs(): Long = System.nanoTime() / 1_000_000
 
     private fun ok(reply: SfuReply): SfuReply {
         if (reply.status != 200) throw SfuFailure(reply.status, reply.errorCode, reply.retryable)
@@ -73,6 +147,7 @@ class SfuSession(private val api: SfuApi, private val peer: SfuPeer) {
         peer.applyAnswer(reply.sdp ?: throw SfuFailure(200, "bad_response", false))
         sessionId = sid
         local = reply.tracks.firstOrNull()?.mid ?: offer.mid
+        ensureOutboundWatchdog()
     }
 
     suspend fun subscribe(publisherSessions: List<String>) = lock.withLock { subscribeLocked(publisherSessions) }
@@ -131,11 +206,19 @@ class SfuSession(private val api: SfuApi, private val peer: SfuPeer) {
 
     suspend fun dispose() {
         if (!disposed.compareAndSet(false, true)) return
+        stopOutboundWatchdog()
         generation++
         val sid = sessionId
         val mids = listOfNotNull(local) + synchronized(remotes) { remotes.values.toList().also { remotes.clear() } }
         local = null; sessionId = null
         runCatching { peer.release() }
         if (sid != null && mids.isNotEmpty()) withTimeoutOrNull(3_000) { runCatching { api.tracksClose(sid, mids) } }
+        watchdogScope.cancel()
+    }
+
+    private companion object {
+        /** One second, as the SFU's own expiry is measured in seconds and 30 s is the drop gate. */
+        const val WATCHDOG_INTERVAL_MS = 1_000L
+        const val REPUBLISH_FAILED = "Your audio stopped reaching the call and couldn't be republished."
     }
 }

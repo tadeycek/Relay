@@ -99,7 +99,8 @@ class GroupCallE2ee(
     private val lock = Any()
     private var key: GroupCallE2eeKey = initial
     private var schedule: GroupCallKeySchedule =
-        GroupCallKeySchedule.create(initial.copyKey(), listOf(self))
+        // The key may be a current-epoch key (a device that joins after a re-key), never assume epoch 0.
+        GroupCallKeySchedule.create(initial.copyKey(), initial.epoch, listOf(self))
     private var tracker: GroupCallE2eeStatus = GroupCallE2eeStatus.forSchedule(schedule)
     private var provider: FrameCryptorKeyProvider? = createProvider(schedule)
     private val keyed = HashSet<String>()
@@ -157,22 +158,13 @@ class GroupCallE2ee(
                 .mapNotNull { runCatching { deviceOf(it) }.getOrNull() }.toSet() + self
             if (next == devices) return@synchronized
             devices = next
-            if (key.epoch == 0) {
-                // Epoch 0: the participant set can be rebuilt freely (the schedule is a pure function of
-                // the call key and the device), and only the newcomers need a setKey call.
-                schedule = GroupCallKeySchedule.create(key.copyKey(), next)
-                schedule.participants.forEach { setKeyOnProvider(it) }
-                supported = schedule.participants.toSet()
-                rebuildTracker(next)
-            } else {
-                // An epoch > 0 schedule can only be produced by GroupCallKeySchedule.rotateForRemoval (core's
-                // createAtEpoch is module-internal), so its participant set is frozen for the epoch. A device
-                // that appears now cannot be keyed: it is left out of `supported`, therefore never played and
-                // never counted as covered.
-                val unknown = next - schedule.participants
-                if (unknown.isNotEmpty()) failure = UNKNOWN_DEVICE
-                else if (failure == UNKNOWN_DEVICE) failure = null
-            }
+            // The epoch enters only the HKDF labels, never the participant set, so a schedule for ANY epoch can
+            // be rebuilt from the call key + epoch. A device that joins after a re-key therefore adopts the
+            // current epoch's key instead of being frozen out (the keys already handed out stay byte-identical).
+            schedule = GroupCallKeySchedule.create(key.copyKey(), key.epoch, next)
+            schedule.participants.forEach { setKeyOnProvider(it) }
+            supported = schedule.participants.toSet()
+            rebuildTracker(next)
         }
         emit()
     }

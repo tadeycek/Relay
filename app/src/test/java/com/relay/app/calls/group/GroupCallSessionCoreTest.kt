@@ -43,7 +43,11 @@ class GroupCallSessionCoreTest {
     private val api = SfuSessionTest.FakeApi(); private val peer = SfuSessionTest.FakePeer(api); private val sfu = SfuSession(api, peer)
 
     private fun liveOk(path: String) = HttpAnswer(200, """{"v":1,"room":"${start.room}","participants":1,"createdAt":1,"rostered":true,"revision":1,"rosterHash":"${GroupCallCodec.rosterHash(roster)}"}""")
-    private fun core(scope: kotlinx.coroutines.CoroutineScope, creator: String? = G.alice) = GroupCallSessionCore(scope, coordinator, http, fake, fake, sfu, { roster }, G.bob, "primary", creator, listener, G.rng(70))
+    private fun core(scope: kotlinx.coroutines.CoroutineScope, creator: String? = G.alice) = GroupCallSessionCore(
+        scope, coordinator, http, fake, fake, sfu, { roster }, G.bob, "primary", creator, listener, G.rng(70),
+        attestationSigner = { ByteArray(64) { 1 } },
+        onAdvance = { next, previous, _, _ -> GroupCallCodec.newRevision(previous, next, G.NOW, G.rng(90)) },
+    )
     private fun welcome(vararg parts: String) = """{"type":"welcome","v":1,"you":"$me","participants":[${parts.joinToString(",")}]}"""
     private fun part(pid: String, key: String, session: String?, device: String = "primary") =
         """{"pid":"$pid","pubkey":"$key","device":"$device","sessionId":${session?.let { "\"$it\"" } ?: "null"},"track":${session?.let { "\"mic\"" } ?: "null"},"muted":false}"""
@@ -151,20 +155,32 @@ class GroupCallSessionCoreTest {
         c.dispose()
     }
 
-    @Test fun creatorRevokesRemovedMembersThenTheRoomClosesAndASuccessorIsRequested() = runBlocking {
-        val creatorStart = G.start(G.bob, roster, seed = 3)
-        coordinator.onWire(G.bob, G.wire(creatorStart))
-        http.live = { HttpAnswer(200, """{"v":1,"room":"${creatorStart.room}","rostered":true,"revision":1,"rosterHash":"${GroupCallCodec.rosterHash(roster)}"}""") }
-        val c = core(this, creator = G.bob); c.join(creatorStart.room, creatorStart.joinSecret!!); c.idle()
+    @Test fun creatorAdvancesTheLiveRevisionAndTheCallContinues() = runBlocking {
+        // The group owner (bob) started this call, so it is bob's attestation that advances the room.
+        val ownRoster = roster.copy(owner = G.bob)
+        val coord = GroupCallCoordinator(ownRoster, G.bob, { G.NOW }, MemoryStore())
+        val creatorStart = G.start(G.bob, ownRoster, seed = 3)
+        coord.onWire(G.bob, G.wire(creatorStart))
+        http.live = { HttpAnswer(200, """{"v":1,"room":"${creatorStart.room}","rostered":true,"revision":1,"rosterHash":"${GroupCallCodec.rosterHash(ownRoster)}"}""") }
+        val c = GroupCallSessionCore(this, coord, http, fake, fake, sfu, { ownRoster }, G.bob, "primary", G.bob, listener, G.rng(70),
+            attestationSigner = { ByteArray(64) { 1 } },
+            onAdvance = { next, previous, _, _ -> GroupCallCodec.newRevision(previous, next, G.NOW, G.rng(90)) })
+        c.join(creatorStart.room, creatorStart.joinSecret!!); c.idle()
         fake.opened[0].listener.onText(welcome()); c.idle()
-        val next = G.roster(2, listOf(G.alice, G.bob))
+        val next = ownRoster.copy(revision = 2, members = ownRoster.members.filter { it.key != G.carol })
         c.onRosterChanged(next, listOf(G.alice, G.bob, G.carol)); c.idle()
         val post = http.calls.single { it.second.startsWith("/v1/call/rooms/${creatorStart.room}/roster") }
         assertEquals("POST", post.first)
-        val body = JSONObject(post.third!!); assertEquals(G.carol, body.getJSONArray("remove").getString(0)); assertEquals(1, body.getJSONArray("remove").length())
+        val body = JSONObject(post.third!!)
+        assertEquals(2L, body.getLong("revision"))
+        val members = body.getJSONArray("members").let { a -> (0 until a.length()).map { a.getString(it) } }
+        assertEquals("the removed member is not in the new set", listOf(G.alice, G.bob).sorted(), members)
+        assertEquals(G.bob, body.getString("owner")); assertTrue(body.getString("rosterSig").isNotEmpty())
         assertTrue(body.getString("secretHash").matches(Regex("[0-9a-f]{64}")))
-        assertEquals(RosterChangeOutcome(listOf(G.carol), closed = true, successorNeeded = true), c.lastRosterOutcome)
-        assertEquals(1, peer.released); assertNull(coordinator.liveBanner())
+        assertEquals(RosterChangeOutcome(listOf(G.carol), closed = false, successorNeeded = false), c.lastRosterOutcome)
+        assertEquals("the call stays live", 0, peer.released)
+        assertNotNull("the room is still bound", coord.liveBanner())
+        c.dispose(); c.idle()
     }
 
     @Test fun ifTheRevocationCannotBeDeliveredTheCreatorEndsTheRoomInstead() = runBlocking {
@@ -175,15 +191,26 @@ class GroupCallSessionCoreTest {
         fake.opened[0].listener.onText(welcome()); c.idle()
         c.onRosterChanged(G.roster(2, listOf(G.alice, G.bob)), listOf(G.alice, G.bob, G.carol)); c.idle()
         assertTrue(http.calls.any { it.second.startsWith("/v1/call/rooms/${creatorStart.room}/end") })
+        assertEquals(SessionEnd.FAILED, listener.finished?.first)
+        assertEquals(1, peer.released)
     }
 
-    @Test fun aNonCreatorOnlyClosesWhenTheRevisionChanges() = runBlocking {
+    @Test fun aNonCreatorWaitsForTheOwnersAdvanceInsteadOfClosingTheCall() = runBlocking {
         accept(); val c = core(this, creator = G.alice); c.join(start.room, start.joinSecret!!); c.idle()
         fake.opened[0].listener.onText(welcome()); c.idle()
-        c.onRosterChanged(G.roster(2, listOf(G.alice, G.bob)), listOf(G.alice, G.bob, G.carol)); c.idle()
+        val next = G.roster(2, listOf(G.alice, G.bob))
+        c.onRosterChanged(next, listOf(G.alice, G.bob, G.carol)); c.idle()
         assertTrue(http.calls.none { it.second.contains("/roster") || it.second.contains("/end") })
-        assertEquals(RosterChangeOutcome(emptyList(), closed = true, successorNeeded = false), c.lastRosterOutcome)
-        assertEquals(1, peer.released)
+        assertEquals(RosterChangeOutcome(emptyList(), closed = false, successorNeeded = false), c.lastRosterOutcome)
+        assertEquals("no teardown while waiting", 0, peer.released)
+        assertNotNull(coordinator.liveBanner())
+        // The owner's signed advance arrives (same room, revision 2): the call is re-bound, not ended.
+        val advance = GroupCallCodec.newRevision(start, next, G.NOW, G.rng(91))
+        val applied = coordinator.onWire(G.alice, G.wire(advance))
+        assertTrue(applied is IngressResult.Accepted)
+        assertTrue((applied as IngressResult.Accepted).effects.any { it is com.relay.app.call.group.GroupCallEffect.RebindRoom })
+        assertEquals(next.revision, coordinator.roster().revision)
+        c.dispose(); c.idle()
     }
 
     @Test fun disposeMidNegotiationReleasesEverything() = runBlocking {

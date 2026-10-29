@@ -75,6 +75,52 @@ class GroupCallModelTest {
         assertEquals(FlowDecision.OK, w.onSample(now + 5_000, 0)) // a new peer restarts the counter
     }
 
+    @Test fun outboundWatchdogRepublishesOnStallAndBacksOffInsteadOfLooping() {
+        val w = OutboundStallWatchdog(stallWindowMs = 10_000, maxRecoveries = 2, backoffMs = 15_000)
+        // Healthy seconds: counters advance every sample.
+        var now = 0L
+        repeat(5) { now += 1_000; assertEquals(OutboundDecision.OK, w.onSample(now, 100L + it * 50, 2_000L + it * 900)) }
+
+        // Counters freeze. Nothing happens inside the window, then exactly one republish.
+        val frozenPackets = 300L; val frozenBytes = 8_000L
+        var decision = OutboundDecision.OK
+        while (decision == OutboundDecision.OK) { now += 1_000; decision = w.onSample(now, frozenPackets, frozenBytes) }
+        assertEquals(OutboundDecision.REPUBLISH, decision)
+        assertEquals(1, w.attemptsMade())
+
+        // Still stalled: the next samples are BACKOFF, not a second republish (no busy loop).
+        repeat(10) { now += 1_000; assertEquals(OutboundDecision.BACKOFF, w.onSample(now, frozenPackets, frozenBytes)) }
+
+        // After the backoff another recovery is allowed, and the budget then runs out.
+        var recovered = false
+        while (!recovered && now < 120_000) { now += 1_000; recovered = w.onSample(now, frozenPackets, frozenBytes) == OutboundDecision.REPUBLISH }
+        assertTrue("a second republish after the backoff", recovered)
+        assertEquals(2, w.attemptsMade())
+        while (decision != OutboundDecision.FAILED && now < 200_000) { now += 1_000; decision = w.onSample(now, frozenPackets, frozenBytes) }
+        assertEquals(OutboundDecision.FAILED, decision)
+        assertTrue(w.exhausted()); assertNotNull(w.lastError)
+        // Once stopped it stays stopped: no further republish can be requested by accident.
+        now += 60_000
+        assertEquals(OutboundDecision.FAILED, w.onSample(now, frozenPackets, frozenBytes))
+    }
+
+    @Test fun outboundWatchdogCountsTinyDtxAsProgressButACounterResetAsProgressToo() {
+        val w = OutboundStallWatchdog(stallWindowMs = 5_000, backoffMs = 1_000)
+        w.onSample(0, 10, 100)
+        // Sparse comfort noise (one small packet a second) is progress: the SFU's 30 s gate is about packets.
+        var now = 0L
+        repeat(10) { now += 1_000; assertEquals(OutboundDecision.OK, w.onSample(now, 10L + it + 1, 100L + (it + 1) * 20)) }
+        // Total silence for longer than the window is a stall.
+        var decision = OutboundDecision.OK
+        while (decision == OutboundDecision.OK && now < 60_000) { now += 1_000; decision = w.onSample(now, 20L, 300L) }
+        assertEquals(OutboundDecision.REPUBLISH, decision)
+        // A republished sender restarts at zero: a negative delta is progress, never a stall.
+        w.reset(now)
+        assertEquals(OutboundDecision.OK, w.onSample(now + 1_000, 0, 0))
+        // A missing sample is never acted on (no blind reconnects).
+        assertEquals(OutboundDecision.OK, w.onSample(now + 2_000, null, null))
+    }
+
     @Test fun guardRefusesHonestlyWhenUnlinkedOfflineOrWithoutAKey() {
         val r = roster
         fun block(linked: Boolean = true, online: Boolean = true, mic: Boolean = true, busy: Boolean = false, enabled: Boolean = true, roster: com.relay.app.groups.GroupProtocol.State? = r, reachable: Int = 2) =

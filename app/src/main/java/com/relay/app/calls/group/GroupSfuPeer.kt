@@ -2,9 +2,13 @@ package com.relay.app.calls.group
 
 import android.content.Context
 import android.util.Log
+import com.relay.app.call.IceServer
+import com.relay.app.calls.TurnResponse
+import com.relay.app.calls.TurnResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import com.relay.app.call.group.e2ee.ParticipantDevice
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -18,6 +22,7 @@ import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RTCStatsCollectorCallback
 import org.webrtc.RtpReceiver
 import org.webrtc.RtpSender
 import org.webrtc.SdpObserver
@@ -32,6 +37,59 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
+ * One ICE server exactly as it will be handed to `org.webrtc`: TURN URLs keep their issued transport
+ * (`turn:` = UDP, `turns:` = TLS) and their short-lived credentials. [toString] never prints the credential.
+ */
+data class GroupIceServer(val urls: List<String>, val username: String?, val credential: String?) {
+    val isTurn: Boolean get() = urls.any { it.startsWith("turn", ignoreCase = true) }
+
+    override fun toString(): String =
+        "GroupIceServer(urls=$urls, username=${if (username == null) "none" else "<issued>"}, credential=<redacted>)"
+
+    fun toRtc(): PeerConnection.IceServer {
+        val builder = PeerConnection.IceServer.builder(urls)
+        if (username != null && credential != null) builder.setUsername(username).setPassword(credential)
+        return builder.createIceServer()
+    }
+}
+
+/**
+ * Maps the issued `GET /v1/call/ice` answer onto the peer's ICE servers — the exact same credential endpoint and
+ * parser the 1:1 calls use ([TurnResponse]), so group rooms need no new Worker API.
+ *
+ * - TURN entries keep the credentials and every issued URL (UDP and TLS when the API returns both), because a
+ *   strict NAT or a mobile network needs the relay; STUN is only the last-resort fallback.
+ * - A TURN entry without a username+credential is dropped: it can never authenticate, and a half-configured
+ *   relay that silently fails is worse than no relay at all.
+ * - [plan] returns null when the relay is required but the answer has no usable TURN server, so the caller fails
+ *   with an honest error instead of publishing to a peer across a NAT that can never connect.
+ */
+object GroupSfuIce {
+    const val STUN_FALLBACK = "stun:stun.cloudflare.com:3478"
+    private const val MAX_SERVERS = 8
+    private const val MAX_URLS = 8
+    private const val MAX_CREDENTIAL = 512
+    private val URL = Regex("^(stun|turn|turns):[A-Za-z0-9._~:/?#\\[\\]@!$&'()*+,;=%-]{3,480}$", RegexOption.IGNORE_CASE)
+
+    fun plan(issued: List<IceServer>, requireTurn: Boolean): List<GroupIceServer>? {
+        val out = ArrayList<GroupIceServer>(issued.size + 1)
+        for (server in issued.take(MAX_SERVERS)) {
+            val urls = server.urls.filter { URL.matches(it) }.distinct().take(MAX_URLS)
+            if (urls.isEmpty()) continue
+            val username = server.username?.takeIf { it.isNotBlank() && it.length <= MAX_CREDENTIAL }
+            val credential = server.credential?.takeIf { it.isNotBlank() && it.length <= MAX_CREDENTIAL }
+            if (urls.any { it.startsWith("turn", ignoreCase = true) } && (username == null || credential == null)) continue
+            out += GroupIceServer(urls, username, credential)
+        }
+        if (requireTurn && out.none { it.isTurn }) return null
+        if (out.none { s -> s.urls.any { it.startsWith("stun:", ignoreCase = true) } }) {
+            out += GroupIceServer(listOf(STUN_FALLBACK), null, null)
+        }
+        return out
+    }
+}
+
+/**
  * One Android WebRTC peer for an SFU session: one local microphone track and every remote publisher track
  * the SFU hands us on the same peer connection.
  *
@@ -40,11 +98,15 @@ import kotlin.coroutines.resumeWithException
  * equivalent of WP13's [RemoteCandidateQueue] for the SFU path: [addCandidate] is kept for a peer that does
  * deliver a candidate after the description, and is dropped once the generation changed.
  *
+ * ICE servers come from the committed per-device TURN endpoint (`GET /v1/call/ice`, the 1:1 path): TURN with
+ * short-lived credentials plus the STUN fallback. When [turnRequired] and the server issues no usable relay,
+ * [prepareMicOffer] fails with `turn_unavailable` rather than publishing into a NAT the peer can't cross.
+ *
  * The microphone is created only in [prepareMicOffer]; [reset] and [release] close the connection and
  * dispose the source/track exactly once. Audio levels for the speaking indicator come from the received
  * PCM through [AudioTrackSink], so the UI needs no microphone access for other people's speech.
  */
-class GroupSfuPeer(context: Context) : SfuPeer {
+class GroupSfuPeer(context: Context, private val turnRequired: Boolean = true) : SfuPeer {
 
     private val app = context.applicationContext
     private val muteLock = Any()
@@ -219,8 +281,12 @@ class GroupSfuPeer(context: Context) : SfuPeer {
         // canSend() is false when there is no provider, encryption failed, or a re-key could not be applied:
         // in all three cases the microphone must stay shut rather than fall back to plaintext.
         if (!session.canSend()) throw SfuFailure(0, "e2ee_unavailable", false)
+        // Reuse the committed 1:1 TURN endpoint: short-lived per-device credentials, never hardcoded.
+        val ice = GroupSfuIce.plan(issuedIceServers(), turnRequired)
+            ?: throw SfuFailure(0, "turn_unavailable", true,
+                "Group calls need the TURN relay, but this server didn't issue TURN credentials.")
         val gen = generation.incrementAndGet()
-        val pc = newConnection(gen)
+        val pc = newConnection(gen, ice)
         val offer = synchronized(muteLock) {
             check(connection === pc) { "peer replaced during offer" }
             val f = factory ?: error("factory missing")
@@ -315,13 +381,11 @@ class GroupSfuPeer(context: Context) : SfuPeer {
         return connection ?: throw SfuFailure(0, "no_connection", false)
     }
 
-    private fun newConnection(gen: Int): PeerConnection {
+    private fun newConnection(gen: Int, ice: List<GroupIceServer>): PeerConnection {
         closeConnection()
         if (gen != generation.get()) throw SfuFailure(0, "disposed", false)
         val f = ensureFactory()
-        val config = PeerConnection.RTCConfiguration(
-            listOf(PeerConnection.IceServer.builder("stun:stun.cloudflare.com:3478").createIceServer()),
-        ).apply {
+        val config = PeerConnection.RTCConfiguration(ice.map { it.toRtc() }).apply {
             sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
             bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
             iceTransportsType = PeerConnection.IceTransportsType.ALL
@@ -330,6 +394,69 @@ class GroupSfuPeer(context: Context) : SfuPeer {
             ?: throw SfuFailure(0, "peer_create_failed", false)
         synchronized(muteLock) { connection = pc }
         return pc
+    }
+
+    // ---- TURN credentials (the committed 1:1 path) -------------------------------------------------
+
+    @Volatile private var cachedIce: List<IceServer> = emptyList()
+    @Volatile private var cachedIceExpiresAtMs = 0L
+
+    /**
+     * `GET /v1/call/ice`, NIP-98 signed with the enrolled device key exactly like the 1:1 calls, parsed by the
+     * same [TurnResponse]. A cached answer is reused until shortly before it expires, so a rebuild does not
+     * mint a new credential per attempt. An empty list means "no relay issued"; the caller decides whether
+     * that is fatal. Nothing here logs or returns the credential anywhere but the peer configuration.
+     */
+    private suspend fun issuedIceServers(): List<IceServer> {
+        val cached = cachedIce
+        if (cached.isNotEmpty() && System.currentTimeMillis() < cachedIceExpiresAtMs - ICE_REUSE_MARGIN_MS) return cached
+        return withContext(Dispatchers.IO) {
+            val answer = runCatching {
+                AndroidGroupCallHttp(app).request("GET", "/v1/call/ice?device=$GROUP_DEVICE", null)
+            }.getOrNull() ?: return@withContext cached
+            when (val result = runCatching { TurnResponse.parse(answer.status, answer.body) }.getOrNull()) {
+                is TurnResult.Ok -> {
+                    cachedIce = result.servers
+                    cachedIceExpiresAtMs = result.expiresAtMs ?: (System.currentTimeMillis() + ICE_FALLBACK_TTL_MS)
+                    result.servers
+                }
+                else -> {
+                    Log.w(TAG, "call/ice issued no usable relay (status=${answer.status})")
+                    cached // stale is better than nothing; the plan still refuses without TURN when required
+                }
+            }
+        }
+    }
+
+    // ---- outbound stats (the watchdog's only input) -------------------------------------------------
+
+    /**
+     * Real `outbound-rtp` counters for the published microphone sender, read from the peer connection's stats.
+     * Null when nothing is published or the stats callback doesn't answer within [STATS_TIMEOUT_MS]; the
+     * watchdog then does nothing rather than acting on a guess.
+     */
+    override suspend fun outboundSample(): OutboundSample? {
+        val pc = connection ?: return null
+        val sender = synchronized(muteLock) { micSender } ?: return null
+        return withTimeoutOrNull(STATS_TIMEOUT_MS) {
+            suspendCancellableCoroutine { cont ->
+                val callback = RTCStatsCollectorCallback { report ->
+                    var packets: Long? = null
+                    var bytes: Long? = null
+                    for (stats in report.statsMap.values) {
+                        if (stats.type != "outbound-rtp") continue
+                        packets = (stats.members["packetsSent"] as? Number)?.toLong()
+                        bytes = (stats.members["bytesSent"] as? Number)?.toLong()
+                    }
+                    if (cont.isActive) {
+                        cont.resume(if (packets == null && bytes == null) null else OutboundSample(packets, bytes))
+                    }
+                }
+                runCatching { pc.getStats(sender, callback) }.onFailure {
+                    if (cont.isActive) cont.resume(null)
+                }
+            }
+        }
     }
 
     private fun ensureFactory(): PeerConnectionFactory = synchronized(muteLock) {
@@ -543,6 +670,11 @@ class GroupSfuPeer(context: Context) : SfuPeer {
     private companion object {
         const val TAG = "RelayGroupSfuPeer"
         const val LEVEL_TTL_NS = 1_000_000_000L
+        /** Reuse an issued TURN credential until this long before it expires (minting is per device, not per rebuild). */
+        const val ICE_REUSE_MARGIN_MS = 30_000L
+        /** When the endpoint gives no `expiresAt`, keep the answer for ten minutes at most. */
+        const val ICE_FALLBACK_TTL_MS = 10 * 60_000L
+        const val STATS_TIMEOUT_MS = 2_000L
         val SESSION = Regex("[A-Za-z0-9_-]{1,256}")
         val MID = Regex("[A-Za-z0-9_-]{1,64}")
     }

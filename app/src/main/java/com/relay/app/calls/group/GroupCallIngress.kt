@@ -8,6 +8,7 @@ import com.relay.app.call.group.GroupCallEngine
 import com.relay.app.call.group.GroupCallFenceSnapshot
 import com.relay.app.call.group.GroupDecodeResult
 import com.relay.app.call.group.GroupEventReplay
+import com.relay.app.call.group.GroupReject
 import com.relay.app.call.group.VerifiedGroupSender
 import com.relay.app.groups.GroupProtocol
 import org.json.JSONObject
@@ -72,6 +73,12 @@ class GroupCallCoordinator(
 ) {
     private var engine = GroupCallEngine(roster, self, clock, store.load())
     private var announcement: GroupAnnouncement? = null
+    /**
+     * A roster this device already saved that is newer than the live room's frozen revision. It is NOT applied to
+     * the engine until the owner's signed advance arrives: [GroupCallEngine.advance] needs the old member set to
+     * prove the caller stayed, and the live room keeps its frozen revision until then.
+     */
+    private var pendingRoster: GroupProtocol.State? = null
 
     /**
      * [authenticatedSender] is the identity proven by the E2E seal of the envelope this body arrived in. The
@@ -88,16 +95,31 @@ class GroupCallCoordinator(
             return IngressResult.Rejected("UNAUTHENTICATED")
         }
         // Shape, size, roster binding, expiry and sender checks; a throwaway replay cache, the engine owns the real one.
-        val announcement = when (val decoded = GroupCallCodec.decode(json, verified, roster, clock(), GroupEventReplay())) {
-            is GroupDecodeResult.Rejected -> return IngressResult.Rejected(decoded.reason.name)
-            is GroupDecodeResult.Accepted -> decoded.announcement
+        val decoded = GroupCallCodec.decode(json, verified, roster, clock(), GroupEventReplay())
+        val next = pendingRoster
+        val advance = if (decoded is GroupDecodeResult.Rejected && decoded.reason == GroupReject.STALE_ROSTER &&
+            next != null && next.revision > roster.revision) {
+            GroupCallCodec.decodeAdvance(json, verified, roster, next, clock(), GroupEventReplay())
+        } else decoded
+        val announcement = when (advance) {
+            is GroupDecodeResult.Rejected -> return IngressResult.Rejected(advance.reason.name)
+            is GroupDecodeResult.Accepted -> advance.announcement
         }
+        val advancing = next != null && announcement.revision == next.revision
         val hadRoom = engine.state.room != null
-        val outcome = persisted { engine.apply(announcement, verified) }
+        val outcome = persisted {
+            if (advancing) engine.advance(next!!, announcement, verified) else engine.apply(announcement, verified)
+        }
         return when (outcome) {
             null -> IngressResult.PersistFailed(if (hadRoom) listOf(GroupCallEffect.CloseRoom) else emptyList())
             else -> {
                 if (outcome.changed.not() && outcome.effects.isEmpty()) return IngressResult.Rejected("IGNORED")
+                if (advancing && outcome.effects.any { it is GroupCallEffect.RebindRoom }) {
+                    roster = next!!
+                    pendingRoster = null
+                    this.announcement = announcement
+                    return IngressResult.Accepted(outcome.effects, liveBanner())
+                }
                 if (outcome.effects.any { it is GroupCallEffect.OpenRoom && it.room == announcement.room }) this.announcement = announcement
                 if (outcome.effects.contains(GroupCallEffect.CloseRoom)) this.announcement = null
                 IngressResult.Accepted(outcome.effects, liveBanner())
@@ -199,8 +221,19 @@ class GroupCallCoordinator(
     fun mute(muted: Boolean) = run { engine.mute(muted) }
     fun deafen(deafened: Boolean) = run { engine.deafen(deafened) }
     fun leave() = run { engine.leave() }
+    /**
+     * A newer local roster. While a room is live the frozen revision is kept (the owner's signed advance is what
+     * re-binds it); without a live room the roster simply advances. A self removal still closes the call.
+     */
     fun updateRoster(next: GroupProtocol.State): List<GroupCallEffect> {
-        if (next.id == roster.id && next.owner == roster.owner && next.revision >= roster.revision) roster = next
+        if (next.id != roster.id || next.owner != roster.owner) return emptyList()
+        if (next.revision < roster.revision) return run { engine.updateRoster(next) }
+        if (engine.state.room == null) {
+            roster = next
+            pendingRoster = null
+            return run { engine.updateRoster(next) }
+        }
+        pendingRoster = next
         return run { engine.updateRoster(next) }
     }
 

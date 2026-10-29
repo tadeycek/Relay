@@ -53,6 +53,12 @@ class SpeakingTracker(private val threshold: Double = 0.02, private val hangover
 
 enum class FlowDecision { OK, REPUBLISH }
 
+/** The outbound watchdog's verdict; kept separate so the legacy packet-count path keeps its two outcomes. */
+enum class OutboundDecision { OK, REPUBLISH, BACKOFF, FAILED }
+
+/** One reading of this device's sender counters, straight from `outbound-rtp` stats. Either may be absent. */
+data class OutboundSample(val packetsSent: Long?, val bytesSent: Long?)
+
 /**
  * Watches our own outbound packet counter. The SFU drops a track that gets no packets for 30 s, and a muted
  * (disabled) track may send only sparse DTX/comfort-noise packets, so a stall of [stallMs] (< 30 s) means the
@@ -70,6 +76,91 @@ class PacketFlowWatchdog(private val stallMs: Long = 20_000) {
         return if (nowMs - lastProgressAt >= stallMs) FlowDecision.REPUBLISH else FlowDecision.OK
     }
     fun reset(nowMs: Long) { lastPackets = null; lastProgressAt = nowMs }
+}
+
+/**
+ * The real outbound watchdog: samples the sender's `packetsSent`/`bytesSent` once a second and only calls for a
+ * republish when the track has made **no** progress for [stallWindowMs]. "No progress" is a small absolute
+ * threshold, not zero traffic, because a muted Opus track may still emit a stray comfort-noise packet.
+ *
+ * Bounded on purpose:
+ * - a sample where both counters are unchanged (or absent) is the only thing that can trigger a recovery;
+ * - every recovery is followed by [backoffMs] * attempt of silence, so there is no busy loop and no stream of
+ *   reconnects;
+ * - after [maxRecoveries] attempts the watchdog reports [OutboundDecision.FAILED] once and stops asking: the host
+ *   surfaces [lastError] instead of reconnecting forever.
+ *
+ * [reset] starts a fresh call/session: counters are forgotten, but the failure budget is only cleared by
+ * [clearFailures] (a genuinely new publish after the user re-joins), never by the recovery path itself.
+ */
+class OutboundStallWatchdog(
+    private val stallWindowMs: Long = 12_000,
+    private val minPackets: Long = 1,
+    private val minBytes: Long = 64,
+    private val maxRecoveries: Int = 3,
+    private val backoffMs: Long = 15_000,
+) {
+    private var lastPackets: Long? = null
+    private var lastBytes: Long? = null
+    private var progressAt: Long? = null
+    private var attempts = 0
+    private var nextAttemptAt = 0L
+    private var stopped = false
+    var lastError: String? = null; private set
+
+    @Synchronized
+    fun onSample(nowMs: Long, packetsSent: Long?, bytesSent: Long?): OutboundDecision {
+        if (stopped) return OutboundDecision.FAILED
+        if (packetsSent == null && bytesSent == null) return OutboundDecision.OK // no stats: never act blind
+        val previousPackets = lastPackets
+        val previousBytes = lastBytes
+        lastPackets = packetsSent
+        lastBytes = bytesSent
+        val packetsDelta = if (packetsSent != null && previousPackets != null) packetsSent - previousPackets else 0L
+        val bytesDelta = if (bytesSent != null && previousBytes != null) bytesSent - previousBytes else 0L
+        // A counter reset (new sender) shows a negative delta: treat it as progress, never as a stall.
+        val reset = packetsDelta < 0 || bytesDelta < 0
+        val progress = reset || packetsDelta >= minPackets || bytesDelta >= minBytes
+        if (progress) {
+            progressAt = nowMs
+            attempts = 0
+            return OutboundDecision.OK
+        }
+        val since = progressAt ?: nowMs.also { progressAt = it }
+        if (nowMs - since < stallWindowMs) return OutboundDecision.OK
+        if (nowMs < nextAttemptAt) return OutboundDecision.BACKOFF
+        if (attempts >= maxRecoveries) {
+            stopped = true
+            lastError = "Your audio stopped reaching the call and couldn't be recovered. Rejoin to be heard again."
+            return OutboundDecision.FAILED
+        }
+        attempts++
+        nextAttemptAt = nowMs + backoffMs * attempts
+        return OutboundDecision.REPUBLISH
+    }
+
+    fun reset(nowMs: Long) {
+        synchronized(this) {
+            lastPackets = null; lastBytes = null
+            progressAt = nowMs; attempts = 0; nextAttemptAt = 0
+        }
+    }
+
+    /** A brand-new publish after a rejoin: forget the failure budget too. */
+    fun clearFailures(nowMs: Long) {
+        synchronized(this) { stopped = false; lastError = null }
+        reset(nowMs)
+    }
+
+    /** After a successful republish: the counters belong to the new sender, but the attempt budget stands. */
+    fun restartCounters(nowMs: Long) {
+        synchronized(this) {
+            lastPackets = null; lastBytes = null; progressAt = nowMs; nextAttemptAt = nowMs
+        }
+    }
+
+    @Synchronized fun attemptsMade(): Int = attempts
+    @Synchronized fun exhausted(): Boolean = stopped
 }
 
 enum class GroupStartBlock { NONE, UNLINKED, OFFLINE, MIC_DENIED, BUSY, PROFILE_LOCKED, NOT_IN_GROUP, NO_KEY }
