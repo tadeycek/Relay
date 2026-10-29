@@ -45,8 +45,14 @@ jobs:
               paths.append(str(matches[0]))
           Path(__import__('os').environ['RUNNER_TEMP'], 'upstream-jars.txt').write_text('\n'.join(paths) + '\n')
           PY
-          mapfile -t upstream < "$RUNNER_TEMP/upstream-jars.txt"
-          python3 desktop/packaging/macos/package_helpers.py audit-upstream "${upstream[0]}" "${upstream[1]}"
+          # bash 3.2 on macOS runners has no mapfile; read the two lines portably.
+          upstream_one=""
+          upstream_two=""
+          while IFS= read -r line; do
+            if [ -z "$upstream_one" ]; then upstream_one="$line"; else upstream_two="$line"; fi
+          done < "$RUNNER_TEMP/upstream-jars.txt"
+          test -n "$upstream_one" && test -n "$upstream_two"
+          python3 desktop/packaging/macos/package_helpers.py audit-upstream "$upstream_one" "$upstream_two"
         env:
           TMPDIR: ${{ runner.temp }}/relay-tmp
       - name: Test and package DMG
