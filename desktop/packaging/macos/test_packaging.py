@@ -104,6 +104,7 @@ class MacPackagingTests(unittest.TestCase):
             helper = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(helper)
             setattr(helper, 'WEBRTC_HASH', hashlib.sha256((app / 'webrtc-java-0.20.0-macos-aarch64-xyz.jar').read_bytes()).hexdigest())
+            setattr(helper, 'WEBRTC_NATIVE_HASH', hashlib.sha256(b'mac').hexdigest())
             helper.audit_app(app.parent.parent)
             with zipfile.ZipFile(app / 'nostr-sdk-kmp-jvm-0.44.8.jar', 'a') as jar:
                 jar.writestr('linux-x86-64/libnostr_sdk_ffi.so', b'linux')

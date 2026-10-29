@@ -10,6 +10,9 @@ NOSTR_TARGET = 'darwin-aarch64/libnostr_sdk_ffi.dylib'
 NOSTR_HASH = '5bcaf5d29e84ad3f144ed509345f2b79ecdc689b6fbc722ba591cae1e1d27217'
 WEBRTC_HASH = 'c9c2c1e1202b191b8e07bac48db31aef6cefdb4248a3dd58a3b04dfeaa2cfb09'
 WEBRTC_NATIVE = 'libwebrtc-java-macos-aarch64.dylib'
+# SHA-256 of the native payload itself, taken from the audited Maven Central jar. Packaging may
+# normalise the surrounding jar (entry order/compression), so integrity is pinned to the dylib.
+WEBRTC_NATIVE_HASH = '89af8e2196692ac2544a2b910e3c76594d4952acab373353c85f9c6c8a3b6618'
 LICENSES = {
     'META-INF/licenses/webrtc/LICENSE.md': '3637ae45fdfb8e1d4eb30ca9e5f107c99e8a39b6c5b1e9068e853e4c308bd24b',
     'META-INF/licenses/webrtc/PATENTS': '01462e2068d1a04c2274f3389773014c14ed9bc3446b28303543bd3e3c064145',
@@ -90,10 +93,14 @@ def audit_app(app):
         webrtc_names = [i.filename for i in jar.infolist() if i.filename.endswith(('.so', '.dylib', '.dll'))]
     if names != [NOSTR_TARGET] or webrtc_names != [WEBRTC_NATIVE]:
         raise ValueError(f'bad native set: nostr={names}, webrtc={webrtc_names}')
-    if digest(webrtc.read_bytes()) != WEBRTC_HASH:
-        raise ValueError('staged webrtc checksum differs from audited Maven Central artifact')
+    with zipfile.ZipFile(webrtc) as jar:
+        native_hash = digest(jar.read(WEBRTC_NATIVE))
+    if native_hash != WEBRTC_NATIVE_HASH:
+        raise ValueError('staged webrtc native differs from the audited Maven Central artifact: '
+                         f'native_sha256={native_hash} jar_sha256={digest(webrtc.read_bytes())}')
     print(json.dumps({'nostr_native': names, 'nostr_staged_sha256': digest(nostr.read_bytes()),
-                      'webrtc_native': webrtc_names, 'webrtc_sha256': digest(webrtc.read_bytes())}))
+                      'webrtc_native': webrtc_names, 'webrtc_sha256': digest(webrtc.read_bytes()),
+                      'webrtc_native_sha256': native_hash}))
 
 
 def audit_upstream(nostr, webrtc):
