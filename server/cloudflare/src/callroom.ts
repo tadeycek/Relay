@@ -5,7 +5,7 @@ import { proxySfu, sfuConfigFrom, type SfuConfig, type SfuOptions } from "./call
 import type { CallAuthOutcome, CallSlotOutcome } from "./mailbox";
 import {
   ATTESTATION_SKEW_S, CALL_PID, CALL_ROOM_ID, GROUP_UUID, MAX_ATTESTATION_LIFETIME_S, MAX_CALL_REVISION, MAX_CALL_ROSTER,
-  SCHNORR_B64, SHA256_HEX, SFU_SESSION_ID, SFU_TRACK_ID, constantTimeEqualHex, deviceParam, errorResponse, json,
+  ROSTER_ADVANCE_FIELDS, SCHNORR_B64, SHA256_HEX, SFU_SESSION_ID, SFU_TRACK_ID, constantTimeEqualHex, deviceParam, errorResponse, json,
   limitsFrom, sha256Hex, type Limits,
 } from "./protocol";
 
@@ -704,13 +704,89 @@ export class CallRoom extends DurableObject<Env> {
   }
 
   /**
-   * G5 removal revocation: the creator removes identities from the frozen set. Their sockets close 4009, their
-   * participants leave through the normal path (which closes the provider track durably), and joins/reconnects
-   * are refused from then on. Removal only: the set can never grow, additions need a newer revision's room.
-   * An optional secretHash rotates the join capability in the same call.
+   * G5 roster endpoint. Two forms:
+   *  - **Advance** (live re-bind): the body carries the full roster binding plus the owner attestation. A strictly
+   *    newer revision whose roster hash, member set and owner signature verify re-binds this same room in place,
+   *    rotates the join capability and revokes everyone who left. Members of both sets may relay it.
+   *  - **Legacy removal**: `{v:1, remove:[...][, secretHash]}`, creator-only, shrinks the frozen set without
+   *    changing the revision or the hash (the pre-advance contract).
    */
   private async handleRoster(request: Request, url: URL, room: string): Promise<Response> {
     const start = { ...this.rows };
+    // Inspect a clone: the legacy path re-reads the request body for its NIP-98 payload hash.
+    const preview = parseJson(await request.clone().arrayBuffer());
+    const advance = isRecord(preview) && ROSTER_ADVANCE_FIELDS.some((k) => preview[k] !== undefined);
+    if (advance) return this.handleRosterAdvance(request, url, room, start);
+    return this.handleRosterRemoval(request, url, room, start);
+  }
+
+  /** G5 live advance: re-bind the roster revision/hash/members atomically, rotate the secret and revoke leavers. */
+  private async handleRosterAdvance(request: Request, url: URL, room: string, start: { read: number; written: number }): Promise<Response> {
+    const body = await request.arrayBuffer();
+    if (body.byteLength > this.limits.maxCallRequestBytes) return this.withMetrics(errorResponse(413, "request_too_large"), start);
+    const value = parseJson(body);
+    if (!isRecord(value) || value.v !== 1) return this.withMetrics(errorResponse(400, "bad_request"), start);
+    const binding = parseBinding(value);
+    if (binding === "invalid" || binding === null) return this.withMetrics(errorResponse(400, "bad_request"), start);
+    // The advance is only meaningful with a new capability: the announcement always carries one.
+    if (typeof value.secretHash !== "string" || !SHA256_HEX.test(value.secretHash)) return this.withMetrics(errorResponse(400, "bad_request"), start);
+    if (binding.owner === null) return this.withMetrics(errorResponse(409, "signed_roster_required"), start);
+    const principal = await this.authorize(request, body, url);
+    if (principal instanceof Response) return this.withMetrics(principal, start);
+    if (!this.recordAuth(principal.auth)) return this.withMetrics(errorResponse(401, "auth_replayed"), start);
+    const row = this.q<{ creator: string }>("SELECT creator FROM room WHERE id = ?", room)[0];
+    if (!row) return this.withMetrics(errorResponse(404, "not_found"), start);
+    const stored = this.q<{ group_key: string; revision: number; verified: number }>("SELECT group_key, revision, verified FROM room_roster LIMIT 1")[0];
+    if (!stored) return this.withMetrics(errorResponse(409, "roster_required"), start);
+    if (stored.group_key !== await groupKeyOf(binding.group)) return this.withMetrics(errorResponse(400, "bad_request"), start);
+    // A stale (or same) revision never re-binds: the call only ever moves forward.
+    if (binding.revision <= stored.revision) return this.withMetrics(errorResponse(409, "stale_revision"), start);
+    // Only a member of BOTH the old and the new set may relay the advance; an ex-member (or outsider) cannot.
+    if (!this.isOnRoster(principal.identity) || !binding.members.includes(principal.identity)) {
+      return this.withMetrics(errorResponse(403, "not_in_roster"), start);
+    }
+    const refusal = await this.verifyAttestation(binding, room);
+    if (refusal) return this.withMetrics(refusal, start);
+    const refused = await this.pinOwner(binding);
+    if (refused) return this.withMetrics(refused, start);
+
+    // ---- atomic re-bind: no await between these writes --------------------------------------
+    const oldMembers = this.q<{ pubkey: string }>("SELECT pubkey FROM roster_members ORDER BY pubkey").map((r) => r.pubkey);
+    const removed = oldMembers.filter((m) => !binding.members.includes(m));
+    this.q("UPDATE room_roster SET revision = ?, roster_hash = ?, verified = 1 WHERE id = ?", binding.revision, binding.rosterHash, room);
+    this.q("DELETE FROM roster_members WHERE 1 = 1");
+    for (const member of binding.members) this.q("INSERT INTO roster_members (pubkey) VALUES (?)", member);
+    // A re-bound roster is the whole truth: an identity re-added by this revision is no longer "removed".
+    this.q("DELETE FROM roster_removed WHERE 1 = 1");
+    for (const identity of removed) this.q("INSERT OR IGNORE INTO roster_removed (pubkey) VALUES (?)", identity);
+    this.q("UPDATE room SET secret_hash = ? WHERE id = ?", value.secretHash, room);
+    this.invalidateRoster();
+    // -----------------------------------------------------------------------------------------
+    const pids: string[] = [];
+    for (const identity of removed) {
+      for (const p of this.q<{ pid: string }>("SELECT pid FROM participants WHERE pubkey = ?", identity)) {
+        this.queueRemovalCleanup(p.pid);
+        pids.push(p.pid);
+      }
+    }
+    // Close every removed socket before the first provider await: the call continues for everyone else.
+    for (const identity of removed) for (const ws of this.ctx.getWebSockets(identity)) safeClose(ws, 4009, "removed");
+    if (pids.length > 0) {
+      await this.ctx.storage.setAlarm(nowMs() + this.limits.callHeartbeatRecheckMs);
+      this.alarmScheduled = true;
+    }
+    for (const pid of pids) await this.removeParticipant(pid, false);
+    const owed = pids.length === 0 ? [] : this.q<{ session_id: string; mid: string; pid: string }>(
+      `SELECT session_id, mid, pid FROM pending_track_close WHERE pid IN (${pids.map(() => "?").join(",")})`, ...pids,
+    );
+    await Promise.allSettled(owed.map((o) => this.closeTrack(o.session_id, o.mid, o.pid)));
+    return this.withMetrics(json({ v: 1, revision: binding.revision, rosterHash: binding.rosterHash, removed: removed.length }), start);
+  }
+
+  /** Legacy G5 removal revocation: the creator removes identities from the frozen set. Their sockets close 4009, their
+   * participants leave through the normal path (which closes the provider track durably), and joins/reconnects
+   * are refused from then on. Removal only: the set can never grow; additions need an owner-signed advance. */
+  private async handleRosterRemoval(request: Request, url: URL, room: string, start: { read: number; written: number }): Promise<Response> {
     const checked = await this.creatorCall(request, url, room, (v) =>
       pubkeyList(v.remove, 1, MAX_CALL_ROSTER) !== null && (v.secretHash === undefined || (typeof v.secretHash === "string" && SHA256_HEX.test(v.secretHash))));
     if (checked instanceof Response) return this.withMetrics(checked, start);

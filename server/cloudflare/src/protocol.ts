@@ -373,6 +373,14 @@ export const MAX_CALL_ROSTER = 64;
 export const MAX_CALL_REVISION = 2 ** 31 - 1;
 
 /**
+ * G5 live roster advance (`POST /v1/call/rooms/<room>/roster`): the same binding fields a create carries, plus the
+ * owner attestation. The room is re-bound to a strictly newer revision in place; the join capability MUST rotate.
+ */
+export const ROSTER_ADVANCE_FIELDS = [
+  "group", "revision", "rosterHash", "members", "owner", "rosterSig", "issuedAt", "expiresAt",
+] as const;
+
+/**
  * G5 signed roster attestation: the owner signs a canonical byte string with the group's Nostr key. The longest
  * accepted lifetime and the tolerated clock difference are protocol constants, not operator knobs: both the client
  * and the Worker must agree on them or a valid attestation is refused.

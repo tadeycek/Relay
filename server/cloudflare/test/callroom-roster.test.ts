@@ -1,7 +1,9 @@
 import { runInDurableObject } from "cloudflare:test";
+import { schnorr } from "@noble/curves/secp256k1.js";
 import { beforeEach, describe, expect, it } from "vitest";
 import { authHeader } from "../client/mailbox-client";
 import type { CallRoom } from "../src/callroom";
+import { attestationCanonical, rosterHashOf } from "../src/callroom";
 import { sha256Hex } from "../src/protocol";
 import { BASE, TestSocket, client, mailboxStub, user, worker } from "./helpers";
 import { callroomStub, createRoomAs, fakeSfu, inCallRoom, joinAs, joinSecret, joinSocket, reqAs, roomId } from "./callroom-helpers";
@@ -911,5 +913,115 @@ describe("roster membership cache", () => {
     expect((await post(user(0).sk, ROOM, "roster", { v: 1, remove: [user(1).pk] })).status).toBe(200);
     expect((await sfuReq(user(1).sk, ROOM, "sessions-new", { v: 1 })).status).toBe(403);
     await inCallRoom(ROOM, (instance: CallRoom) => { (instance as any).sql = (instance as any).realSql; });
+  });
+});
+
+// ---- (G5b) the live revision advance: removal revokes, the call continues for everyone else -----------
+
+function hexBytes(hex: string): Uint8Array {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+interface AdvanceOptions {
+  group?: string;
+  revision: number;
+  members: string[];
+  owner?: string;
+  ownerSk?: Uint8Array;
+  room: string;
+  secretHash: string;
+  issuedAt?: number;
+  expiresAt?: number;
+}
+
+/** A POST /roster advance body with a real BIP-340 owner signature over exactly this room/revision/member set. */
+async function advanceBody(o: AdvanceOptions): Promise<Record<string, unknown>> {
+  const now = Math.floor(Date.now() / 1000);
+  const group = o.group ?? GROUP;
+  const owner = o.owner ?? user(0).pk;
+  const members = [...o.members].sort();
+  const issuedAt = o.issuedAt ?? now;
+  const expiresAt = o.expiresAt ?? now + 600;
+  const rosterHash = await rosterHashOf(group, owner, o.revision, members);
+  const canonical = attestationCanonical({ group, revision: o.revision, rosterHash, members, room: o.room, owner, issuedAt, expiresAt, signature: "" });
+  const sig = schnorr.sign(hexBytes(await sha256Hex(canonical)), o.ownerSk ?? user(0).sk);
+  const rosterSig = btoa(String.fromCharCode(...sig));
+  return { v: 1, room: o.room, group, revision: o.revision, rosterHash, members, owner, rosterSig, issuedAt, expiresAt, secretHash: o.secretHash };
+}
+
+/** A verified (owner-signed) create, so the room starts bound to a proven roster. */
+async function createSigned(sk: Uint8Array, room: string, secret: string, revision: number, members: string[], ownerSk: Uint8Array = user(0).sk) {
+  const body = await advanceBody({ revision, members, room, secretHash: await sha256Hex(secret), ownerSk, owner: user(0).pk });
+  return reqAs(sk, "POST", "/v1/call/rooms", body);
+}
+
+describe("G5b live roster advance keeps the call alive", () => {
+  it("re-binds the room at the new revision, rotates the secret, closes the removed socket with 4009 and refuses its rejoin", async () => {
+    expect((await createSigned(user(0).sk, ROOM, SECRET, 1, set(0, 1, 2))).status).toBe(200);
+    const stay = await joinSocket(user(2).sk, ROOM, SECRET);
+    const gone = await joinSocket(user(1).sk, ROOM, SECRET);
+    await stay.socket.next(); // user(1) joined
+
+    const body = await advanceBody({ revision: 2, members: set(0, 2), room: ROOM, secretHash: await sha256Hex(SECRET2) });
+    const reply = await post(user(0).sk, ROOM, "roster", body);
+    expect(reply.status).toBe(200);
+    expect(reply.body).toMatchObject({ v: 1, revision: 2, removed: 1 });
+    expect(reply.body.rosterHash).toBe(await rosterHashOf(GROUP, user(0).pk, 2, set(0, 2)));
+
+    expect((await gone.socket.closed).code).toBe(4009);
+    const all = await dump(ROOM);
+    expect(all.roster_members.map((r) => r.pubkey).sort()).toEqual(set(0, 2));
+    expect(all.room_roster[0].revision).toBe(2);
+    expect(all.room_roster[0].roster_hash).toBe(await rosterHashOf(GROUP, user(0).pk, 2, set(0, 2)));
+
+    // The removed identity cannot rejoin even with the new secret; the survivor still gets the call.
+    const rejoin = await joinAs(user(1).sk, ROOM, SECRET2);
+    expect(rejoin.status).toBe(403);
+    expect(((await rejoin.json()) as any).error.code).toBe("not_in_roster");
+    const stale = await joinAs(user(2).sk, ROOM, SECRET);
+    expect(stale.status).toBe(403);
+    // The survivor sees the removed peer leave (the call goes on) and its socket is never closed by the advance.
+    expect(await stay.socket.next()).toMatchObject({ type: "left", pubkey: user(1).pk });
+    stay.socket.send({ type: "state", muted: true });
+    expect(await stay.socket.silent(100)).toBe(true);
+    stay.socket.close();
+    const fresh = await joinSocket(user(2).sk, ROOM, SECRET2);
+    fresh.socket.close();
+  });
+
+  it("refuses a stale revision, an unsigned attempt and an ex-member's attempt", async () => {
+    expect((await createSigned(user(0).sk, ROOM, SECRET, 3, set(0, 1, 2))).status).toBe(200);
+
+    const stale = await advanceBody({ revision: 2, members: set(0, 1), room: ROOM, secretHash: await sha256Hex(SECRET2) });
+    expect((await post(user(0).sk, ROOM, "roster", stale)).body.error.code).toBe("stale_revision");
+    // same revision is not an advance either
+    const same = await advanceBody({ revision: 3, members: set(0, 1), room: ROOM, secretHash: await sha256Hex(SECRET2) });
+    expect((await post(user(0).sk, ROOM, "roster", same)).body.error.code).toBe("stale_revision");
+
+    // No attestation on a verified room: signed_roster_required, nothing changes.
+    const unsigned = { v: 1, group: GROUP, revision: 4, rosterHash: await rosterHashOf(GROUP, user(0).pk, 4, set(0, 1)), members: set(0, 1), secretHash: await sha256Hex(SECRET2) };
+    const refused = await post(user(0).sk, ROOM, "roster", unsigned);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe("signed_roster_required");
+
+    // user(2) is removed in the new set: even relaying the owner's signature is not_in_roster.
+    const byExMember = await advanceBody({ revision: 4, members: set(0, 1), room: ROOM, secretHash: await sha256Hex(SECRET2) });
+    const ex = await post(user(2).sk, ROOM, "roster", byExMember);
+    expect(ex.status).toBe(403);
+    expect(ex.body.error.code).toBe("not_in_roster");
+
+    const after = await dump(ROOM);
+    expect(after.room_roster[0].revision).toBe(3);
+    expect(after.roster_members.map((r) => r.pubkey).sort()).toEqual(set(0, 1, 2));
+  });
+
+  it("lets a member who stays relay the owner's signed advance", async () => {
+    expect((await createSigned(user(0).sk, ROOM, SECRET, 1, set(0, 1, 2))).status).toBe(200);
+    const body = await advanceBody({ revision: 2, members: set(0, 1), room: ROOM, secretHash: await sha256Hex(SECRET2) });
+    const reply = await post(user(1).sk, ROOM, "roster", body);
+    expect(reply.status).toBe(200);
+    expect(reply.body).toMatchObject({ v: 1, revision: 2, removed: 1 });
   });
 });

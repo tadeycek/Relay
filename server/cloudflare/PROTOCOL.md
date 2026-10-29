@@ -703,7 +703,7 @@ Hashing the decoded 32 bytes instead is **not** this contract.
 | `GET /v1/call/rooms/<room>[?device=<id>]` | NIP-98 member/device | `200 {"v":1,"room":"…","participants":<n>,"createdAt":<ms>}` while the room lives (a roster-bound room adds `"rostered":true,"verified":<bool>,"revision":<n>,"rosterHash":"<64hex>"`); `404 not_found` after teardown, and for a roster-bound room also to an identity that is not (or no longer) in its frozen set. The only accepted query parameter is `device`. |
 | `GET /v1/call/rooms/<room>/ws?secret=<64hex>[&device=<id>][&pid=<16hex>]` | NIP-98 member/device + secret | The room control socket. `426 upgrade_required` without `Upgrade: websocket`; `400 bad_request` for an unknown query parameter or malformed `room`/`secret`/`pid`; `403 forbidden` for a wrong secret; `403 not_in_roster` for an identity outside the frozen set of a roster-bound room; `404 not_found` for an unknown room; `409 room_full` at the cap; `429 rate_limited` above the join budget. |
 | `POST /v1/call/rooms/<room>/end[?device=<id>]` | NIP-98 member/device + creator only | `{"v":1,"ended":true}` after telling every member `{"type":"end","by":<creator pubkey>}` and wiping the room. Any other member gets `403 forbidden`. |
-| `POST /v1/call/rooms/<room>/roster[?device=<id>]` `{"v":1,"remove":["<64hex>",…][,"secretHash":"<64hex>"]}` | NIP-98 member/device + creator only | G5 removal: `{"v":1,"removed":<n>}`. See below. |
+| `POST /v1/call/rooms/<room>/roster[?device=<id>]` `{"v":1,"remove":["<64hex>",…][,"secretHash":"<64hex>"]}` or a live advance `{"v":1,"group":"<uuid>","revision":<n>,"rosterHash":"<64hex>","members":[…],"owner":"<64hex>","rosterSig":"<base64>","issuedAt":<s>,"expiresAt":<s>,"secretHash":"<64hex>"}` | NIP-98 member/device; creator for the removal form, a member of both sets for the advance | Legacy removal: `{"v":1,"removed":<n>}`. Live advance: `{"v":1,"revision":<n>,"rosterHash":"<64hex>","removed":<n>}`, or `409 stale_revision` / `409 signed_roster_required` / `403 not_in_roster` / `400 roster_unverified`. See below. |
 | `POST /v1/call/rooms/<room>/rotate[?device=<id>]` `{"v":1,"secretHash":"<64hex>"}` | NIP-98 member/device + creator only | G5 capability rotation: `{"v":1,"rotated":true}`. See below. |
 | `POST` or `PUT /v1/call/rooms/<room>/sfu/<op>[?device=<id>]` | NIP-98 member/device + an open room socket | Proxies the provider call. `<op>` is `sessions-new`, `tracks-new`, `renegotiate` or `tracks-close`. The caller may only touch its own provider session ids. |
 
@@ -862,7 +862,8 @@ guessing oracle for unknown groups, but anyone who holds a UUID learns that a ca
 **Removal.** `POST /v1/call/rooms/<room>/roster {"v":1,"remove":[…][,"secretHash":…]}` is creator-only. `remove`
 is 1 to 64 pubkeys, ascending and unique, each currently in the set and none the creator
 (`400 bad_request` otherwise; `409 roster_required` for an unrostered room; `403 forbidden` for a non-creator;
-`404` unknown room). The set can only shrink: additions need a newer revision's room. For each removed identity
+`404` unknown room). This legacy form can only shrink the set; any change to the membership (additions included)
+goes through the owner-signed advance below. For each removed identity
 the Worker deletes it from the set, closes **all** its sockets with close code **4009** reason `removed`,
 marks its participants left (broadcast `left`; the existing cleanup path closes the provider track durably
 via `pending_track_close`, retried by the alarm) and refuses its rejoin. Removal is idempotent: an identity
@@ -874,8 +875,28 @@ retry as its published mid. Teardown deletes the roster rows, so a same-id creat
 cannot fail. The Cloudflare SFU has no
 session-delete call: a removed participant's provider *session* is not closed explicitly; its track is
 force-closed and the session lapses at the provider. An optional `secretHash` rotates the join capability in
-the same call (see below). The frozen `rosterHash` is **not** changed by removals; the live set is the frozen
-set minus removed identities. Ending the room (`/end`) revokes everyone.
+the same call (see below). The frozen `rosterHash` is **not** changed by this legacy removal form; the live set is
+the frozen set minus removed identities. Ending the room (`/end`) revokes everyone.
+
+**Live roster advance (the call continues).** A membership change must not end the call. The creator (or any member
+of **both** the old and the new set) sends the full binding again, at a **strictly newer** `revision`, signed by the
+pinned owner with the same four attestation fields as a create (over this room id, the new revision, the new
+`rosterHash` and the new sorted `members`), plus a `secretHash` for the rotated join capability. The answer is
+`{"v":1,"revision":<n>,"rosterHash":"<64hex>","removed":<n>}`. The Worker verifies, in order: body shape, the
+stored roster exists (`409 roster_required`), the group matches the room (`400 bad_request`), the revision is
+strictly newer (`409 stale_revision` — a same or older revision never re-binds), the caller is in the current set
+**and** the new set (`403 not_in_roster` — an ex-member cannot relay one even with the owner's signature), the
+attestation (hash recomputation, freshness, BIP-340 signature → `400 roster_unverified`), and the owner pin
+(`403 not_owner`). An advance without the attestation on a verified room is `409 signed_roster_required`.
+
+On success the revision, roster hash and member set are replaced **atomically in one synchronous step**, the room's
+`secret_hash` is rotated, and every identity that left is revoked exactly like a removal (all its sockets close
+`4009 removed`, its participants are marked left, its published and pulled provider tracks are closed through the
+durable `pending_track_close` path, and its rejoin is refused `403 not_in_roster`). Everyone who stayed keeps their
+socket: the call continues, the new secret is needed only for the next join or reconnect, and the new `group_start`
+that the client distributes at that revision carries the next key epoch. The 17-participant cap and the
+`409 room_full` / atomic one-room-per-(group, revision) creates are unchanged. An advance does **not** claim a
+Mailbox slot: the room id and its (group, revision) slot stay as they are.
 
 **Capability rotation.** `POST /v1/call/rooms/<room>/rotate {"v":1,"secretHash":"<64hex>"}` (creator only)
 replaces the stored hash. Existing sockets stay; new joins (and pid reconnects) need the new secret. Works on
