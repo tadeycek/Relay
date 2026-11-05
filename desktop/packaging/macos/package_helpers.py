@@ -2,7 +2,10 @@
 """Fail-closed macOS native staging audit; never writes to dependency caches."""
 import hashlib
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -69,6 +72,23 @@ def one(root, prefix):
 NATIVE_SUFFIXES = ('.so', '.dylib', '.dll')
 
 
+def strip_signature(payload):
+    """Return the Mach-O with its code signature removed, or None when it cannot be done here."""
+    codesign = shutil.which('codesign')
+    if codesign is None:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / 'payload.dylib'
+        source.write_bytes(payload)
+        detail = subprocess.run([codesign, '-dv', '--verbose=2', str(source)],
+                                capture_output=True, text=True)
+        if 'adhoc' not in (detail.stderr + detail.stdout):
+            print(f'codesign inspection: {(detail.stderr or detail.stdout).strip()}', file=sys.stderr)
+            return None
+        subprocess.run([codesign, '--remove-signature', str(source)], capture_output=True, check=False)
+        return source.read_bytes()
+
+
 def audit_app(app):
     app = Path(app)
     nostr = one(app, 'nostr-sdk-kmp-jvm-')
@@ -94,10 +114,16 @@ def audit_app(app):
     if names != [NOSTR_TARGET] or webrtc_names != [WEBRTC_NATIVE]:
         raise ValueError(f'bad native set: nostr={names}, webrtc={webrtc_names}')
     with zipfile.ZipFile(webrtc) as jar:
-        native_hash = digest(jar.read(WEBRTC_NATIVE))
+        payload = jar.read(WEBRTC_NATIVE)
+    native_hash = digest(payload)
     if native_hash != WEBRTC_NATIVE_HASH:
-        raise ValueError('staged webrtc native differs from the audited Maven Central artifact: '
-                         f'native_sha256={native_hash} jar_sha256={digest(webrtc.read_bytes())}')
+        # macOS packaging applies an ad-hoc code signature to nested libraries, which rewrites the
+        # Mach-O. Compare the code itself: strip the signature from a copy and hash that.
+        stripped = strip_signature(payload)
+        if stripped is None or digest(stripped) != WEBRTC_NATIVE_HASH:
+            raise ValueError('staged webrtc native differs from the audited Maven Central artifact: '
+                             f'native_sha256={native_hash} jar_sha256={digest(webrtc.read_bytes())}')
+        print(json.dumps({'webrtc_native_signature': 'adhoc', 'unsigned_sha256_matches': True}))
     print(json.dumps({'nostr_native': names, 'nostr_staged_sha256': digest(nostr.read_bytes()),
                       'webrtc_native': webrtc_names, 'webrtc_sha256': digest(webrtc.read_bytes()),
                       'webrtc_native_sha256': native_hash}))
