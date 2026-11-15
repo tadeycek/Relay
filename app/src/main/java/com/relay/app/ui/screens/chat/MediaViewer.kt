@@ -39,11 +39,12 @@ import java.io.File
 
 /** Private, per-view plaintext copies are removed when their bubble leaves composition. */
 @Composable
-internal fun rememberDisplayFile(path: String): File? {
+internal fun rememberDisplayFile(path: String, onError: (String) -> Unit = {}): File? {
     val context = LocalContext.current
     val generation by com.relay.app.messaging.MessageDeletion.viewGeneration.collectAsState()
     return produceState<File?>(null, path, generation) {
         var temporary: File? = null
+        var failure: String? = null
         try {
             value = withContext(Dispatchers.IO) {
                 runCatching {
@@ -57,9 +58,8 @@ internal fun rememberDisplayFile(path: String): File? {
                     val file = File.createTempFile("view-", ".media", dir).also { temporary = it }
                     if (original != null) {
                         require(original.isFile)
-                        val bytes = runCatching { RelayFileCrypto.readDecrypted(context, original) }
-                            .getOrElse { original.readBytes() }
-                        file.writeBytes(bytes)
+                        require(dir.usableSpace > original.length() + 1024 * 1024) { "Not enough free storage to open this video" }
+                        RelayFileCrypto.copyForView(context, original, file)
                     } else {
                         require(uri.scheme == "content")
                         requireNotNull(context.contentResolver.openInputStream(uri)).use { input ->
@@ -67,8 +67,9 @@ internal fun rememberDisplayFile(path: String): File? {
                         }
                     }
                     file
-                }.getOrNull()
+                }.onFailure { failure = it.message ?: "Couldn't open this media" }.getOrNull()
             }
+            failure?.let(onError)
             awaitCancellation()
         } finally {
             temporary?.delete()

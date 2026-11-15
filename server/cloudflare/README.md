@@ -1,7 +1,7 @@
 # Relay mailbox (Cloudflare)
 
 Relay's own delivery server, and since 2026-10-18 the app's only network service: one Cloudflare Worker in
-front of SQLite-backed Durable Objects, on the Workers Free plan. It forwards the app's existing encrypted
+front of SQLite-backed Durable Objects, designed around Workers Free limits. It forwards the app's existing encrypted
 packets between paired phones, passes live typing/presence signals without storing them, and holds encrypted
 photos and videos. The phones keep the history; the server deletes a message or file as soon as its recipients
 have it, and anything uncollected after 8 days.
@@ -17,7 +17,8 @@ phone ──HTTPS/WebSocket──▶ Worker (cheap checks) ──▶ Mailbox Dur
 |---|---|
 | `src/index.ts` | Edge router: health, routing, refuses anonymous or oversized requests before they cost a Durable Object request |
 | `src/mailbox.ts` | The mailbox Durable Object: auth replay check, transactional store, catch-up, receipts, live signals, hibernating sockets, schema migrations |
-| `src/media.ts` | One Durable Object per encrypted file: chunked storage, recipient-only download, delete after all confirm or 8 days |
+| `src/media.ts` | One Durable Object per encrypted file: legacy v1 and bounded resumable v2 transfers, delete after all confirm or 8 days |
+| `src/media-digest.ts` | Persisted incremental SHA-256 checkpoint; hashes one bounded part per request |
 | `src/auth.ts` | NIP-98 request auth |
 | `src/push.ts` | Content-free Firebase wake-ups, service-account JWT signing and OAuth token caching |
 | `src/protocol.ts` | Limits, error codes, shared types |
@@ -104,6 +105,17 @@ Migration v7 supports both original v6 token tables and v6 tables that already c
 Existing tokens, members and pending messages are preserved; the old table is never recreated.
 
 ## Free-plan budget
+
+V2 media supports ciphertext up to 3 GiB + 1 MiB in 1 MiB requests using the existing SQLite namespace.
+Cloudflare's [current limits](https://developers.cloudflare.com/durable-objects/platform/limits/) (checked
+2026-11-15) are 10 GB per SQLite object, **5 GB total per Free account**, 8 MB per SQL row and 30 seconds CPU per
+Durable Object request. Incremental hash checkpoints avoid re-reading/hashing a whole large file at completion;
+part uploads/downloads use bounded buffers. This requires deploying the updated Worker before the app uses v2.
+No new service or paid resource is configured. One maximum transfer fits the documented per-object limit,
+but two exceed the Free account's total capacity before allowing for other files or mailbox data. Account plan,
+actual available quota, real 3 GiB transfer throughput and production CPU/storage behavior remain deployment
+checks; local tests do not establish them. Quota/storage failures leave parts resumable and report a retryable
+storage error; there is no hidden fallback to paid storage.
 
 Workers Free per day (Cloudflare pricing page, checked 2026-10-18): 100,000 Durable Object requests,
 13,000 GB-s duration, 5 M rows read, **100,000 rows written**, 5 GB stored. Going over any of them makes those

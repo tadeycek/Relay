@@ -1,7 +1,7 @@
 package com.relay.app.ui.screens.chat
 
 /** Acceptance identifies the exact submitted draft, independently of later edits. */
-internal data class AcceptedDraft(val composerId: String, val revision: Long, val mediaSelectionId: String?,
+internal data class AcceptedDraft(val composerId: String, val revision: Long, val mediaSelectionIds: Set<String>,
     val text: String = "", val reply: String? = null) {
     fun rebaseKeyboardEdit(rendered: String, current: String, next: String): String =
         if (text.isNotEmpty() && rendered != current && rendered.startsWith(text) && next.startsWith(text)) next.removePrefix(text) else next

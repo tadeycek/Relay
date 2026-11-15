@@ -37,12 +37,11 @@ object GroupMedia {
             val groupState = SharedGroups.get(db, group) ?: return
             if (groupState.hidden || groupState.state.members.none { it.key == com.relay.app.transport.nostr.NostrIdentity.publicKeyHex(context) }) return
             if (!db.readableDatabase.rawQuery("SELECT 1 FROM group_messages WHERE group_id=? AND event_id=? AND media_uri IS NULL", arrayOf(group.toString(), event)).use { it.moveToFirst() }) return
-            val fetch = com.relay.app.media.mediaFetcher(context, ref.url) ?: return
-            val bytes = fetch(ref.url, ref.sha256Hex, MediaContainer.wrappedSize((ref.size + 28).toInt()).toLong()) ?: return
-            val plain = MediaCrypto.decrypt(MediaContainer.unwrap(bytes) ?: bytes, ref.keyBase64) ?: return
-            if (plain.size.toLong() != ref.size) return
             file = File(File(context.filesDir, "media").also { it.mkdirs() }, "group_${MediaCrypto.sha256Hex("$group:$event".toByteArray())}.enc")
-            RelayFileCrypto.writeEncrypted(context, file, plain)
+            MediaDownload.store(context, ref, file) { sent, total ->
+                check(!com.relay.app.calculator.CalculatorOnly.enabled(context))
+                PendingAttachments.report(context, event, "Downloading", sent, total)
+            }
             synchronized(SharedGroups) {
                 val changed = MessagingDb.get(context).writableDatabase.update("group_messages", ContentValues().apply {
                     put("media_uri", file.absolutePath)
@@ -52,7 +51,12 @@ object GroupMedia {
             }
             // Stored on this phone, so the server may forget it once every member has it.
             com.relay.app.transport.mailbox.MailboxMedia.confirm(context, ref.url)
+            PendingAttachments.clearProgress(context, event)
             SharedGroups.notify(context, group)
-        } catch (_: Exception) { file?.delete() } finally { slots.release(); active.remove(token) }
+        } catch (e: Exception) {
+            file?.delete()
+            val previous = PendingAttachments.progress.value[event]
+            PendingAttachments.report(context, event, "Will retry", previous?.transferred ?: 0, ref.size, e.message ?: "Download interrupted")
+        } finally { slots.release(); active.remove(token) }
     }
 }

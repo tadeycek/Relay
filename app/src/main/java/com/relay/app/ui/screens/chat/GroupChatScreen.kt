@@ -16,7 +16,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -68,6 +67,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val hasOlder by vm.hasOlder.collectAsState()
     val friends by vm.friends.collectAsState()
     val sending by vm.sending.collectAsState()
+    val transfers by com.relay.app.media.PendingAttachments.progress.collectAsState()
     val error by vm.error.collectAsState()
     var replyDraft by rememberSaveable { mutableStateOf<String?>(null) }
     val acceptedDraft by vm.acceptedDraft.collectAsState()
@@ -85,13 +85,12 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val pickerId = -groupId - 1000000L
     val media = picker.draftFor(pickerId)
     fun consumeAccepted(accepted: AcceptedDraft) {
+        picker.remove(pickerId, accepted.mediaSelectionIds)
         if (accepted.composerId != composerId || consumedRevision >= accepted.revision) return
         val remaining = accepted.remainingText(input.text, draftRevision == accepted.revision, appendOnly)
         if (remaining != input.text) input = androidx.compose.ui.text.input.TextFieldValue(remaining,
             androidx.compose.ui.text.TextRange((input.selection.end - (input.text.length - remaining.length)).coerceIn(0, remaining.length)))
         if (replyDraft == accepted.reply) replyDraft = null
-        if (accepted.mediaSelectionId != null && picker.draftFor(pickerId)?.selectionId == accepted.mediaSelectionId)
-            picker.clear(pickerId)
         consumedRevision = accepted.revision
         draftRevision += 1
     }
@@ -122,10 +121,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
     val listState = remember(groupId) { androidx.compose.foundation.lazy.LazyListState() }
     LaunchedEffect(error) { error?.let { android.widget.Toast.makeText(context, it, android.widget.Toast.LENGTH_LONG).show(); vm.clearError() } }
 
-    DisposableEffect(Unit) {
-        vm.registerUpdates(context)
-        onDispose { vm.unregisterUpdates(context) }
-    }
+    ConversationUpdates(vm, { vm.registerUpdates(context) }, { vm.unregisterUpdates(context) }, vm::resume)
 
     val items = remember(messages) {
         ChatTimeline.build(messages.map { it.asMessage() }, firstUnreadId = null, nowMs = System.currentTimeMillis())
@@ -163,7 +159,7 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                     contentPadding = PaddingValues(horizontal = RelaySpacing.lg, vertical = RelaySpacing.md),
                 ) {
                     items(items.reversed(), key = { it.key }) { item ->
-                        ChatItemRow(item, groupId = groupId, contactName = "Someone", senderName = { names[it] }, onReply = { message ->
+                        ChatItemRow(item, groupId = groupId, contactName = "Someone", senderName = { names[it] }, transfer = (item as? ChatItem.Bubble)?.message?.msgId?.let { transfers[it] }, onReply = { message ->
                             actionMessage = message
                         })
                     }
@@ -193,27 +189,29 @@ fun GroupChatScreen(groupId: Long, navController: NavController) {
                         input = if (next.text.length <= 1000) next else next.copy(text = next.text.take(1000), selection = androidx.compose.ui.text.TextRange(1000))
                     },
                     placeholder = if (sending) "Preparing attachment…" else "Message the group",
-                    pendingMediaUri = media?.uri,
-                    pendingMediaMime = media?.mime.orEmpty(),
-                    onClearMedia = { picker.clear(pickerId) },
+                    pendingMedia = media,
+                    onRemoveMedia = { picker.remove(pickerId, setOf(it)) },
+                    transfers = transfers,
                     onAttach = { showAttach = true },
                     sending = sending,
                     onSend = {
-                        if (!vm.sending.value && !(vm.acceptedDraft.value?.let { it.composerId == composerId && it.revision == draftRevision } ?: false) && (inputText.isNotBlank() || media != null)) {
+                        if (!vm.sending.value && !(vm.acceptedDraft.value?.let { it.composerId == composerId && it.revision == draftRevision } ?: false) && (inputText.isNotBlank() || media.isNotEmpty())) {
                             val revision = draftRevision
                             appendOnly = true
                             val submittedText = input.text
                             val submittedReply = replyDraft
                             val sentText = inputText
                             val sentDraft = replyDraft
-                            val queued = {
-                                val accepted = AcceptedDraft(composerId, revision, media?.selectionId, submittedText, submittedReply)
+                            val queuedIds = mutableSetOf<String>()
+                            fun accept(selectionId: String? = null) {
+                                if (selectionId != null) queuedIds.add(selectionId)
+                                val accepted = AcceptedDraft(composerId, revision, queuedIds.toSet(), submittedText, submittedReply)
                                 vm.acceptedDraft.value = accepted
                                 consumeAccepted(accepted)
                             }
                             val body = com.relay.app.messaging.ReplyBody.withText(sentDraft, sentText.trim())
-                            if (media != null) vm.sendMedia(context, media.uri, media.mime, body, queued)
-                            else vm.sendText(body, context, queued)
+                            if (media.isNotEmpty()) vm.sendMedia(context, media, body) { accept(it.selectionId) }
+                            else vm.sendText(body, context, { accept() })
                         }
                     },
                 )

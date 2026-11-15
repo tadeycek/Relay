@@ -4,7 +4,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class AcceptedDraftTest {
-    private val sent=AcceptedDraft("composer",3,"attachment","first","reply")
+    private val sent=AcceptedDraft("composer",3,setOf("attachment"),"first","reply")
     @Test fun unchangedAcceptedTextClears() { assertEquals("",sent.remainingText("first",true,true)) }
     @Test fun typingWhilePendingKeepsOnlyTheNewSuffix() { assertEquals(" second",sent.remainingText("first second",false,true)) }
     @Test fun replacementIsANewDraftEvenWhenItSharesAPrefix() { assertEquals("first replacement",sent.remainingText("first replacement",false,false)) }

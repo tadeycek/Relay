@@ -179,7 +179,7 @@ class IncomingMessageHandler(context: Context) {
                 // Downloading can take a while: do it off the receive loop so other messages keep flowing.
                 val ref = kind.ref
                 val sender = contact
-                MessagingRuntime.launchIo { MediaReceiver.receive(appContext, sender, payload.id, ref, sentAt) }
+                MediaReceiver.enqueue(appContext, sender, payload.id, ref, sentAt)
             }
 
             is Classified.Pin -> {

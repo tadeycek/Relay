@@ -49,6 +49,8 @@ class RelayDbHelper(context: Context) :
         db.execSQL(com.relay.app.groups.GroupProfiles.CREATE)
         db.execSQL(com.relay.app.groups.GroupDelivery.CREATE)
         db.execSQL(com.relay.app.media.PendingAttachments.CREATE)
+        db.execSQL(com.relay.app.media.PendingAttachments.CREATE_PROGRESS)
+        db.execSQL(com.relay.app.media.MediaReceiver.CREATE_INCOMING)
         createConversationExtras(db)
         db.execSQL(com.relay.app.groups.SharedGroups.CREATE_PENDING)
         createMailbox(db)
@@ -146,6 +148,10 @@ class RelayDbHelper(context: Context) :
         if (oldVersion < 22) createMailbox(db)
         if (oldVersion < 23) createDispatchAndReceipts(db)
         if (oldVersion < 24) db.execSQL(com.relay.app.messaging.RetiredActivity.DROP)
+        if (oldVersion < 25) {
+            db.execSQL(com.relay.app.media.PendingAttachments.CREATE_PROGRESS)
+            db.execSQL(com.relay.app.media.MediaReceiver.CREATE_INCOMING)
+        }
         if (oldVersion < 15) {
             // Keeps the name a contact was first added under even after a local rename. For a contact
             // that already existed, the best available answer is whatever name it currently has.

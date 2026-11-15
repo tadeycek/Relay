@@ -22,6 +22,8 @@ data class MediaRef(
     /** Plaintext size in bytes (for display / sanity limits only). */
     val size: Long,
     val caption: String = "",
+    /** 1 = legacy one-shot AES-GCM, 2 = Tink AES256-GCM-HKDF streaming. */
+    val version: Int = 1,
 ) {
     val isVideo: Boolean get() = mime.startsWith("video/")
 }
@@ -31,11 +33,12 @@ object MediaBody {
     const val MAX_URL_LENGTH = 300
     const val MAX_CAPTION_LENGTH = 200
     /** Hard cap on the plaintext size a receiver will accept (the blob is a few bytes larger). */
-    const val MAX_MEDIA_BYTES = 25L * 1024 * 1024
+    const val MAX_MEDIA_BYTES = 3L * 1024 * 1024 * 1024
+    const val LEGACY_MAX_MEDIA_BYTES = 25L * 1024 * 1024
 
     private const val PREFIX = "TYPE:MEDIA|"
     private val HEX64 = Regex("[0-9a-f]{64}")
-    private val ALLOWED_MIME = setOf("image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4")
+    private val ALLOWED_MIME = setOf("image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/webm", "video/quicktime", "video/3gpp")
 
     fun isMedia(body: String): Boolean = body.trim().startsWith(PREFIX, ignoreCase = true)
 
@@ -47,6 +50,7 @@ object MediaBody {
         sb.append("|KEY:").append(ref.keyBase64)
         sb.append("|MIME:").append(ref.mime)
         sb.append("|SIZE:").append(ref.size)
+        if (ref.version != 1) sb.append("|V:").append(ref.version)
         if (com.relay.app.messaging.ReplyBody.parse(caption) != null) sb.append("|CAP64:").append(Base64.getEncoder().encodeToString(caption.toByteArray(Charsets.UTF_8)))
         else if (caption.isNotEmpty()) sb.append("|CAP:").append(caption)
         return sb.toString()
@@ -74,6 +78,9 @@ object MediaBody {
         if (mime !in ALLOWED_MIME) return null
         val size = fields["SIZE"]?.toLongOrNull() ?: return null
         if (size < 1 || size > MAX_MEDIA_BYTES) return null
+        val version = fields["V"]?.toIntOrNull() ?: if (fields.containsKey("V")) return null else 1
+        if (version !in 1..2) return null
+        if (version == 1 && size > LEGACY_MAX_MEDIA_BYTES) return null
 
         val caption = if (fields.containsKey("CAP64")) {
             val encoded = fields["CAP64"]!!
@@ -90,6 +97,7 @@ object MediaBody {
             mime = mime,
             size = size,
             caption = caption,
+            version = version,
         )
     }
 

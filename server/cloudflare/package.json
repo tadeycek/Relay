@@ -13,11 +13,11 @@
     "pilot": "node tools/pilot.ts"
   },
   "dependencies": {
+    "@noble/hashes": "2.0.1",
     "nostr-tools": "2.25.2"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.4",
-    "@noble/hashes": "2.0.1",
     "@types/node": "26.6.5",
     "typescript": "5.9.3",
     "vitest": "4.1.12",

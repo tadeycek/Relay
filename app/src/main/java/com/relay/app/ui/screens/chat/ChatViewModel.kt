@@ -5,7 +5,6 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
-import android.net.Uri
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -106,6 +105,7 @@ class ChatViewModel(
     init { loadData() }
 
     fun reload() = loadData()
+    fun resume() { ActiveChat.contactId = contactId; loadData() }
 
     private suspend fun readWindow(older: Boolean = false): List<com.relay.app.data.model.Message> {
         val first = if(older || !_loaded.value) null else _messages.value.firstOrNull()
@@ -150,6 +150,7 @@ class ChatViewModel(
             IntentFilter("com.relay.app.NEW_MESSAGE").apply { addAction(Broadcasts.PRIVATE_FOREGROUND) },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        loadData()
     }
 
     fun unregisterSmsUpdates(context: Context) {
@@ -253,44 +254,53 @@ class ChatViewModel(
     }
 
     /** Accept the encrypted local attachment before background upload/dispatch. */
-    fun sendMedia(uri: Uri, mimeType: String, textBody: String, context: Context, onQueued: () -> Unit = {}) {
+    fun sendMedia(media: List<com.relay.app.media.PickedChatMedia>, textBody: String, context: Context,
+        onQueued: (com.relay.app.media.PickedChatMedia) -> Unit) {
         if (_sending.value) return
         val contact = _contact.value ?: return
         _sending.value = true
         viewModelScope.launch {
+            var preparing: com.relay.app.media.PickedChatMedia? = null
             try {
-                withContext(Dispatchers.IO) {
-                    check(contact.canUseInternetTransport) { "Scan this contact's QR code to message them" }
-                    val prepared = if (mimeType.startsWith("image/"))
-                        com.relay.app.media.GifPreparation.image(context, uri, mimeType)
-                    else MediaCompressor.prepareVideo(context, uri, INTERNET_VIDEO_MAX_BYTES, INTERNET_VIDEO_MAX_MS)
-                    when (prepared) {
-                        is MediaCompressor.Result.Success -> {
-                            try {
-                                com.relay.app.media.PendingAttachments.stage(context, contactId, false, prepared.file, prepared.mimeType,
-                                    com.relay.app.media.MediaBody.normalizeCaption(textBody))
-                            } finally { prepared.file.delete() }
+                for ((index, item) in media.withIndex()) {
+                    preparing = item
+                    withContext(Dispatchers.IO) {
+                        check(contact.canUseInternetTransport) { "Scan this contact's QR code to message them" }
+                        val prepared = if (item.mime.startsWith("image/"))
+                            com.relay.app.media.GifPreparation.image(context, item.uri, item.mime)
+                        else MediaCompressor.prepareVideo(context, item.uri, com.relay.app.media.MediaBody.MAX_MEDIA_BYTES, Long.MAX_VALUE) { copied, total ->
+                            com.relay.app.media.PendingAttachments.report(context, item.selectionId, "Preparing", copied, total)
                         }
-                        is MediaCompressor.Result.TooLarge -> error(prepared.message)
-                        else -> error("Couldn't prepare attachment; try another file")
+                        when (prepared) {
+                            is MediaCompressor.Result.Success -> {
+                                try {
+                                    com.relay.app.media.PendingAttachments.stage(context, contactId, false, prepared.file, prepared.mimeType,
+                                        com.relay.app.media.MediaBody.normalizeCaption(if (index == 0) textBody else ""), selectionId = item.selectionId)
+                                } finally { prepared.file.delete() }
+                            }
+                            is MediaCompressor.Result.TooLarge -> error(prepared.message)
+                            is MediaCompressor.Result.Error -> throw prepared.cause
+                        }
                     }
+                    onQueued(item)
+                    preparing = null
+                    loadData()
+                    com.relay.app.messaging.MessagingRuntime.kick()
                 }
-                onQueued()
-                _messages.value = readWindow()
-                com.relay.app.messaging.MessagingRuntime.kick()
-            } catch (e: Exception) { _toastMessage.emit(e.message ?: "Couldn't queue attachment; draft kept. Try again.") }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) {
+                preparing?.let { item -> withContext(Dispatchers.IO) {
+                    val previous = com.relay.app.media.PendingAttachments.progress.value[item.selectionId]
+                    com.relay.app.media.PendingAttachments.report(context, item.selectionId, "Failed", previous?.transferred ?: 0,
+                        previous?.total ?: 0, e.message ?: "Couldn't prepare attachment")
+                } }
+                _toastMessage.emit(e.message ?: "Couldn't queue attachment; remaining drafts kept. Try again.")
+            }
             finally { _sending.value = false }
         }
     }
 
 }
-
-// Internet sends are no longer bound by carrier MMS caps, but stay modest: the file is encrypted and
-// uploaded in one piece, and there is no transcoding, so video is only size/length checked.
-private const val INTERNET_IMAGE_MAX_BYTES = 3L * 1024 * 1024
-private const val INTERNET_IMAGE_MAX_DIM = 2048
-private const val INTERNET_VIDEO_MAX_BYTES = 12L * 1024 * 1024
-private const val INTERNET_VIDEO_MAX_MS = 60_000L
 
 class ChatViewModelFactory(
     private val contactId: Long,

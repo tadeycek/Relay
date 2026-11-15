@@ -17,7 +17,7 @@ describe("edge router", () => {
   it("answers health without auth or a Durable Object", async () => {
     const res = await worker(new Request(`${BASE}/v1/health`));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, v: 1 });
+    expect(await res.json()).toEqual({ ok: true, v: 1, media: { v: 2, partSize: 1048576 } });
     expect(res.headers.get("x-relay-instance")).toBeNull();
   });
 

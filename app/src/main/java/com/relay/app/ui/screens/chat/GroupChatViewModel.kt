@@ -67,27 +67,44 @@ class GroupChatViewModel(
                 .onSuccess { done() }.onFailure { _error.value = it.message }
         }
     }
-    fun sendMedia(context: Context, uri: android.net.Uri, mime: String, caption: String, done: () -> Unit) {
+    fun sendMedia(context: Context, media: List<com.relay.app.media.PickedChatMedia>, caption: String,
+        done: (com.relay.app.media.PickedChatMedia) -> Unit) {
         if (_sending.value) return
         _sending.value = true
         viewModelScope.launch {
+            var preparing: com.relay.app.media.PickedChatMedia? = null
             try {
-                withContext(Dispatchers.IO) {
-                    val result = if (mime.startsWith("image/")) com.relay.app.media.GifPreparation.image(context, uri, mime)
-                        else com.relay.app.mms.MediaCompressor.prepareVideo(context, uri, 12L*1024*1024, 60000L)
-                    when (result) {
-                        is com.relay.app.mms.MediaCompressor.Result.Success -> {
-                            try {
-                                com.relay.app.media.PendingAttachments.stage(context, groupId, true, result.file, result.mimeType,
-                                    com.relay.app.media.MediaBody.normalizeCaption(caption))
-                            } finally { result.file.delete() }
+                for ((index, item) in media.withIndex()) {
+                    preparing = item
+                    withContext(Dispatchers.IO) {
+                        val result = if (item.mime.startsWith("image/")) com.relay.app.media.GifPreparation.image(context, item.uri, item.mime)
+                            else com.relay.app.mms.MediaCompressor.prepareVideo(context, item.uri, com.relay.app.media.MediaBody.MAX_MEDIA_BYTES, Long.MAX_VALUE) { copied, total ->
+                                com.relay.app.media.PendingAttachments.report(context, item.selectionId, "Preparing", copied, total)
+                            }
+                        when (result) {
+                            is com.relay.app.mms.MediaCompressor.Result.Success -> {
+                                try {
+                                    com.relay.app.media.PendingAttachments.stage(context, groupId, true, result.file, result.mimeType,
+                                        com.relay.app.media.MediaBody.normalizeCaption(if (index == 0) caption else ""), selectionId = item.selectionId)
+                                } finally { result.file.delete() }
+                            }
+                            is com.relay.app.mms.MediaCompressor.Result.TooLarge -> error(result.message)
+                            is com.relay.app.mms.MediaCompressor.Result.Error -> throw result.cause
                         }
-                        is com.relay.app.mms.MediaCompressor.Result.TooLarge -> error(result.message)
-                        else -> error("Couldn't prepare attachment")
                     }
+                    done(item)
+                    preparing = null
+                    loadData()
                 }
-                done()
-            } catch (e: Exception) { _error.value = e.message ?: "Couldn't send attachment" }
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+            catch (e: Exception) {
+                preparing?.let { item -> withContext(Dispatchers.IO) {
+                    val previous = com.relay.app.media.PendingAttachments.progress.value[item.selectionId]
+                    com.relay.app.media.PendingAttachments.report(context, item.selectionId, "Failed", previous?.transferred ?: 0,
+                        previous?.total ?: 0, e.message ?: "Couldn't prepare attachment")
+                } }
+                _error.value = e.message ?: "Couldn't send attachment; remaining drafts kept"
+            }
             finally { _sending.value = false; loadData() }
         }
     }
@@ -137,6 +154,7 @@ class GroupChatViewModel(
     }
 
     fun reload() = loadData()
+    fun resume() { ActiveChat.groupId = groupId; loadData() }
 
     /** While this group is on screen its messages count as seen (see ChatViewModel.markReadIfVisible). */
     private suspend fun markReadIfVisible() {
@@ -167,6 +185,7 @@ class GroupChatViewModel(
             IntentFilter("com.relay.app.NEW_GROUP_MESSAGE").apply { addAction(Broadcasts.PRIVATE_FOREGROUND) },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
+        loadData()
     }
 
     fun unregisterUpdates(context: Context) {

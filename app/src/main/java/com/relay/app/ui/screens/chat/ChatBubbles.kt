@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.LocationSearching
 import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -78,12 +79,13 @@ private val MediaScrim = Color.Black.copy(alpha = 0.55f)
 
 /** One row of the chat list. */
 @Composable
-fun ChatItemRow(item: ChatItem, contactName: String, senderName: ((Long) -> String?)? = null, onReply: ((Message) -> Unit)? = null, groupId: Long? = null) {
+fun ChatItemRow(item: ChatItem, contactName: String, senderName: ((Long) -> String?)? = null, onReply: ((Message) -> Unit)? = null, groupId: Long? = null,
+    transfer: com.relay.app.media.TransferProgress? = null) {
     when (item) {
         is ChatItem.Day -> DaySeparator(item.label)
         is ChatItem.UnreadDivider -> UnreadDivider(item.count)
         is ChatItem.Note -> SystemNote(item.message, senderName?.invoke(item.message.contactId) ?: contactName, groupId)
-        is ChatItem.Bubble -> BubbleRow(item, senderName?.takeIf { !item.message.isSent && item.startsGroup }?.invoke(item.message.contactId), onReply, groupId)
+        is ChatItem.Bubble -> BubbleRow(item, senderName?.takeIf { !item.message.isSent && item.startsGroup }?.invoke(item.message.contactId), onReply, groupId, transfer)
     }
 }
 
@@ -151,7 +153,8 @@ private fun SystemNote(message: Message, contactName: String, groupId: Long?) {
 }
 
 @Composable
-private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((Message) -> Unit)? = null, groupId: Long? = null) {
+private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((Message) -> Unit)? = null, groupId: Long? = null,
+    transfer: com.relay.app.media.TransferProgress? = null) {
     val message = item.message
     val shape = bubbleShape(message.isSent, item.startsGroup)
     val replyTo: (() -> Unit)? = onReply?.let { callback -> { callback(message) } }
@@ -176,8 +179,22 @@ private fun BubbleRow(item: ChatItem.Bubble, sender: String? = null, onReply: ((
             // Requests and replies are notes and never reach here.
             MessageType.LOCATION_REQUEST, MessageType.LOCATION_DECLINED, MessageType.SCREENSHOT -> Unit
         }
+        if (transfer != null) AttachmentTransferProgress(transfer, Modifier.width(MaxMediaWidth))
         MessageReactions(message, groupId)
         if (item.endsGroup) MessageMeta(message)
+    }
+}
+
+@Composable
+internal fun AttachmentTransferProgress(progress: com.relay.app.media.TransferProgress, modifier: Modifier = Modifier) {
+    val fraction = if (progress.total > 0) (progress.transferred.toDouble() / progress.total).coerceIn(0.0, 1.0).toFloat() else 0f
+    Column(modifier.padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (progress.error == null) {
+            if (progress.total > 0) LinearProgressIndicator(progress = { fraction }, modifier = Modifier.fillMaxWidth())
+            else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        }
+        Text(progress.error ?: "${progress.phase}${if (progress.total > 0) " · ${(fraction * 100).toInt()}%" else ""}",
+            style = MaterialTheme.typography.bodySmall, color = TextSecondary)
     }
 }
 
@@ -329,32 +346,43 @@ private fun VideoBubble(message: Message, shape: Shape, onReply: (() -> Unit)?) 
         TextBubble(message.copy(type = MessageType.TEXT, body = "Video not downloaded yet"), shape, onReply)
         return
     }
-    val displayFile = rememberDisplayFile(path)
+    val context = LocalContext.current
     var viewing by remember(path) { mutableStateOf(false) }
-    if (viewing && displayFile != null) MediaViewer(displayFile, isVideo = true, onDismiss = { viewing = false })
-
-    val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = displayFile) {
-        val target = displayFile
-        value = if (target == null) {
-            null
-        } else {
-            withContext(Dispatchers.IO) {
-                val retriever = MediaMetadataRetriever()
-                try {
-                    retriever.setDataSource(target.absolutePath)
-                    retriever.getFrameAtTime(0)
-                } catch (e: Exception) {
-                    null
-                } finally {
-                    retriever.release()
-                }
+    var viewError by remember(path) { mutableStateOf<String?>(null) }
+    if (viewing) {
+        val displayFile = rememberDisplayFile(path, onError = { viewError = it })
+        if (displayFile != null) MediaViewer(displayFile, isVideo = true, onDismiss = { viewing = false })
+        else androidx.compose.ui.window.Dialog(onDismissRequest = { viewing = false }) {
+            Column(Modifier.background(Surface2).padding(RelaySpacing.lg)) {
+                if (viewError == null) androidx.compose.material3.CircularProgressIndicator()
+                Text(viewError ?: "Opening video…", color = TextPrimary)
+                androidx.compose.material3.TextButton(onClick = { viewing = false }) { Text("Cancel") }
             }
         }
     }
 
+    val thumbnail by produceState<Bitmap?>(initialValue = null, key1 = path) {
+        value = runCatching {
+            withContext(Dispatchers.IO) {
+                val retriever = MediaMetadataRetriever()
+                val source = com.relay.app.crypto.RelayFileCrypto.mediaDataSource(context, java.io.File(path))
+                try {
+                    retriever.setDataSource(source)
+                    if (android.os.Build.VERSION.SDK_INT >= 27) retriever.getScaledFrameAtTime(0,MediaMetadataRetriever.OPTION_CLOSEST_SYNC,512,512)
+                    else retriever.getFrameAtTime(0)
+                } catch (e: Exception) {
+                    null
+                } finally {
+                    retriever.release()
+                    source.close()
+                }
+            }
+        }.getOrNull()
+    }
+
     val ratio = thumbnail?.let { it.width.toFloat() / it.height } ?: (16f / 9f)
     Column(modifier = Modifier.widthIn(max = MaxMediaWidth).clip(shape).background(Surface2)
-        .messageGestures(onReply, onClick = if (displayFile != null) ({ viewing = true }) else null, onClickLabel = "Play video")) {
+        .messageGestures(onReply, onClick = { viewError = null; viewing = true }, onClickLabel = "Play video")) {
         Box(modifier = Modifier.width(minOf(260f, 340f * ratio).dp).aspectRatio(ratio), contentAlignment = Alignment.Center) {
             val bitmap = thumbnail
             if (bitmap != null) {

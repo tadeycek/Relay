@@ -82,8 +82,17 @@ class MediaBodyTest {
         assertNull("negative size", MediaBody.parse(body(sz = "-5")))
         assertNull("not a number", MediaBody.parse(body(sz = "big")))
         assertNull("over cap", MediaBody.parse(body(sz = (MediaBody.MAX_MEDIA_BYTES + 1).toString())))
-        assertNotNull("exactly at cap", MediaBody.parse(body(sz = MediaBody.MAX_MEDIA_BYTES.toString())))
+        assertNotNull("exactly at legacy cap", MediaBody.parse(body(sz = MediaBody.LEGACY_MAX_MEDIA_BYTES.toString())))
+        assertNull("legacy format cannot carry large media", MediaBody.parse(body(sz = MediaBody.MAX_MEDIA_BYTES.toString())))
         assertNull("http url", MediaBody.parse(body(url = "http://blossom.example/x")))
+    }
+
+    @Test fun versionTwoSupportsLongVideoSizesAndRejectsUnknownVersions() {
+        val large = ref.copy(size = MediaBody.MAX_MEDIA_BYTES, mime = "video/mp4", version = 2)
+        assertEquals(large,MediaBody.parse(MediaBody.format(large)))
+        assertNull(MediaBody.parse(MediaBody.format(large.copy(size = MediaBody.MAX_MEDIA_BYTES+1))))
+        assertNull(MediaBody.parse(MediaBody.format(large.copy(version = 3))))
+        assertNull(MediaBody.parse(MediaBody.format(large).replace("|V:2","|V:invalid")))
     }
 
     @Test

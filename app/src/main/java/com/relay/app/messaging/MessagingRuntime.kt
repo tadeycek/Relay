@@ -129,6 +129,21 @@ object MessagingRuntime {
 
         scope.launch {
             while (true) {
+                com.relay.app.groups.GroupMedia.retryPending(appContext)
+                delay(30_000L)
+            }
+        }
+
+        scope.launch {
+            while (true) {
+                runCatching { com.relay.app.media.MediaReceiver.drain(appContext) }
+                    .onFailure { Log.e(TAG, "media download queue failed", it) }
+                delay(1_000L)
+            }
+        }
+
+        scope.launch {
+            while (true) {
                 runCatching { com.relay.app.media.PendingAttachments.drain(appContext) }
                     .onFailure { Log.e(TAG, "attachment queue failed", it) }
                 delay(1_000L)

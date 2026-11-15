@@ -1,6 +1,25 @@
 # Relay
 
-## 1.15 preview: loading artwork update
+## 1.16 preview: media and chat refresh
+
+Version **1.16-preview** (versionCode **17**, release tag `calculator-preview-1.16`) adds ordered
+selection of multiple photos/videos, preparation/save/upload progress about every five seconds,
+and videos up to **3 GiB** with no artificial duration cutoff. Accepted attachments and receive
+jobs survive interruption; large files use authenticated streaming encryption and resumable parts.
+Chats catch up after returning from the picker or background and keep receiving subsequent updates.
+
+**Server deployment is pending. Videos larger than 25 MiB require the updated media server and
+updated recipient apps.** The server changes are included here; the user will deploy them separately
+after publication. The APK alone does not enable large transfers on the old server. Files up to
+25 MiB retain the existing legacy path. See [server capacity](server/cloudflare/README.md#free-plan-budget)
+and [installation requirements](rebuild/DISTRIBUTION.md).
+
+Local tests and offline Android checks passed; [verification](rebuild/VERIFICATION.md) records their
+scope. A generated 3 GiB cryptographic stream was tested locally, **not a phone-to-phone 3 GiB transfer**.
+Voice/video calls are not implemented; iOS remains deferred. The 1.15 artwork and calculator/session
+behavior are retained.
+
+## Historical 1.15 preview: loading artwork update
 
 Version 1.15-preview (versionCode 16) adds all five supplied loading images, including
 the enhanced artwork in the 1.5% slot. It retains the delivery fixes from 1.14.
@@ -183,7 +202,13 @@ added by expiring QR invitations and mutual approval.
 There is no map screen. In a chat, **Share my location** sends your current position (it expires after the time set in Settings) and **Request location** asks for theirs; a shared location appears as a card with coordinates and **Tap to open in Maps**, which hands it to your own maps app. Requests can be answered automatically only for **Trusted** contacts, or for **verified** contacts if auto-approve is on; otherwise you get a Share/Decline notification. Do-Not-Disturb hours and "who can request my location" apply. Replying while the app is closed cannot read the location (no background location permission).
 
 ### Photos and video
-Files are compressed, encrypted with a fresh AES-256-GCM key, and the ciphertext is uploaded to **Relay's delivery server**, readable only by the message's recipients and deleted once they all have it (or after 8 days); only a small reference (URL, SHA-256, key, type) travels in the message. References to any other server are never fetched. The receiver checks the hash before decrypting, stores the file encrypted at rest, and only downloads from verified contacts. Limits: images 3 MB / 2048 px, video 12 MB / 60 s. Accepted uploads retry in the durable background queue for up to seven days; after final failure, delete the failed bubble and resubmit if needed. Gallery access uses selected-URI grants and survives session expiry. Photos retain their aspect ratio and camera orientation. Tap a photo to view/zoom it, or a video to play it, inside the app. Playback stops on close, backgrounding or session expiry. Private plaintext view copies are removed when their bubbles leave composition and leftover copies are removed on process startup. A direct peer connection is not required.
+Select multiple photos and videos, review their order, and send them as individual attachments. Photos retain their aspect ratio and camera orientation (up to 3 MB / 2048 px after preparation). Videos keep their original bytes, with a **3 GiB per-file limit and no artificial duration cutoff**; the former 12 MB / 60 s restriction is removed.
+
+Each file gets a fresh encryption key; only its reference (URL, SHA-256, key, type) travels inside the encrypted message. Legacy files up to 25 MiB use one-shot AES-256-GCM. Larger files use v2 AES-GCM-HKDF streaming encryption and resumable 1 MiB requests, with bounded memory and part/whole-file integrity checks. **V2 requires the updated delivery server and updated recipient apps.** Only named recipients can download the ciphertext; the server deletes it after all confirm or after 8 days. References to other servers are never fetched, and direct media is downloaded only from verified contacts.
+
+Accepted attachments and incoming download jobs are stored durably, with outgoing and received media encrypted at rest. Uploads retry for up to seven days; v2 uploads/downloads resume after interruption or process restart. Preparation, encrypted saving and upload progress update about every five seconds while bytes advance, with immediate phase/completion updates. After final upload failure, delete the failed bubble and resubmit if needed. Gallery grants and ordered selections survive session expiry; returning from the picker or background reloads chats and rebinds update listeners so messages received while hidden appear.
+
+Tap a photo to view/zoom it, or a video to play it, inside the app. Playback stops on close, backgrounding or session expiry. Private plaintext view copies are removed when their bubbles leave composition and leftover copies are removed on process startup. Large files need space for temporary copies. Production 3 GiB transfers remain unverified; Cloudflare Free's aggregate storage quota can limit simultaneous files even when one file fits. See [server capacity and deployment requirements](server/cloudflare/README.md#free-plan-budget). A direct peer connection is not required.
 
 ### Groups
 Shared groups use a creator-controlled roster and encrypted private fanout to up to sixteen verified friends. Group protocol v2 sends every post, deletion, purge, name update and typing signal straight from its author to each member (one relay hop). A receiver accepts an event only when the authenticated sender is its author and is on the receiver's own copy of the roster. Only the creator can send roster updates. The roster carries each member's Tink key and up to two relay hints, vouched for by the creator, who verified them by QR, so members who aren't each other's contacts can still seal to and reach one another. An event naming a newer roster than the receiver has (e.g. from a just-added member) is held, bounded and expiring, until that roster arrives. **Every participant needs a build with protocol v2**: older phones only accept group posts forwarded by the creator, so they stop receiving other members' messages. See the group instructions above and rebuild/VERIFICATION.md for current test limits.
@@ -197,16 +222,16 @@ Layers, from outside in:
 
 1. **Transport (NIP-17/NIP-44/NIP-59 gift wraps through Relay's delivery server).** Content is hidden from the server. Sends are authenticated, so the server sees sender, recipient, size, timing and the connecting IP.
 2. **Relay's own end-to-end layer (Tink).** A long-term X25519/HPKE keypair per install (private key wrapped by an Android Keystore master key) encrypts each body once the contact's key is known; a separate never-rotated Ed25519 signing key authenticates key rotations. The encryption key auto-rotates every 30 days (manual rotate in Settings; retired key kept 7 days). There is **no Double Ratchet**, so a stolen key exposes up to ~30 days of history, and NIP-17 has no forward secrecy of its own.
-3. **At rest.** `relay.db` is SQLCipher-encrypted (passphrase in Keystore-backed `EncryptedSharedPreferences`); received media is encrypted with a Tink AEAD keyset; the Nostr secret key is in `EncryptedSharedPreferences`. All of these, plus the media directory, are excluded from cloud backup and device transfer.
+3. **At rest.** `relay.db` is SQLCipher-encrypted (passphrase in Keystore-backed `EncryptedSharedPreferences`); queued outgoing and received media use streaming authenticated encryption with per-file keys wrapped by a Keystore-backed Tink keyset; the Nostr secret key is in `EncryptedSharedPreferences`. All of these, plus the media directory, are excluded from cloud backup and device transfer.
 4. **App lock.** Optional biometric/PIN gate on cold start and resume.
 
 Threat-model notes: metadata (who talks to whom, when, message size) is visible to the delivery server; a compromised phone defeats all of it; scanning the wrong QR code securely connects you to the wrong person. This is a hobby/friends project, not an audited secure messenger.
 
 ### Known gaps
 - **Physical devices still need tests.** Two-emulator pairing, text both ways, photos and offline catch-up work through the delivery server (`rebuild/dev/test-mailbox-emulators.py`). Physical-camera QR scanning, periodic delivery through Doze/OEM killers and battery cost remain unmeasured.
-- Outgoing media is kept as a plaintext cache file (needed to display and to upload); only received media is encrypted at rest.
+- Temporary plaintext media copies exist during preparation and viewing; canonical queued outgoing and received files are encrypted at rest.
 - No chat-history export or backup: a phone swap loses history and identity (keys are Keystore-bound), and contacts must re-pair.
-- Media uploads are not retried automatically.
+- Real 3 GiB transfers and their throughput/storage behavior on production servers and physical phones remain unverified.
 - Everything depends on one delivery server on Cloudflare's free plan: if it is down or over its daily quota, messages wait on the phone and are sent when it is back.
 - A new identity (fresh install, wipe) must be added to the server's allowlist before it can send or receive.
 - Shared groups depend on the creator only for membership changes. Members trust the creator's roster for who belongs and for other members' keys and relay hints; each event is authenticated by its author's own Nostr seal. There is no forward-secure group key schedule. A just-removed member can briefly exchange messages with members who haven't received the new roster yet. Until a creator's phone refreshes a roster saved before v2, members who aren't each other's contacts are reached without the inner Tink layer (NIP-17 encryption only).

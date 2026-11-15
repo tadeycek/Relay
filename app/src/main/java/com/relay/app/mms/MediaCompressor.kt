@@ -26,7 +26,6 @@ object MediaCompressor {
     fun compressImage(context: Context, uri: Uri, maxBytes: Long = MAX_BYTES, maxDim: Int = MAX_DIM): Result {
         return try {
         val outDir = File(context.cacheDir, "mms").also { it.mkdirs() }
-        val outFile = File(outDir, "img_${System.currentTimeMillis()}.jpg")
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use {
@@ -85,6 +84,7 @@ object MediaCompressor {
             return Result.TooLarge("Image is too large to compress under ${maxBytes / 1024} KB.")
         }
 
+        val outFile = File.createTempFile("img_", ".jpg", outDir)
         FileOutputStream(outFile).use { it.write(bytes) }
         Result.Success(outFile, "image/jpeg")
         } catch (e: Exception) {
@@ -95,34 +95,60 @@ object MediaCompressor {
     fun prepareVideo(
         context: Context,
         uri: Uri,
-        maxBytes: Long = MAX_BYTES,
-        maxDurationMs: Long = MAX_VIDEO_DURATION_MS,
+        maxBytes: Long = com.relay.app.media.MediaBody.MAX_MEDIA_BYTES,
+        maxDurationMs: Long = Long.MAX_VALUE,
+        progress: (Long, Long) -> Unit = { _, _ -> },
     ): Result {
+        var outFile: File? = null
         return try {
-        val retriever = MediaMetadataRetriever()
-        retriever.setDataSource(context, uri)
-        val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-            ?.toLongOrNull() ?: 0L
-        retriever.release()
-
-        if (durationMs > maxDurationMs) {
-            return Result.TooLarge("Video must be ${maxDurationMs / 1000} seconds or shorter.")
-        }
-
-        val outDir = File(context.cacheDir, "mms").also { it.mkdirs() }
-        val outFile = File(outDir, "vid_${System.currentTimeMillis()}.mp4")
-
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(outFile).use { input.copyTo(it) }
-        }
-
-        if (outFile.length() > maxBytes) {
-            outFile.delete()
-            return Result.TooLarge("Video exceeds ${maxBytes / 1024} KB. Please trim the clip and try again.")
-        }
-
-        Result.Success(outFile, "video/mp4")
+            require(maxBytes in 1..com.relay.app.media.MediaBody.MAX_MEDIA_BYTES)
+            val mime = context.contentResolver.getType(uri)?.lowercase() ?: "video/mp4"
+            val extension = when (mime) {
+                "video/mp4" -> "mp4"
+                "video/webm" -> "webm"
+                "video/quicktime" -> "mov"
+                "video/3gpp" -> "3gp"
+                else -> return Result.TooLarge("Choose an MP4, WebM, MOV or 3GP video")
+            }
+            val size = runCatching {
+                context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use {
+                    if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else -1L
+                } ?: -1L
+            }.getOrDefault(-1L)
+            if (size > maxBytes) return Result.TooLarge("Video must be 3 GiB or smaller")
+            progress(0, size.coerceAtLeast(0))
+            val durationMs = runCatching {
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(context, uri)
+                    retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                } finally { retriever.release() }
+            }.getOrDefault(0L)
+            if (durationMs > maxDurationMs) return Result.TooLarge("Video must be ${maxDurationMs / 1000} seconds or shorter")
+            val outDir = File(context.cacheDir, "mms").also { it.mkdirs() }
+            if (size > 0 && outDir.usableSpace < size + 1024 * 1024) return Result.TooLarge("Not enough free storage to prepare this video")
+            val target = File.createTempFile("vid_", ".$extension", outDir)
+            outFile = target
+            requireNotNull(context.contentResolver.openInputStream(uri)) { "Couldn't open video" }.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var copied = 0L
+                    while (true) {
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        if (n == 0) continue
+                        copied += n
+                        require(copied <= maxBytes) { "Video must be 3 GiB or smaller" }
+                        output.write(buffer, 0, n)
+                        progress(copied,size.coerceAtLeast(0))
+                    }
+                    require(copied > 0) { "Video is empty" }
+                    progress(copied,copied)
+                }
+            }
+            Result.Success(target, mime)
         } catch (e: Exception) {
+            outFile?.delete()
             Result.Error(e)
         }
     }

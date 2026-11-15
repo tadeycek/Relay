@@ -28,6 +28,8 @@ class RelayApplication : Application(), coil.ImageLoaderFactory {
         com.relay.app.messaging.LauncherBadges.disable(this)
         // Remove view copies left behind if the previous process died while showing media.
         java.io.File(cacheDir, "private-media-view").listFiles()?.forEach { it.delete() }
+        // A killed process may leave an unfinished local encryption; durable transfer files are kept.
+        java.io.File(filesDir,"media").listFiles()?.filter { it.name.endsWith(".writing") }?.forEach { it.delete() }
         schedulePinExpiryAlarm()
         scheduleKeyRotationCheck()
         // Connect the internet transport, receive messages and drain the outbox for as long as the

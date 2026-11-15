@@ -1,7 +1,6 @@
 package com.relay.app.ui.screens.chat
 
 import android.Manifest
-import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -16,8 +15,11 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -37,7 +39,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -88,6 +89,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
     val hasOlder by vm.hasOlder.collectAsState()
     val contact by vm.contact.collectAsState()
     val sending by vm.sending.collectAsState()
+    val transfers by com.relay.app.media.PendingAttachments.progress.collectAsState()
     val unreadAnchor by vm.unreadAnchorId.collectAsState()
     var actionMessage by remember { mutableStateOf<com.relay.app.data.model.Message?>(null) }
     var replyDraft by rememberSaveable { mutableStateOf<String?>(null) }
@@ -113,16 +115,13 @@ fun ChatScreen(contactId: Long, navController: NavController) {
 
     val mediaPicker = LocalChatMediaPicker.current
     val mediaDraft = mediaPicker.draftFor(contactId)
-    val pendingMediaUri = mediaDraft?.uri
-    val pendingMimeType = mediaDraft?.mime.orEmpty()
     fun consumeAccepted(accepted: AcceptedDraft) {
+        mediaPicker.remove(contactId, accepted.mediaSelectionIds)
         if (accepted.composerId != composerId || consumedRevision >= accepted.revision) return
         val remaining = accepted.remainingText(input.text, draftRevision == accepted.revision, appendOnly)
         if (remaining != input.text) input = androidx.compose.ui.text.input.TextFieldValue(remaining,
             androidx.compose.ui.text.TextRange((input.selection.end - (input.text.length - remaining.length)).coerceIn(0, remaining.length)))
         if (replyDraft == accepted.reply) replyDraft = null
-        if (accepted.mediaSelectionId != null && mediaPicker.draftFor(contactId)?.selectionId == accepted.mediaSelectionId)
-            mediaPicker.clear(contactId)
         consumedRevision = accepted.revision
         draftRevision += 1
     }
@@ -142,10 +141,7 @@ fun ChatScreen(contactId: Long, navController: NavController) {
         vm.toastMessage.collect { msg -> Toast.makeText(context, msg, Toast.LENGTH_LONG).show() }
     }
 
-    DisposableEffect(Unit) {
-        vm.registerSmsUpdates(context)
-        onDispose { vm.unregisterSmsUpdates(context) }
-    }
+    ConversationUpdates(vm, { vm.registerSmsUpdates(context) }, { vm.unregisterSmsUpdates(context) }, vm::resume)
 
     FollowConversationBottom(listState, items.lastOrNull()?.key)
 
@@ -236,7 +232,8 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                     modifier = Modifier.weight(1f),
                     contentPadding = PaddingValues(horizontal = RelaySpacing.gutter, vertical = RelaySpacing.md),
                 ) {
-                    items(items.reversed(), key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "", onReply = { message -> actionMessage = message } ) }
+                    items(items.reversed(), key = { it.key }) { item -> ChatItemRow(item, contactName = contact?.name ?: "", onReply = { message -> actionMessage = message },
+                        transfer = (item as? ChatItem.Bubble)?.message?.msgId?.let { transfers[it] }) }
                     if(hasOlder) item(key = "load_older") { androidx.compose.material3.TextButton(onClick=vm::loadOlder) { Text("Load older messages") } }
                 }
             }
@@ -276,26 +273,28 @@ fun ChatScreen(contactId: Long, navController: NavController) {
                         }
                         input = if (next.text.length <= 8000) next else next.copy(text = next.text.take(8000), selection = androidx.compose.ui.text.TextRange(8000))
                     },
-                    pendingMediaUri = pendingMediaUri,
-                    pendingMediaMime = pendingMimeType,
-                    onClearMedia = { mediaPicker.clear(contactId) },
+                    pendingMedia = mediaDraft,
+                    onRemoveMedia = { mediaPicker.remove(contactId, setOf(it)) },
+                    transfers = transfers,
                     onAttach = { showAttachSheet = true },
                     sending = sending,
                     onSend = {
-                        if (!vm.sending.value && !(vm.acceptedDraft.value?.let { it.composerId == composerId && it.revision == draftRevision } ?: false) && (inputText.isNotBlank() || mediaDraft != null)) {
+                        if (!vm.sending.value && !(vm.acceptedDraft.value?.let { it.composerId == composerId && it.revision == draftRevision } ?: false) && (inputText.isNotBlank() || mediaDraft.isNotEmpty())) {
                             val revision = draftRevision
                             appendOnly = true
                             val submittedText = input.text
                             val submittedReply = replyDraft
                             val submittedMedia = mediaDraft
                             val body = com.relay.app.messaging.ReplyBody.withText(replyDraft, inputText.trim())
-                            val accepted = {
-                                val accepted = AcceptedDraft(composerId, revision, submittedMedia?.selectionId, submittedText, submittedReply)
+                            val queuedIds = mutableSetOf<String>()
+                            fun accept(selectionId: String? = null) {
+                                if (selectionId != null) queuedIds.add(selectionId)
+                                val accepted = AcceptedDraft(composerId, revision, queuedIds.toSet(), submittedText, submittedReply)
                                 vm.acceptedDraft.value = accepted
                                 consumeAccepted(accepted)
                             }
-                            if (submittedMedia != null) vm.sendMedia(submittedMedia.uri, submittedMedia.mime, body, context, accepted)
-                            else vm.sendText(body, context, accepted)
+                            if (submittedMedia.isNotEmpty()) vm.sendMedia(submittedMedia, body, context) { accept(it.selectionId) }
+                            else vm.sendText(body, context, { accept() })
                         }
                     },
                 )
@@ -308,8 +307,8 @@ fun ChatScreen(contactId: Long, navController: NavController) {
 internal fun AttachSheet(onDismiss: () -> Unit, onPhoto: () -> Unit, onVideo: () -> Unit, onCamera: () -> Unit, onGif: () -> Unit = onPhoto) {
     RelayBottomSheet(onDismiss = onDismiss) {
         ListRow(headline = "Animated GIF / sticker", onClick = onGif, leading = { AttachIcon(Icons.Outlined.Image) })
-        ListRow(headline = "Photo from gallery", onClick = onPhoto, leading = { AttachIcon(Icons.Outlined.Image) })
-        ListRow(headline = "Video from gallery", onClick = onVideo, leading = { AttachIcon(Icons.Outlined.VideoLibrary) })
+        ListRow(headline = "Photos from gallery", onClick = onPhoto, leading = { AttachIcon(Icons.Outlined.Image) })
+        ListRow(headline = "Videos from gallery", onClick = onVideo, leading = { AttachIcon(Icons.Outlined.VideoLibrary) })
         ListRow(headline = "Take a photo", onClick = onCamera, leading = { AttachIcon(Icons.Outlined.CameraAlt) })
     }
 }
@@ -325,14 +324,14 @@ internal fun Composer(
     value: androidx.compose.ui.text.input.TextFieldValue,
     onValueChange: (androidx.compose.ui.text.input.TextFieldValue) -> Unit,
     onSend: () -> Unit,
-    pendingMediaUri: Uri? = null,
-    pendingMediaMime: String = "",
-    onClearMedia: () -> Unit = {},
+    pendingMedia: List<com.relay.app.media.PickedChatMedia> = emptyList(),
+    onRemoveMedia: (String) -> Unit = {},
+    transfers: Map<String, com.relay.app.media.TransferProgress> = emptyMap(),
     onAttach: (() -> Unit)? = null,
     placeholder: String = "Message",
     sending: Boolean = false,
 ) {
-    val canSend = !sending && (pendingMediaUri != null || value.text.isNotBlank())
+    val canSend = !sending && (pendingMedia.isNotEmpty() || value.text.isNotBlank())
 
     Column(
         modifier = Modifier
@@ -342,27 +341,36 @@ internal fun Composer(
             .padding(horizontal = RelaySpacing.md, vertical = RelaySpacing.sm),
         verticalArrangement = Arrangement.spacedBy(RelaySpacing.sm),
     ) {
-        if (pendingMediaUri != null) {
-            Box(modifier = Modifier.size(72.dp)) {
-                if (pendingMediaMime.startsWith("video/")) {
-                    Box(Modifier.size(72.dp).background(Surface2), contentAlignment = Alignment.Center) {
-                        Icon(Icons.Outlined.VideoLibrary, contentDescription = "Attachment preview", tint = Accent)
+        if (pendingMedia.isNotEmpty()) {
+            Text("${pendingMedia.size} attachment${if (pendingMedia.size == 1) "" else "s"}", style = MaterialTheme.typography.labelSmall, color = TextSecondary)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                itemsIndexed(pendingMedia, key = { _, media -> media.selectionId }) { index, media ->
+                    Column {
+                        Box(modifier = Modifier.size(72.dp)) {
+                            if (media.mime.startsWith("video/")) {
+                                Box(Modifier.size(72.dp).background(Surface2), contentAlignment = Alignment.Center) {
+                                    Icon(Icons.Outlined.VideoLibrary, contentDescription = "Attachment preview", tint = Accent)
+                                }
+                            } else AsyncImage(
+                                model = media.uri,
+                                contentDescription = "Attachment preview",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),
+                            )
+                            Text("${index + 1}", color = Color.White, style = MaterialTheme.typography.labelSmall,
+                                modifier = Modifier.align(Alignment.BottomStart).background(Color.Black.copy(alpha = 0.6f)).padding(horizontal = 4.dp))
+                            IconButton(
+                                onClick = { onRemoveMedia(media.selectionId) },
+                                enabled = !sending,
+                                modifier = Modifier.size(22.dp).align(Alignment.TopEnd)
+                                    .background(Color.Black.copy(alpha = 0.6f), CircleShape),
+                            ) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Remove attachment", tint = Color.White, modifier = Modifier.size(14.dp))
+                            }
+                        }
+                        transfers[media.selectionId]?.takeIf { sending || it.error != null }
+                            ?.let { AttachmentTransferProgress(it, Modifier.widthIn(max = 150.dp)) }
                     }
-                } else AsyncImage(
-                    model = pendingMediaUri,
-                    contentDescription = "Attachment preview",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)),
-                )
-                IconButton(
-                    onClick = onClearMedia,
-                    modifier = Modifier
-                        .size(22.dp)
-                        .align(Alignment.TopEnd)
-                        // A dark scrim over a photo, whatever the theme.
-                        .background(Color.Black.copy(alpha = 0.6f), CircleShape),
-                ) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Remove attachment", tint = Color.White, modifier = Modifier.size(14.dp))
                 }
             }
         }
@@ -372,11 +380,11 @@ internal fun Composer(
             verticalAlignment = Alignment.Bottom,
             horizontalArrangement = Arrangement.spacedBy(RelaySpacing.sm),
         ) {
-            if (onAttach != null) IconButton(onClick = onAttach, modifier = Modifier.size(44.dp)) {
+            if (onAttach != null) IconButton(onClick = onAttach, enabled = !sending, modifier = Modifier.size(44.dp)) {
                 Icon(
                     Icons.Outlined.AttachFile,
                     contentDescription = "Attach a photo or video",
-                    tint = if (pendingMediaUri != null) Accent else TextSecondary,
+                    tint = if (pendingMedia.isNotEmpty()) Accent else TextSecondary,
                 )
             }
             RelayTextField(

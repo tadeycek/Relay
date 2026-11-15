@@ -95,11 +95,65 @@ bytes, so a large transfer never holds up the mailbox.
 
 | Request | Who | Effect |
 |---|---|---|
-| `PUT`, body = file, `x-relay-recipients: <pubkey>,<pubkey>,...` | any allowlisted sender | Stores it (up to 25 MiB) for 1–16 allowlisted recipients. The bytes must hash to the address. A repeat upload only adds recipients. |
+| `PUT`, body = file, `x-relay-recipients: <pubkey>,<pubkey>,...` | any allowlisted sender | Stores it (up to 25 MiB) for 1–16 allowlisted recipients. The bytes must hash to the address. Only the original uploader may repeat an upload and add recipients. |
 | `GET` | a named recipient | The file. Anyone else gets `404`, the same as for a file that doesn't exist. |
 | `DELETE` | a named recipient | "I have stored it." When every recipient has confirmed, the server deletes the file and everything about it. |
 
 Files nobody collects are deleted after 8 days.
+
+### Resumable media: `/v2/media/<sha256>`
+
+This additive protocol stores the SHA-256-addressed **ciphertext**, split into bounded 1 MiB HTTP parts.
+Encryption framing is opaque to the server. The Android v2 format uses Tink AES-GCM-HKDF streaming
+encryption; the encrypted message carries its format and key. The maximum ciphertext size is
+`3222274048` bytes (3 GiB plaintext plus 1 MiB reserved for encryption framing). All sizes are positive safe
+integers, including values above signed 32-bit range. Existing v1 uploads and downloads keep their format.
+
+Every request uses the same NIP-98 authentication, exact URL/method binding, payload hash and replay
+protection as v1. Sign **fresh auth for every retry**. All hashes below are lowercase 64-character hex.
+Do not send the chat message/reference until completion succeeds.
+
+| Request | Who | Effect |
+|---|---|---|
+| `POST /init`, JSON `{"size":12345,"partSize":1048576,"recipients":["<pubkey>"]}` | member uploader | Creates a pending transfer for 1–16 current members. Size, part size, uploader and recipient set are immutable. An identical retry returns status. |
+| `GET /status` | original uploader; named recipients after completion | Returns the status below. Only the uploader can inspect a pending transfer. |
+| `PUT /parts/<index>`, raw ciphertext, `x-relay-part-sha256: <hash>` | original uploader | Uploads exactly one part in ascending index order, starting at 0. All except the last must be exactly 1048576 bytes. The last has the remaining length. |
+| `POST /complete`, JSON `{"parts":["<part 0 hash>","<part 1 hash>"]}` | original uploader | Verifies every stored part against the ordered manifest and verifies the incremental whole-file SHA-256 against the URL. Only then makes the file downloadable. |
+| `GET /parts/<index>` | named recipient or original uploader, after completion | Returns one raw part, `x-relay-part-sha256` and `x-relay-sha256`. Never returns pending file data. |
+| `DELETE` (the base URL) | named recipient, after completion | Confirms durable local receipt. Deletes the file and metadata after every recipient confirms. |
+
+`init` and `status` return:
+
+```json
+{"v":2,"size":1048655,"partSize":1048576,"totalParts":2,"nextPart":1,"receivedParts":[0],"state":"uploading","expiresAt":1790000000000}
+```
+
+`state` becomes `complete` after validation. `receivedParts` is always the prefix `0..nextPart-1`, so resume
+with `nextPart` using the **same durable ciphertext file**. `PUT` returns
+`{"v":2,"stored":true,"duplicate":false,"nextPart":1}`. Re-uploading an already stored identical part returns
+`duplicate:true`; changed bytes or a new out-of-order index return `409 id_conflict`. An incomplete completion
+returns retryable `409 id_conflict`; a mismatched manifest is a non-retryable conflict. Invalid part checksums,
+lengths or whole-file hash return `400 bad_request`. Completion is idempotent, returning
+`{"v":2,"stored":true,"duplicate":false}` (then `duplicate:true` on retry). Errors retain the existing v1 error
+envelope. Downloaders must verify all part checksums and the whole ciphertext hash, authenticate/decrypt the
+complete file and commit it locally before confirming receipt. A retry must not change the ciphertext or key.
+
+Unknown files and files forbidden to the caller both return `404 not_found`. Another uploader cannot claim an
+existing hash or extend its recipients. Confirmations cannot delete an unfinished transfer. A legacy v1 GET
+for an authorized, completed v2 file returns `426 upgrade_required`, avoiding whole-file buffering.
+
+Control JSON is limited to 256 KiB, each part request to 1 MiB; bounds are enforced while streaming even if
+Content-Length is absent. SQLite stores each part as one bounded row. A persisted incremental SHA-256 state
+is updated with each accepted part in the same transaction, so completion reads only the small hash manifest.
+No request loads the complete v2 file. Completed **and abandoned** transfers expire 8 days after initialization;
+retries and completion do not extend that deadline. Expiry is checked even if alarm delivery is delayed.
+
+This uses the existing MEDIA Durable Object namespace and SQLite storage. It creates no external storage
+service. Cloudflare currently documents 10 GB per SQLite Durable Object and **5 GB total per Free account**;
+one maximum transfer fits an object, but two cannot fit within that aggregate free allowance. Actual account
+usage, plan and available quota must be checked before any production capacity claim. See
+[Durable Object limits](https://developers.cloudflare.com/durable-objects/platform/limits/) and
+[pricing](https://developers.cloudflare.com/durable-objects/platform/pricing/) (checked 2026-11-15).
 
 ### `POST /v1/push-token`
 
@@ -119,7 +173,9 @@ Without the `FCM_SERVICE_ACCOUNT` Worker secret, delivery continues through sock
 
 ### `GET /v1/health`
 
-Unauthenticated liveness of the edge Worker. It doesn't touch the mailbox.
+Unauthenticated liveness of the edge Worker. It doesn't touch the mailbox. V2-capable deployments return
+`{"ok":true,"v":1,"media":{"v":2,"partSize":1048576}}`. Older deployments lack `media`; a client receiving
+404/405 at v2 initialization must report that a server update is required instead of retrying indefinitely.
 
 ## WebSocket `GET /v1/ws`
 

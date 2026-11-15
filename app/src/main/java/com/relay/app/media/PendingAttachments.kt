@@ -10,25 +10,81 @@ import com.relay.app.messaging.*
 import com.relay.app.transport.nostr.NostrIdentity
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+
+data class TransferProgress(val phase: String, val transferred: Long, val total: Long, val error: String? = null)
 
 /** Local encrypted file + bubble + upload job commit together, before any network operation.
  * The process-wide worker resumes jobs after restart and never resurrects a deleted bubble. */
 object PendingAttachments {
+    const val CREATE_PROGRESS = """CREATE TABLE attachment_progress (
+        id TEXT PRIMARY KEY, phase TEXT NOT NULL, transferred INTEGER NOT NULL,
+        total INTEGER NOT NULL, error TEXT, updated_at INTEGER NOT NULL)"""
+    private val _progress = MutableStateFlow<Map<String, TransferProgress>>(emptyMap())
+    val progress: StateFlow<Map<String, TransferProgress>> = _progress.asStateFlow()
+    private val emittedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    @Volatile private var restored = false
+    private var lastCleanup = 0L
+
+    fun report(context: Context, id: String, phase: String, transferred: Long, total: Long, error: String? = null) {
+        val now = System.currentTimeMillis()
+        val old = _progress.value[id]
+        if (old?.phase == phase && old.error == error && transferred != total && now - (emittedAt[id] ?: 0) < 5_000) return
+        emittedAt[id] = now
+        val value = TransferProgress(phase, transferred, total, error)
+        MessagingDb.get(context).writableDatabase.execSQL(
+            "INSERT OR REPLACE INTO attachment_progress(id,phase,transferred,total,error,updated_at) VALUES(?,?,?,?,?,?)",
+            arrayOf(id, phase, transferred, total, error, now))
+        _progress.update { it + (id to value) }
+    }
+
+    fun clearProgress(context: Context, id: String) {
+        MessagingDb.get(context).writableDatabase.delete("attachment_progress", "id=?", arrayOf(id))
+        emittedAt.remove(id)
+        _progress.update { it - id }
+    }
+
+    private fun restore(context: Context) {
+        if (restored) return
+        val values = MessagingDb.get(context).readableDatabase.rawQuery("SELECT id,phase,transferred,total,error FROM attachment_progress", null).use { c ->
+            buildMap { while (c.moveToNext()) put(c.getString(0), TransferProgress(c.getString(1),c.getLong(2),c.getLong(3),if(c.isNull(4)) null else c.getString(4))) }
+        }
+        _progress.update { values + it }
+        restored = true
+    }
     const val CREATE = """CREATE TABLE pending_attachments (
         id TEXT PRIMARY KEY, target INTEGER NOT NULL, is_group INTEGER NOT NULL,
         row_id INTEGER NOT NULL, path TEXT NOT NULL, mime TEXT NOT NULL, caption TEXT NOT NULL,
         created_at INTEGER NOT NULL, next_at INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0)"""
     private data class Job(val id: String, val target: Long, val group: Boolean, val row: Long,
         val path: String, val mime: String, val caption: String, val created: Long, val attempts: Int)
-    fun stage(context: Context, target: Long, group: Boolean, file: File, mime: String, caption: String) {
+    private fun accepted(context: Context, target: Long, group: Boolean, id: String): Boolean = MessagingDb.get(context).readableDatabase.rawQuery(
+        "SELECT 1 FROM ${if(group) "group_messages" else "messages"} WHERE ${if(group) "group_id" else "contact_id"}=? AND ${if(group) "event_id" else "msg_id"}=?",
+        arrayOf(target.toString(), id)).use { it.moveToFirst() }
+
+    fun stage(context: Context, target: Long, group: Boolean, file: File, mime: String, caption: String, selectionId: String? = null) {
         val db = MessagingDb.get(context)
-        val id = UUID.randomUUID().toString()
-        val copy = MediaSender.keepEncryptedCopy(context, file)
+        val id = selectionId?.let { UUID.fromString(it).toString() } ?: UUID.randomUUID().toString()
+        if (accepted(context, target, group, id)) return
+        check(!MessageDeletion.isDeleted(db,"${if(group) "group" else "direct"}:$target",NostrIdentity.publicKeyHex(context),id)) { "Attachment was removed" }
+        val copy = try {
+            MediaSender.keepEncryptedCopy(context, file) { count,total ->
+                check(!com.relay.app.calculator.CalculatorOnly.enabled(context)) { "Private messaging was erased" }
+                report(context,id,"Saving",count,total)
+            }
+        } catch (e: Exception) {
+            report(context,id,"Failed",0,file.length(),e.message ?: "Couldn't prepare attachment")
+            throw e
+        }
         val sql = db.writableDatabase
         try {
             java.io.FileOutputStream(copy, true).use { it.fd.sync() }
             sql.beginTransaction()
             try {
+                if (accepted(context, target, group, id)) { copy.delete(); return }
                 val type = if (mime.startsWith("image/")) MessageType.IMAGE else MessageType.VIDEO
                 val now = System.currentTimeMillis()
                 val row = if (group) {
@@ -51,6 +107,7 @@ object PendingAttachments {
                 sql.setTransactionSuccessful()
             } finally { sql.endTransaction() }
         } catch (e: Exception) { copy.delete(); throw e }
+        report(context, id, "Queued", 0, file.length())
         changed(context, target, group)
     }
     private fun changed(context: Context, target: Long, group: Boolean) {
@@ -64,6 +121,16 @@ object PendingAttachments {
     /** One worker only. Uploads run separately from text outbox dispatch. */
     suspend fun drain(context: Context) {
         val db = MessagingDb.get(context)
+        restore(context)
+        val now = System.currentTimeMillis()
+        if (now - lastCleanup > 60_000) {
+            lastCleanup = now
+            val activePaths = db.readableDatabase.rawQuery("SELECT path FROM pending_attachments", null).use { c -> buildSet { while(c.moveToNext()) add(File(c.getString(0)).name) } }
+            File(context.filesDir, "media-uploads").listFiles()?.forEach { file ->
+                if (activePaths.none { file.name.startsWith(it + ".") }) file.delete()
+            }
+            db.writableDatabase.delete("attachment_progress", "updated_at<?", arrayOf(com.relay.app.messaging.RetentionPolicy.cutoff(now).toString()))
+        }
         val jobs = db.readableDatabase.rawQuery("SELECT id,target,is_group,row_id,path,mime,caption,created_at,attempts FROM pending_attachments WHERE next_at<=? ORDER BY created_at LIMIT 8",
             arrayOf(System.currentTimeMillis().toString())).use { c -> buildList {
                 while (c.moveToNext()) add(Job(c.getString(0),c.getLong(1),c.getInt(2)!=0,c.getLong(3),c.getString(4),c.getString(5),c.getString(6),c.getLong(7),c.getInt(8)))
@@ -73,6 +140,8 @@ object PendingAttachments {
             if (!exists(context, job)) {
                 db.writableDatabase.delete("pending_attachments", "id=?", arrayOf(job.id))
                 File(job.path).delete()
+                MediaSender.clearUpload(context, File(job.path))
+                clearProgress(context, job.id)
                 continue
             }
             try {
@@ -82,7 +151,10 @@ object PendingAttachments {
                     val stored = SharedGroups.get(db, job.target) ?: error("Group no longer exists")
                     SharedGroups.recipients(db, stored.state, NostrIdentity.publicKeyHex(context)).map { it.key }
                 } else listOfNotNull(ContactRepository(db).getByIdSync(job.target)?.nostrPubkey)
-                val ref = MediaSender.uploadBytes(context, RelayFileCrypto.readDecrypted(context, File(job.path)), job.mime, job.caption, recipients)
+                val ref = MediaSender.uploadStaged(context, File(job.path), job.mime, job.caption, recipients) { phase, sent, total ->
+                    check(!com.relay.app.calculator.CalculatorOnly.enabled(context) && File(job.path).isFile) { "Attachment was removed" }
+                    report(context, job.id, phase, sent, total)
+                }
                 // Keep lock ordering consistent with incoming/deletion and group send paths.
                 synchronized(SharedGroups) { synchronized(MessageDeletion) {
                     val sql = db.writableDatabase
@@ -90,10 +162,16 @@ object PendingAttachments {
                     try {
                         check(!com.relay.app.calculator.CalculatorOnly.enabled(context))
                         if (exists(context, job)) {
-                            if (job.group) SharedGroups.send(context, job.target, MediaBody.format(ref), job.path, job.id)
+                            if (job.group) {
+                                val state = SharedGroups.get(db, job.target) ?: error("Group no longer exists")
+                                val current = SharedGroups.recipients(db,state.state,NostrIdentity.publicKeyHex(context)).map { it.key }
+                                if (current.toSet() != recipients.toSet()) throw MediaSender.RecipientsChanged()
+                                SharedGroups.send(context, job.target, MediaBody.format(ref), job.path, job.id)
+                            }
                             else {
                                 val contact = ContactRepository(db).getByIdSync(job.target) ?: error("Contact no longer exists")
                                 check(!contact.isDeleted && contact.trustLevel != ContactTrustLevel.BLOCKED && contact.pendingPublicKey == null)
+                                if (listOfNotNull(contact.nostrPubkey).toSet() != recipients.toSet()) throw MediaSender.RecipientsChanged()
                                 check(Outgoing.enqueue(context, contact, MediaBody.format(ref), payloadId = job.id) != null) { "Couldn't queue attachment" }
                             }
                             sql.delete("group_delivery", "payload_id=?", arrayOf(job.id))
@@ -102,16 +180,23 @@ object PendingAttachments {
                         sql.setTransactionSuccessful()
                     } finally { sql.endTransaction() }
                 } }
+                MediaSender.clearUpload(context, File(job.path))
+                clearProgress(context, job.id)
                 MessagingRuntime.kick()
             } catch (e: Exception) {
                 if (com.relay.app.calculator.CalculatorOnly.enabled(context)) return
+                if (e is MediaSender.RecipientsChanged) MediaSender.clearUpload(context,File(job.path))
                 val expired = System.currentTimeMillis() - job.created >= 7L * 24 * 60 * 60 * 1000
-                if (expired) {
+                if (expired || e is com.relay.app.transport.mailbox.MailboxMedia.ServerUpdateRequired) {
                     if (job.group) GroupDelivery.update(context, job.id, DeliveryState.FAILED)
                     else MessageRepository(db).setDeliveryStateSync(job.id, DeliveryState.FAILED)
                     db.writableDatabase.delete("pending_attachments", "id=?", arrayOf(job.id))
+                    MediaSender.clearUpload(context, File(job.path))
                 } else db.writableDatabase.execSQL("UPDATE pending_attachments SET attempts=attempts+1,next_at=? WHERE id=?",
                     arrayOf(System.currentTimeMillis() + com.relay.app.transport.outbox.OutboxPolicy.nextDelayMs(job.attempts + 1), job.id))
+                val current = _progress.value[job.id]
+                report(context, job.id, if (expired || e is com.relay.app.transport.mailbox.MailboxMedia.ServerUpdateRequired) "Failed" else "Will retry",
+                    current?.transferred ?: 0, current?.total ?: 0, e.message ?: "Upload interrupted")
             }
             changed(context, job.target, job.group)
         }

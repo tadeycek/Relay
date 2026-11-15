@@ -5,6 +5,11 @@
 
 export const PROTOCOL_VERSION = 1;
 
+/** V2 transfers are bounded per request; the allowance covers streaming encryption overhead. */
+export const MEDIA_PART_BYTES = 1024 * 1024;
+export const MAX_RESUMABLE_MEDIA_BYTES = 3 * 1024 * 1024 * 1024 + MEDIA_PART_BYTES;
+export const MEDIA_CONTROL_BYTES = 256 * 1024;
+
 export type ErrorCode =
   | "bad_request"
   | "not_found"
